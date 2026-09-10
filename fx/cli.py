@@ -45,7 +45,7 @@ def main(argv=None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--corpus", default=None); p.add_argument("--ids", default=None, help="comma-separated prompt ids")
         p.add_argument("--model", default=DEFAULT_MODEL); p.add_argument("--base-url", default=None)
-        p.add_argument("--workers", type=int, default=128); p.add_argument("--redo", action="store_true")
+        p.add_argument("--workers", type=int, default=512, help="calls in flight across the run"); p.add_argument("--redo", action="store_true")
         p.add_argument("--limit", type=int, default=0, help="first N prompts only (a pilot)")
         if name == "decompose":
             p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
@@ -83,7 +83,7 @@ def main(argv=None) -> int:
         total = len(prompt_ids(store, a.corpus, ids, a.redo, a.limit))
         jid = jobs.start(store, ws, "decompose", a.corpus, a.model, {"workers": a.workers, "limit": a.limit, "redo": a.redo, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, total)
         print(f"job {jid}: {total} prompts, log {ws.job_log(jid)}", flush=True)
-        c = Client(store, budget=a.budget, base_url=a.base_url)
+        c = Client(store, budget=a.budget, base_url=a.base_url, max_connections=a.workers + 64)
         status = jobs.run_decompose(store, ws, c, jid, a.corpus, model=a.model, workers=a.workers, ids=ids, redo=a.redo, limit=a.limit,
                                     echo=lambda line: print("  " + line, flush=True))
         print(f"job {jid} {status}")

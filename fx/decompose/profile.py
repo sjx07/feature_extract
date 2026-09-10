@@ -16,7 +16,9 @@ is recorded as a gap, and the queues show it; nothing here second-guesses it.
 from __future__ import annotations
 
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
 
 from . import prompts as P
@@ -83,16 +85,28 @@ def _check(components, text, lo, hi, path, norm) -> list[str]:
 
 
 class _Session:
-    def __init__(self, tree: Tree, ask: Ask):
-        self.tree, self.ask = tree, ask
+    def __init__(self, tree: Tree, ask: Ask, fanout: int = 1):
+        self.tree, self.ask, self.fanout = tree, ask, max(1, fanout)
+        self.lock = threading.Lock()
 
     def call(self, prompt: str) -> str:
         t0 = time.time()
         reply = self.ask(prompt) or ""
-        self.tree.calls += 1
-        self.tree.seconds += time.time() - t0
-        self.tree.replies.append(reply)
+        with self.lock:
+            self.tree.calls += 1
+            self.tree.seconds += time.time() - t0
+            self.tree.replies.append(reply)
         return reply
+
+
+def _parallel(s: _Session, fns):
+    """Run independent pieces of one node's work (its sibling sections and gaps, its leaf checks) on a small pool,
+    at most `fanout` at once; results in order. Every call still passes the run's admission semaphore."""
+    fns = list(fns)
+    if s.fanout == 1 or len(fns) <= 1:
+        return [f() for f in fns]
+    with ThreadPoolExecutor(max_workers=min(s.fanout, len(fns))) as ex:
+        return list(ex.map(lambda f: f(), fns))
 
 
 def _better(c2, f2, c1, f1) -> bool:
@@ -148,67 +162,84 @@ def _refine(s: _Session, text, lo, hi, path, norm, parent=None) -> list[Componen
             return forced
         components[0].flags.append("unrefined")
         return components
-    extra = []
     in_gap = path.endswith(".") and path.rstrip(".").split(".")[-1].startswith("g")
-    for k, (glo, ghi) in enumerate(list(_gaps(text, components, lo, hi))):
-        if in_gap:
-            break                                   # no gap inside a gap
-        if not gap_worth_refining(text, glo, ghi):
-            s.tree.gaps.append({"lo": glo, "hi": ghi, "outcome": "skipped", "path": f"{path}g{k}"})
-            continue
-        found = _refine(s, text, glo, ghi, f"{path}g{k}.", norm, parent=(lo, hi))
-        found = [c for c in found if c.span is not None and "unrefined" not in c.flags]
-        kinds = {c.kind for c in found}
-        outcome = "recovered" if "atom" in kinds or "section" in kinds else ("material" if kinds == {"material"} else "declined")
-        s.tree.gaps.append({"lo": glo, "hi": ghi, "outcome": outcome, "path": f"{path}g{k}"})
-        if found:
-            extra.extend(found)
-            s.tree.flags.append(f"gap_refined:{path or 'root'}{k}")
+    jobs = []                                         # the node's independent work: each gap, each section; run together
+
+    def gap_job(k, glo, ghi):
+        def go():
+            found = _refine(s, text, glo, ghi, f"{path}g{k}.", norm, parent=(lo, hi))
+            found = [c for c in found if c.span is not None and "unrefined" not in c.flags]
+            kinds = {c.kind for c in found}
+            outcome = "recovered" if "atom" in kinds or "section" in kinds else ("material" if kinds == {"material"} else "declined")
+            s.tree.gaps.append({"lo": glo, "hi": ghi, "outcome": outcome, "path": f"{path}g{k}"})
+            if found:
+                s.tree.flags.append(f"gap_refined:{path or 'root'}{k}")
+            return found
+        return go
+
+    def section_job(i, part):
+        def go():
+            part.children = _refine(s, text, part.span[0], part.span[1], f"{path}{i}.", norm, parent=(lo, hi))
+            return []
+        return go
+
+    if not in_gap:                                    # no gap inside a gap
+        for k, (glo, ghi) in enumerate(list(_gaps(text, components, lo, hi))):
+            if gap_worth_refining(text, glo, ghi):
+                jobs.append(gap_job(k, glo, ghi))
+            else:
+                s.tree.gaps.append({"lo": glo, "hi": ghi, "outcome": "skipped", "path": f"{path}g{k}"})
+    for i, part in enumerate(components):
+        if part.span is not None and part.kind == "section" and not part.children:
+            jobs.append(section_job(i, part))
+    extra = [c for found in _parallel(s, jobs) for c in found]
     if extra:
         components = sorted(components + extra, key=lambda c: c.span[0] if c.span else -1)
-    for i, part in enumerate(components):
-        if part.span is None or part.kind != "section" or part.children:
-            continue
-        part.children = _refine(s, text, part.span[0], part.span[1], f"{path}{i}.", norm, parent=(lo, hi))
     return components
 
 
 def _facet_check(s: _Session, text, norm) -> None:
     """An atom or a material leaf the model emitted without facets: nothing below would ever ask for them, so one
     call on the leaf alone asks for the leaf with its facets (with reasoning off the root reply often skips them)."""
-    for part, _, path in list(s.tree.walk()):
-        if not (part.is_leaf and part.kind in ("atom", "material") and part.span is not None) or part.facets:
-            continue
-        lo, hi = part.span
-        forced = _force_atom(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)), kind="atom" if part.kind == "atom" else (part.material or "reference"))
-        if forced is not None:
-            part.facets = forced[0].facets
-            part.flags = [f for f in part.flags if f != "no_facets"] + ["facets_asked"]
-            s.tree.flags.append(f"facets_asked:{path}")
+    def job(part, path):
+        def go():
+            lo, hi = part.span
+            forced = _force_atom(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)), kind="atom" if part.kind == "atom" else (part.material or "reference"))
+            if forced is not None:
+                part.facets = forced[0].facets
+                part.flags = [f for f in part.flags if f != "no_facets"] + ["facets_asked"]
+                s.tree.flags.append(f"facets_asked:{path}")
+        return go
+    _parallel(s, [job(part, path) for part, _, path in list(s.tree.walk())
+                  if part.is_leaf and part.kind in ("atom", "material") and part.span is not None and not part.facets])
 
 
 def _split_check(s: _Session, text, norm) -> None:
-    for part, _, path in list(s.tree.walk()):
-        if not (part.is_leaf and part.kind == "atom" and part.span is not None) or "forced_atom" in part.flags:
-            continue
-        lo, hi = part.span
-        if not looks_compound(text[lo:hi]):
-            continue
-        components, _ = _ask(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)))
-        located = [p for p in components if p.span is not None and p.kind == "atom" and p.facets]
-        if len(located) >= 2 and len(located) == len(components):
-            part.children, part.kind, part.facets = located, "section", []
-            s.tree.flags.append(f"split:{path}")
-        elif len(components) == 1 and located and (located[0].span[1] - located[0].span[0]) < 0.8 * (hi - lo):
-            part.span, part.facets, part.start, part.end = located[0].span, located[0].facets, located[0].start, located[0].end
-            s.tree.flags.append(f"trim:{path}")
-        else:
-            part.flags.append("compound_confirmed")
+    def job(part, path):
+        def go():
+            lo, hi = part.span
+            _split_one(s, text, norm, part, path, lo, hi)
+        return go
+    _parallel(s, [job(part, path) for part, _, path in list(s.tree.walk())
+                  if part.is_leaf and part.kind == "atom" and part.span is not None and "forced_atom" not in part.flags and looks_compound(text[part.span[0]:part.span[1]])])
 
 
-def profile(text: str, ask: Ask) -> Tree:
+def _split_one(s: _Session, text, norm, part, path, lo, hi) -> None:
+    components, _ = _ask(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)))
+    located = [p for p in components if p.span is not None and p.kind == "atom" and p.facets]
+    if len(located) >= 2 and len(located) == len(components):
+        part.children, part.kind, part.facets = located, "section", []
+        s.tree.flags.append(f"split:{path}")
+    elif len(components) == 1 and located and (located[0].span[1] - located[0].span[0]) < 0.8 * (hi - lo):
+        part.span, part.facets, part.start, part.end = located[0].span, located[0].facets, located[0].start, located[0].end
+        s.tree.flags.append(f"trim:{path}")
+    else:
+        part.flags.append("compound_confirmed")
+
+
+def profile(text: str, ask: Ask, fanout: int = 1) -> Tree:
     tree = Tree()
-    s = _Session(tree, ask)
+    s = _Session(tree, ask, fanout)
     norm = normalize(text)
     tree.components = _refine(s, text, 0, len(text), "", norm)
     if not any(c.span is not None for c in tree.components):

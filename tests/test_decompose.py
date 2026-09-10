@@ -295,6 +295,12 @@ def test_material_leaves_carry_one_reading_of_what_is_provided(store):
         assert [(r["kind"], r["verb"], r["object"]) for r in rows] == [("material", "use", "a task header"), ("atom", "answer", "briefly"), ("material", "provide", "a worked arithmetic example")]
 
 
+@pytest.fixture(autouse=True)
+def _sequential(monkeypatch):
+    """Scripted replies are consumed in order, so the scripted tests refine one node at a time; the fan-out has its own test."""
+    monkeypatch.setattr(stage, "FANOUT", 1)
+
+
 def test_repeated_quotes_resolve_in_order_and_only_a_repeated_end_is_ambiguous():
     from fx.decompose.locate import validate_components
     from fx.decompose.contract import Component, Facet
@@ -326,3 +332,27 @@ def test_a_prompt_stops_calling_once_a_span_spent_the_ceiling_twice(store):
         assert store.one("SELECT COUNT(*) n FROM call")["n"] == 2 and m["fallbacks"] == 1 and m["coverage"] == 0     # primary and fallback, nothing after
         assert any(f.startswith("calls_stopped") for f in json.loads(store.one("SELECT flags FROM decomp")["flags"]))
         assert store.one("SELECT COUNT(*) n FROM span WHERE kind='unrefined'")["n"] == 1                     # visible in the queues
+
+
+def test_siblings_fan_out_on_a_pool(store):
+    """Three sections whose replies each take 0.4 s: refined together they finish in about one round, not three."""
+    import time
+    text = "# A\nDo a1. Do a2.\n\n# B\nDo b1. Do b2.\n\n# C\nDo c1. Do c2."
+    import_text(store, text, name="one")
+    pid = store.one("SELECT id FROM prompt")["id"]
+    atom = lambda s: {"start": s, "end": s, "kind": "atom", "facets": [{"verb": "do", "object": s[3:-1], "polarity": "require"}]}
+    def router(body):
+        span = body["messages"][-1]["content"].split("# SPAN\n<<<\n", 1)[1].split("\n>>>", 1)[0]
+        if "# A" in span and "# C" in span:               # the root
+            comps = [{"start": "# A", "end": "Do a2.", "kind": "section"}, {"start": "# B", "end": "Do b2.", "kind": "section"}, {"start": "# C", "end": "Do c2.", "kind": "section"}]
+        else:                                             # a section: its title and two atoms
+            time.sleep(0.4)
+            t = span[2]
+            comps = [{"start": f"# {t}", "end": f"# {t}", "kind": "material", "material": "title", "facets": [{"verb": "use", "object": "a header", "polarity": "require"}]}, atom(f"Do {t.lower()}1."), atom(f"Do {t.lower()}2.")]
+        return reply(json.dumps({"components": comps}))
+    with FakeServer() as srv:
+        srv.router = router
+        t0 = time.time()
+        m = stage.decompose_one(store, Client(store, base_url=srv.url), pid, "m", fanout=4)
+        assert time.time() - t0 < 1.0 and m["coverage"] == 1.0                                 # 3 x 0.4 s sections, together
+        assert store.one("SELECT COUNT(*) n FROM span WHERE kind='atom'")["n"] == 6 and store.one("SELECT COUNT(*) n FROM reading")["n"] == 9

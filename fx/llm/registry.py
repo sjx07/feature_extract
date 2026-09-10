@@ -97,6 +97,25 @@ def cost(model: str, prompt_tokens: int, completion_tokens: int, endpoint: Optio
     return prompt_tokens * pi / 1e6 + completion_tokens * po / 1e6
 
 
+def provider_body(model: str, base_url: Optional[str] = None) -> dict:
+    """OpenRouter upstream routing. Default: sort candidates by throughput with fallbacks allowed (FACET measured
+    20 tok/s upstreams turning a 15k-token reply into a 12-minute call). FX_PROVIDER_SORT=throughput|latency|price|''
+    changes the sort, FX_PROVIDER_ORDER=A,B,C names upstreams to try first, FX_PROVIDER=Name pins one."""
+    if resolve(model, base_url).name != "openrouter":
+        return {}
+    only = os.environ.get("FX_PROVIDER", "")
+    if only:
+        return {"provider": {"only": [only], "allow_fallbacks": False}}
+    prov: dict = {"allow_fallbacks": True}
+    sort = os.environ.get("FX_PROVIDER_SORT", "throughput")
+    if sort:
+        prov["sort"] = sort
+    order = [p for p in os.environ.get("FX_PROVIDER_ORDER", "").split(",") if p]
+    if order:
+        prov["order"] = order
+    return {"provider": prov}
+
+
 def reasoning_low(model: str, base_url: Optional[str] = None) -> dict:
     """The extra_body for low reasoning effort: the fallback when a reasoning reply exhausted its ceiling."""
     ep = resolve(model, base_url)

@@ -49,7 +49,7 @@ async function viewCorpora(main, q) {
     <form id="rform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
       <label>corpus</label><select name="corpus">${cs.map(c => `<option value="${esc(c.name)}" ${c.name === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
       <label>model</label><span><input type="text" name="model" value="${esc(ms.default)}" list="models" style="width:100%"><datalist id="models">${ms.models.map(m => `<option value="${esc(m.model)}">${esc(m.endpoint)} · $${m.price_in}/M in, $${m.price_out}/M out</option>`).join('')}</datalist><span class="muted" style="font-size:12px">any model name works: gpt-* goes to OpenAI, vendor/model to OpenRouter, anything else to the local server at ${esc(ms.local_url)}; FX_MODEL sets the default, FX_MODELS adds models with prices</span></span>
-      <label>workers</label><input type="number" name="workers" value="128" min="1" max="512">
+      <label>workers</label><input type="number" name="workers" value="512" min="1" max="4096"> <span class="muted" style="font-size:12px">calls in flight</span>
       <label>first N only</label><input type="number" name="limit" value="30" min="0" placeholder="0 for all">
       <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="0.5">
       <label>options</label><span><label><input type="checkbox" name="redo"> redo finished prompts</label></span>

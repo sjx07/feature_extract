@@ -83,7 +83,9 @@ PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 Open http://localhost:8780. Drop one of the domain files under `data/corpora/facet/`, any FACET
 prompts.jsonl (with a domain filter), a folder or zip of text files, or paste one prompt; from a
 machine without the files, type a path on the server instead (relative to the repo, `~` allowed). The run panel previews calls, tokens, dollars and, once the store
-has timing for the model, time; "run first N" decomposes a pilot, "run all" the rest. The job page
+has timing for the model, time; "run first N" decomposes a pilot, "run all" the rest. `workers` is the
+number of calls in flight across the run (OpenRouter has taken 512 without throttling); within a prompt the
+sibling sections, gaps and leaf checks of a node are refined together, four at a time. The job page
 follows the run over server-sent events; the prompt page shows the raw text painted with atoms,
 material and declined gaps beside the tree; the queues page lists what to read.
 

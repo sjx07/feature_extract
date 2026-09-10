@@ -45,6 +45,10 @@ The model reasons; there is no switch. FACET's v5 library was decomposed with De
 
 Stop now works while calls are in flight: the button marks the job `stopping`, prompts not yet started are cancelled, the HTTP clients are closed so waiting calls return, and prompts caught mid-way are left to do for the next run.
 
+## Speed
+
+Wall time was the length of each prompt's chain of calls, not throughput: a 30-prompt job at 128 workers took 33 to 55 minutes because the profiler refined sibling sections and gaps one after another, and the facet and split checks one leaf at a time. Now a node's independent work runs on a small pool (`FANOUT`, 4), every call passes one admission semaphore whose size is `workers` (calls in flight, default 512, the HTTP pool sized to match), and OpenRouter requests carry a provider preference sorted by throughput with fallbacks (`FX_PROVIDER_SORT`, `FX_PROVIDER_ORDER`, `FX_PROVIDER` override), which FACET found removes the 20 tok/s upstreams that turned a 15k-token reply into a 12-minute call. Scripted tests refine one node at a time; the fan-out has its own test with a routed fake server.
+
 ## Open
 
 - Quote failures on long prompts: teach the re-ask to name the offending components and ask for three-word quotes, and measure the re-ask rate (1.85 per prompt in the pilot).

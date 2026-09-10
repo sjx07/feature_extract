@@ -114,7 +114,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     # ---- preview and jobs
     @app.get("/api/preview")
-    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0):
+    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 512, redo: bool = False, limit: int = 0):
         return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit)
 
     @app.get("/api/jobs")
@@ -135,7 +135,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         jid = jobs.start(store, ws, "decompose", corpus_name, model, params, total)
         stop = threading.Event()
         running[jid] = stop
-        client = Client(store, budget=budget if budget is not None else float("inf"), base_url=body.get("base_url") or None)
+        client = Client(store, budget=budget if budget is not None else float("inf"), base_url=body.get("base_url") or None, max_connections=workers + 64)
 
         def work():
             jobs.run_decompose(store, ws, client, jid, corpus_name, model=model, workers=workers, ids=ids, redo=redo, limit=limit, stop=stop)

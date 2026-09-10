@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 from ..llm import Client
 from ..llm.pool import _sem
-from ..llm.registry import DEFAULT_MODEL, price, reasoning_low, resolve
+from ..llm.registry import DEFAULT_MODEL, price, provider_body, reasoning_low, resolve
 from ..store import Store, now
 from .profile import metrics, profile
 from .prompts import COMPONENTS_SCHEMA, SYSTEM
@@ -33,6 +33,7 @@ CALLS_BASE, CALLS_PER_KCHAR, TOKENS_IN, TOKENS_OUT, SECONDS_PER_CALL = 3.0, 1.18
 MAX_TOKENS = 32768
 MAX_EXHAUSTED = 1          # a span whose ceiling is spent twice (primary, then low effort) stops the prompt's calls: 4ce1150110dbcb85 spent 6 x 8 min this way
 MAX_CALLS = 40             # calls per prompt before it stops calling; what is left stays unrefined and shows in the queues
+FANOUT = 4                 # sibling sections, gaps and leaf checks of one node refined at once (profile._parallel); 1 = one after another
 
 
 class Stop(Exception):
@@ -65,7 +66,7 @@ def history(store: Store, model: str) -> dict:
     return out
 
 
-def preview(store: Store, corpus: Optional[str] = None, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0) -> dict:
+def preview(store: Store, corpus: Optional[str] = None, model: str = DEFAULT_MODEL, workers: int = 512, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0) -> dict:
     pids = prompt_ids(store, corpus, ids, redo, limit)
     if not pids:
         return {"prompts": 0, "note": "nothing to do"}
@@ -116,42 +117,55 @@ def _write(store: Store, pid: str, text: str, tree, model: str) -> dict:
     return m
 
 
-def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens: int = MAX_TOKENS) -> dict:
+def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens: int = MAX_TOKENS, sem: Optional[threading.Semaphore] = None,
+                  fanout: Optional[int] = None) -> dict:
+    """`sem` bounds the calls in flight across every prompt of a run; `fanout` the siblings of one node refined at once."""
     row = store.one("SELECT text FROM prompt WHERE id=?", (pid,))
     if not row:
         raise KeyError(pid)
     text = row["text"]
     calls = {"n": 0, "cost": 0.0, "errors": 0, "fallbacks": 0, "exhausted": 0, "stopped": None}
+    lock = threading.Lock()
+    sem = sem or threading.Semaphore(FANOUT * 4)
+    routing = provider_body(model, client.base_url)
 
-    def ask(prompt: str) -> str:
-        if calls["stopped"]:
-            return ""
-        if calls["n"] >= MAX_CALLS:
-            calls["stopped"] = f"calls_stopped:{MAX_CALLS} calls"
-            return ""
-        r = client.complete(prompt, model=model, max_tokens=max_tokens, stage="decompose", note=pid, system=SYSTEM, schema=COMPONENTS_SCHEMA)
-        calls["n"] += 1
-        calls["cost"] += r.cost
-        if r.finish_reason == "length" and not r.text.strip():
-            # the model spent the ceiling thinking: once more at low effort (FACET's fallback; 183 of 2,068 prompts needed it)
-            calls["fallbacks"] += 1
-            r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=reasoning_low(model, client.base_url), stage="decompose", note=pid + " fallback:low", system=SYSTEM, schema=COMPONENTS_SCHEMA)
+    def call(prompt: str, extra: Optional[dict], note: str):
+        with sem:
+            r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=(routing | (extra or {})) or None, stage="decompose", note=note, system=SYSTEM, schema=COMPONENTS_SCHEMA)
+        with lock:
             calls["n"] += 1
             calls["cost"] += r.cost
+        return r
+
+    def ask(prompt: str) -> str:
+        with lock:
+            if calls["stopped"]:
+                return ""
+            if calls["n"] >= MAX_CALLS:
+                calls["stopped"] = f"calls_stopped:{MAX_CALLS} calls"
+                return ""
+        r = call(prompt, None, pid)
+        if r.finish_reason == "length" and not r.text.strip():
+            # the model spent the ceiling thinking: once more at low effort (FACET's fallback; 183 of 2,068 prompts needed it)
+            with lock:
+                calls["fallbacks"] += 1
+            r = call(prompt, reasoning_low(model, client.base_url), pid + " fallback:low")
         if r.error:
-            calls["errors"] += 1
+            with lock:
+                calls["errors"] += 1
             if r.error.startswith("denied"):
                 raise RuntimeError(r.error)
             if r.error == "stopped":
                 raise Stop()
         if r.finish_reason == "length" and not r.text.strip():
-            calls["exhausted"] += 1
-            if calls["exhausted"] >= MAX_EXHAUSTED:
-                calls["stopped"] = f"calls_stopped:{MAX_EXHAUSTED} replies spent the {max_tokens}-token ceiling"
+            with lock:
+                calls["exhausted"] += 1
+                if calls["exhausted"] >= MAX_EXHAUSTED:
+                    calls["stopped"] = f"calls_stopped:{MAX_EXHAUSTED} replies spent the {max_tokens}-token ceiling"
         return r.text
 
     try:
-        tree = profile(text, ask)
+        tree = profile(text, ask, fanout=FANOUT if fanout is None else fanout)
         if calls["stopped"]:
             tree.flags.append(calls["stopped"])
     except Stop:
@@ -165,12 +179,13 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens
     return {"id": pid, **m, "cost": calls["cost"], "call_errors": calls["errors"], "fallbacks": calls["fallbacks"]}
 
 
-def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None,
+def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: str = DEFAULT_MODEL, workers: int = 512, ids: Optional[list[str]] = None,
         redo: bool = False, limit: int = 0, max_tokens: int = MAX_TOKENS,
         progress: Optional[Callable[[int, int, dict], None]] = None, max_inflight: Optional[int] = None,
-        stop: Optional[threading.Event] = None) -> dict:
-    """`stop`, once set (by the caller, or by `progress` raising Stop), cancels the prompts not yet started and aborts
-    the calls in flight; prompts caught mid-way are left to do."""
+        stop: Optional[threading.Event] = None, fanout: Optional[int] = None) -> dict:
+    """`workers` is the number of calls in flight across the run (the endpoint's admission); prompts in flight are as many
+    as it takes to keep that busy. `stop`, once set (by the caller, or by `progress` raising Stop), cancels the prompts
+    not yet started and aborts the calls in flight; prompts caught mid-way are left to do."""
     pids = prompt_ids(store, corpus, ids, redo, limit)
     total = len(pids)
     summary = {"total": total, "done": 0, "failed": 0, "calls": 0, "cost": 0.0, "seconds": 0.0, "stopped": False}
@@ -184,17 +199,14 @@ def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: st
     def one(pid):
         if stop.is_set():
             return pid, None, "stopped"
-        with sem:
-            if stop.is_set():
+        try:
+            return pid, decompose_one(store, client, pid, model, max_tokens, sem=sem, fanout=fanout), None
+        except Exception as e:
+            if stop.is_set() or isinstance(e, Stop):
                 return pid, None, "stopped"
-            try:
-                return pid, decompose_one(store, client, pid, model, max_tokens), None
-            except Exception as e:
-                if stop.is_set() or isinstance(e, Stop):
-                    return pid, None, "stopped"
-                if "denied" in str(e):
-                    stop.set()
-                return pid, None, f"{type(e).__name__}: {str(e)[:200]}"
+            if "denied" in str(e):
+                stop.set()
+            return pid, None, f"{type(e).__name__}: {str(e)[:200]}"
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         futs = [ex.submit(one, p) for p in pids]
