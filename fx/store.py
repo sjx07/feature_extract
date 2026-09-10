@@ -41,7 +41,8 @@ CREATE INDEX IF NOT EXISTS prompt_sha ON prompt(sha);
 
 -- stage 1: decomposition. span holds every located node of a prompt's tree: sections, atoms, material,
 -- unrefined leaves, and the gaps the model declined; note carries the material kind or the gap's outcome.
--- reading holds an atom's facets, the unit later stages assign features to. decomp is the stage's record per prompt.
+-- reading holds a leaf's facets: an atom's guidance, or for a material leaf the one facet saying what the prompt provides
+-- (join span.kind to tell them apart). The unit later stages assign features to. decomp is the stage's record per prompt.
 CREATE TABLE IF NOT EXISTS span (
     id INTEGER PRIMARY KEY, prompt TEXT NOT NULL REFERENCES prompt(id), path TEXT NOT NULL, lo INTEGER NOT NULL, hi INTEGER NOT NULL,
     kind TEXT NOT NULL, note TEXT, flags TEXT, start TEXT, end TEXT, depth INTEGER);

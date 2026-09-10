@@ -99,8 +99,10 @@ def validate_components(components: list[Component], text: str, lo: int, hi: int
         if part.kind == "atom" and not part.facets:
             failures.append(f"{label}: an atom but has no facets")
             part.flags.append("no_facets")
-        if part.kind != "atom" and part.facets:
+        if part.kind == "section" and part.facets:
             part.facets = []
+        if part.kind == "material" and len(part.facets) > 1:
+            part.facets = part.facets[:1]
     return failures
 
 

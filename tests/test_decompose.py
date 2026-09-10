@@ -136,7 +136,7 @@ def test_stage_run_writes_rows_resumes_and_previews(store):
         kinds = {r["kind"]: r["n"] for r in store.rows("SELECT kind, COUNT(*) n FROM span WHERE prompt=? GROUP BY kind", (pid,))}
         assert d["status"] == "done" and kinds["atom"] == 4 and kinds["material"] == 2
         assert kinds["section"] == 2                                     # requirements, and the fenced block the model refined into a material child
-        assert store.one("SELECT COUNT(*) n FROM reading WHERE prompt=?", (pid,))["n"] == 4
+        assert store.one("SELECT COUNT(*) n FROM reading WHERE prompt=?", (pid,))["n"] == 6                                       # 4 atom facets + one reading per material leaf
         assert store.one("SELECT COUNT(*) n FROM reading r JOIN span s ON s.id=r.span WHERE r.prompt=? AND s.kind='atom'", (pid,))["n"] == 4
         calls_before = srv.calls
         s2 = stage.run(store, c, "demo", model="m", workers=2)                       # resume: nothing to do
@@ -278,3 +278,16 @@ def test_stop_cancels_pending_prompts_and_leaves_them_to_do(store):
         assert s["stopped"] and s["done"] < 8
         assert store.one("SELECT COUNT(*) n FROM decomp")["n"] == s["done"]                    # cancelled prompts wrote nothing
         assert c.complete("x", model="m").error is None                                         # the client reopens after close()
+
+
+def test_material_leaves_carry_one_reading_of_what_is_provided(store):
+    import_text(store, "# Task\nAnswer briefly.\nExample: 2+2=4", name="one")
+    pid = store.one("SELECT id FROM prompt")["id"]
+    with FakeServer() as srv:
+        srv.script = [reply('{"components":['
+                            '{"start":"# Task","end":"# Task","kind":"material","material":"title"},'                      # no facet: the default by kind
+                            '{"start":"Answer briefly.","end":"Answer briefly.","kind":"atom","facets":[{"verb":"answer","object":"briefly","polarity":"require"}]},'
+                            '{"start":"Example: 2+2=4","end":"Example: 2+2=4","kind":"material","material":"example","facets":[{"verb":"provide","object":"a worked arithmetic example","polarity":"require"},{"verb":"x","object":"y","polarity":"require"}]}]}')]
+        stage.decompose_one(store, Client(store, base_url=srv.url), pid, "m")
+        rows = store.rows("SELECT s.kind, s.note, r.verb, r.object FROM reading r JOIN span s ON s.id=r.span ORDER BY s.lo")
+        assert [(r["kind"], r["verb"], r["object"]) for r in rows] == [("material", "use", "a section header"), ("atom", "answer", "briefly"), ("material", "provide", "a worked arithmetic example")]

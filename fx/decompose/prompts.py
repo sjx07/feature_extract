@@ -31,8 +31,8 @@ _TREE = """\
     schema, a table, a worked example with its answer, a code block, an input slot such as
     {question}, an output template, a title or separator, a description of an input, a tool or
     the environment, a pasted reference. Never a statement about the model itself or about what
-    is wanted from it. Material is reported as a component with its material kind, is never
-    divided, and carries no facets.
+    is wanted from it. Material is reported as a component with its material kind and one
+    facet saying what is provided; it is never divided.
 """
 
 _DEFINITIONS = """\
@@ -93,6 +93,12 @@ separate components and never restate each other.
 - condition: what must hold for the guidance to apply, stated in the component or in the
   context, else "always".
 - domain_terms: the domain-specific objects that were replaced.
+A material component carries exactly one facet of the same shape, describing what the prompt
+supplies rather than guidance: verb "provide" (verb "use" for a title), object what is provided
+in a few words that keep its nature ("a worked example with its answer", "the database schema",
+"a tool description", "an input slot for the question", "an output template", "a section
+header"), qualifier "" or the notable manner ("as a Markdown table"), polarity "require",
+condition "always".
 """
 
 _OUTPUT = """\
@@ -106,7 +112,8 @@ _OUTPUT = """\
      "facets":[{"verb":"…","object":"…","qualifier":"","polarity":"require|forbid",
                 "condition":"always","domain_terms":[]}]},
     {"start":"…","end":"…","kind":"section"},
-    {"start":"…","end":"…","kind":"material","material":"example|schema|code|slot|template|title|reference"}]}
+    {"start":"…","end":"…","kind":"material","material":"example|schema|code|slot|template|title|reference",
+     "facets":[{"verb":"provide","object":"…","qualifier":"","polarity":"require","condition":"always","domain_terms":[]}]}]}
 """
 
 REFINE = (_TASK.replace("{ctx_clause}", ", and the CONTEXT it sits in") + "\n" + _TREE + "\n"
