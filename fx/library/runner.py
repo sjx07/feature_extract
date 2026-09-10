@@ -162,7 +162,7 @@ def _write_codebook(store: Store, cb: int, obj: dict, kind: str, realization_ids
             fprev = _id(f.get("id"), set(old_feats)) if old else None
             kept += fprev is not None
             pol = str(f.get("polarity") or "require").lower()
-            ex = _ids(f.get("examples"), realization_ids)
+            ex = _ids(f.get("examples"), realization_ids) or (_ids(f.get("replaces"), realization_ids) if not old else [])   # a cold start that misfiled its examples
             if not ex and fprev is not None:
                 ex = old_feats[fprev]["examples"]
             store.insert("feature", {"codebook": cb, "level": "feature", "parent": gid, "prev": fprev, "aspect": None, "name": str(f["name"]).strip(),
@@ -171,12 +171,23 @@ def _write_codebook(store: Store, cb: int, obj: dict, kind: str, realization_ids
     return {"groups": n_groups, "features": n_feats, "kept": kept}
 
 
-CODEBOOK_SCHEMA = {"type": "object", "properties": {"notes": {"type": "string"}, "retired": {"type": "array", "items": {"type": "string"}}, "groups": {"type": "array", "items": {
-    "type": "object", "properties": {"id": {"type": ["string", "null"]}, "name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"},
-                                     "features": {"type": "array", "items": {"type": "object", "properties": {
-                                         "id": {"type": ["string", "null"]}, "name": {"type": "string"}, "definition": {"type": "string"}, "polarity": {"type": "string", "enum": ["require", "forbid"]},
-                                         "examples": {"type": "array", "items": {"type": "string"}}, "replaces": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "definition", "polarity", "examples"]}}},
-    "required": ["name", "definition", "aspect", "features"]}}}, "required": ["groups"]}
+def _codebook_schema(revise: bool) -> dict:
+    """The reply shape of COLDSTART (no ids) or REVISE (ids kept, replaces, retired). Closed objects, so a key the prompt
+    did not ask for cannot appear; the pilot's cold start had put the example ids under "replaces" when both were allowed."""
+    feat = {"name": {"type": "string"}, "definition": {"type": "string"}, "polarity": {"type": "string", "enum": ["require", "forbid"]},
+            "examples": {"type": "array", "items": {"type": "string"}}}
+    grp = {"name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"}}
+    top = {}
+    if revise:
+        feat = {"id": {"type": ["string", "null"]}, **feat, "replaces": {"type": "array", "items": {"type": "string"}}}
+        grp = {"id": {"type": ["string", "null"]}, **grp}
+        top = {"notes": {"type": "string"}, "retired": {"type": "array", "items": {"type": "string"}}}
+    fschema = {"type": "object", "properties": feat, "required": list(feat), "additionalProperties": False}
+    gschema = {"type": "object", "properties": {**grp, "features": {"type": "array", "items": fschema}}, "required": list(grp) + ["features"], "additionalProperties": False}
+    return {"type": "object", "properties": {**top, "groups": {"type": "array", "items": gschema}}, "required": list(top) + ["groups"], "additionalProperties": False}
+
+
+COLDSTART_SCHEMA, REVISE_SCHEMA = _codebook_schema(False), _codebook_schema(True)
 ASSIGN_SCHEMA = {"type": "object", "properties": {"assignments": {"type": "array", "items": {"type": "object", "properties": {
     "id": {"type": "string"}, "feature": {"type": ["string", "null"]}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}, "required": ["id", "feature", "confidence"]}}}, "required": ["assignments"]}
 
@@ -187,7 +198,7 @@ def coldstart(store: Store, client: Client, corpus: str, kind: str, model: str =
     if not decl:
         raise ValueError(f"no {kind} realizations for {corpus}: run collapse, or decompose first")
     domain = domain or (store.one("SELECT domain FROM prompt WHERE corpus=? AND domain IS NOT NULL", (cid,)) or {"domain": corpus})["domain"] or corpus
-    reply = _call(client, P.coldstart(kind, domain, decl, min_support), model, f"{corpus}:{kind}:coldstart", schema=CODEBOOK_SCHEMA)
+    reply = _call(client, P.coldstart(kind, domain, decl, min_support), model, f"{corpus}:{kind}:coldstart", schema=COLDSTART_SCHEMA)
     obj = extract_object(reply, "groups")
     if obj is None:
         raise RuntimeError("cold start reply was not a codebook (no 'groups' list)")
@@ -362,7 +373,7 @@ def revise(store: Store, client: Client, corpus: str, kind: str, model: str = CO
         else:
             fl.append(f"indistinct: F{x['feature']} {x['feature_name']} and F{x['other']} {x['other_name']} ({x['note']})")
     domain = domain or (store.one("SELECT domain FROM prompt WHERE corpus=? AND domain IS NOT NULL", (cid,)) or {"domain": corpus})["domain"] or corpus
-    reply = _call(client, P.revise(kind, domain, tree, left, fl, min_support), model, f"{corpus}:{kind}:revise:v{cbrow['version']}", schema=CODEBOOK_SCHEMA)
+    reply = _call(client, P.revise(kind, domain, tree, left, fl, min_support), model, f"{corpus}:{kind}:revise:v{cbrow['version']}", schema=REVISE_SCHEMA)
     obj = extract_object(reply, "groups")
     if obj is None:
         raise RuntimeError("revise reply was not a codebook (no 'groups' list)")
