@@ -52,7 +52,7 @@ async function viewCorpora(main, q) {
       <label>workers</label><input type="number" name="workers" value="128" min="1" max="512">
       <label>first N only</label><input type="number" name="limit" value="30" min="0" placeholder="0 for all">
       <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="0.5">
-      <label>options</label><span><label><input type="checkbox" name="reasoning_off" checked> reasoning off</label> &nbsp; <label><input type="checkbox" name="redo"> redo finished prompts</label></span>
+      <label>options</label><span><label><input type="checkbox" name="redo"> redo finished prompts</label></span>
       <span></span><span><button class="btn quiet" type="button" id="prevbtn">preview</button> <button class="btn" type="button" id="runbtn">run first N</button> <button class="btn quiet" type="button" id="allbtn">run all</button></span></form>
     <div id="preview" class="block" style="margin-top:16px"></div>
     <div class="block"><div class="t">jobs</div>${jobs.length ? `<table class="list">${jobs.slice(0, 8).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.corpus || 'all')} · ${esc(j.model)}</td><td class="n">${j.done}/${j.total}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
@@ -67,9 +67,9 @@ async function viewCorpora(main, q) {
   $('#iform').onsubmit = async e => { e.preventDefault(); const fd = new FormData($('#iform')); if (file.files[0]) fd.append('file', file.files[0]); $('#istatus').textContent = 'importing';
     try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}, ${r.duplicates_elsewhere} also in another corpus`; location.hash = href('/corpora', { corpus: r.corpus }); route(); } catch (err) { $('#istatus').textContent = err.message; } };
   const rf = $('#rform');
-  const params = () => { const d = Object.fromEntries(new FormData(rf)); return { corpus: d.corpus, model: d.model, workers: +d.workers, limit: +d.limit || 0, budget: d.budget || null, reasoning_off: !!d.reasoning_off, redo: !!d.redo }; };
+  const params = () => { const d = Object.fromEntries(new FormData(rf)); return { corpus: d.corpus, model: d.model, workers: +d.workers, limit: +d.limit || 0, budget: d.budget || null, redo: !!d.redo }; };
   const showPreview = async () => { const p = params(); $('#preview').innerHTML = '<span class="muted">estimating</span>';
-    const r = await api(`/api/preview?corpus=${encodeURIComponent(p.corpus)}&model=${encodeURIComponent(p.model)}&workers=${p.workers}&redo=${p.redo}&limit=${p.limit}&reasoning=${p.reasoning_off ? 'off' : 'on'}`);
+    const r = await api(`/api/preview?corpus=${encodeURIComponent(p.corpus)}&model=${encodeURIComponent(p.model)}&workers=${p.workers}&redo=${p.redo}&limit=${p.limit}`);
     if (!r.prompts) { $('#preview').innerHTML = '<span class="muted">nothing to do: every prompt is decomposed</span>'; return; }
     $('#preview').innerHTML = `<div class="prev"><span><b>${fmt(r.prompts)}</b>prompts</span><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(Math.round(r.tokens_in / 1000))}k</b>tokens in</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.endpoint)}</span><span><b>${r.seconds == null ? '?' : fmtSec(r.seconds)}</b>at ${r.workers} workers</span></div>
       <div class="muted" style="font-size:12px;margin-top:6px">${esc(r.basis)}${r.note ? ' · ' + esc(r.note) : ''}</div>`; };

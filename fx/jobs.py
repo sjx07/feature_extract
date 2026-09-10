@@ -59,11 +59,11 @@ def progress_writer(store: Store, ws: Workspace, jid: int, stop: threading.Event
 
 
 def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optional[str], *, model: str, workers: int, ids=None, redo: bool = False,
-                  limit: int = 0, reasoning: str = "off", stop: Optional[threading.Event] = None, echo=None) -> str:
+                  limit: int = 0, stop: Optional[threading.Event] = None, echo=None) -> str:
     from . import decompose
     stop = stop or threading.Event()
     try:
-        s = decompose.run(store, client, corpus, model=model, workers=workers, ids=ids, redo=redo, limit=limit, reasoning=reasoning,
+        s = decompose.run(store, client, corpus, model=model, workers=workers, ids=ids, redo=redo, limit=limit,
                           progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         status = "stopped" if s["stopped"] else ("done" if not s["failed"] else "done_with_failures")
         finish(store, ws, jid, status)

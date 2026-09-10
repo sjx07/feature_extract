@@ -112,8 +112,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     # ---- preview and jobs
     @app.get("/api/preview")
-    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0, reasoning: str = "off"):
-        return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit, reasoning="on" if reasoning == "on" else "off")
+    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0):
+        return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit)
 
     @app.get("/api/jobs")
     def api_jobs():
@@ -128,16 +128,15 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         redo = bool(body.get("redo"))
         budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else None
         ids = body.get("ids") or None
-        reasoning = "off" if body.get("reasoning_off", True) else "on"
         total = len(decompose.prompt_ids(store, corpus_name, ids, redo, limit))
-        params = {"workers": workers, "limit": limit, "redo": redo, "budget": budget, "ids": ids, "reasoning": reasoning, "from": "gui"}
+        params = {"workers": workers, "limit": limit, "redo": redo, "budget": budget, "ids": ids, "from": "gui"}
         jid = jobs.start(store, ws, "decompose", corpus_name, model, params, total)
         stop = threading.Event()
         running[jid] = stop
         client = Client(store, budget=budget if budget is not None else float("inf"), base_url=body.get("base_url") or None)
 
         def work():
-            jobs.run_decompose(store, ws, client, jid, corpus_name, model=model, workers=workers, ids=ids, redo=redo, limit=limit, reasoning=reasoning, stop=stop)
+            jobs.run_decompose(store, ws, client, jid, corpus_name, model=model, workers=workers, ids=ids, redo=redo, limit=limit, stop=stop)
             running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()

@@ -47,7 +47,6 @@ def main(argv=None) -> int:
         p.add_argument("--model", default=DEFAULT_MODEL); p.add_argument("--base-url", default=None)
         p.add_argument("--workers", type=int, default=128); p.add_argument("--redo", action="store_true")
         p.add_argument("--limit", type=int, default=0, help="first N prompts only (a pilot)")
-        p.add_argument("--reasoning-on", action="store_true", help="leave the model's reasoning on (off by default; on raises the reply ceiling to 32k and costs about 100x the output tokens)")
         if name == "decompose":
             p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
     srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
@@ -74,7 +73,7 @@ def main(argv=None) -> int:
         return 0
     if a.cmd == "preview":
         from .decompose import preview
-        print(json.dumps(preview(store, a.corpus, a.model, a.workers, a.ids.split(",") if a.ids else None, a.redo, getattr(a, "limit", 0), reasoning="on" if a.reasoning_on else "off"), indent=1))
+        print(json.dumps(preview(store, a.corpus, a.model, a.workers, a.ids.split(",") if a.ids else None, a.redo, getattr(a, "limit", 0)), indent=1))
         return 0
     if a.cmd == "decompose":
         from . import jobs
@@ -86,7 +85,7 @@ def main(argv=None) -> int:
         print(f"job {jid}: {total} prompts, log {ws.job_log(jid)}", flush=True)
         c = Client(store, budget=a.budget, base_url=a.base_url)
         status = jobs.run_decompose(store, ws, c, jid, a.corpus, model=a.model, workers=a.workers, ids=ids, redo=a.redo, limit=a.limit,
-                                    reasoning="on" if a.reasoning_on else "off", echo=lambda line: print("  " + line, flush=True))
+                                    echo=lambda line: print("  " + line, flush=True))
         print(f"job {jid} {status}")
         return 0 if status == "done" else 1
     if a.cmd == "serve":

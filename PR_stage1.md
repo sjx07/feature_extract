@@ -38,9 +38,9 @@ PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 
 Then http://localhost:8780: drop `data/corpora/facet/text2sql.jsonl`, preview, run first 30.
 
-## Reasoning: on or off
+## Reasoning
 
-FACET's v5 library was decomposed with DeepSeek's reasoning on (provider default, 32k ceiling, one low-effort fallback when a call exhausted it): 5.2 calls and 593 s per prompt. Its pilot v9 read reasoning off as worse (content typed as guidance, sentences cut, polarity inverted) and rejected it. The stage 1 default of off came from the local gpt-oss pilot and was not checked against that. What is now in the code: the reply ceiling follows the setting (4,096 off, 32,768 on), a reply that ended by `length` with no text is not retried but answered once more at low effort, an atom the model emitted without facets gets one call for them, and the locator's re-ask asks for a short exact quote instead of "more words". A same-30-prompt comparison, `runs/cmp_off` and `runs/cmp_on`, decides the default; read both in the prompt view.
+The model reasons; there is no switch. FACET's v5 library was decomposed with DeepSeek's reasoning on (provider default, 32k ceiling, one low-effort fallback when a call exhausted it): 5.2 calls and 593 s per prompt. Its pilot v9 read reasoning off as worse (content typed as guidance, sentences cut, polarity inverted). The stage 1 comparison on 30 text2sql prompts (`runs/cmp_off`, `runs/cmp_on`) agreed: off needed 2 re-asks per prompt and 76 quote problems and looped to the ceiling on 19 calls; on needed 0.3 re-asks and 9 quote problems, at four times the wall time and cost. In the code: 32k reply ceiling, a reply that ended by `length` with no text is not retried but answered once more at low effort, a leaf the model emitted without facets gets one call for them, and the locator's re-ask asks for a short exact quote.
 
 Stop now works while calls are in flight: the button marks the job `stopping`, prompts not yet started are cancelled, the HTTP clients are closed so waiting calls return, and prompts caught mid-way are left to do for the next run.
 

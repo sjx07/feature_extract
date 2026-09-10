@@ -20,21 +20,17 @@ from typing import Callable, Optional
 
 from ..llm import Client
 from ..llm.pool import _sem
-from ..llm.registry import DEFAULT_MODEL, price, reasoning_low, reasoning_off, resolve
+from ..llm.registry import DEFAULT_MODEL, price, reasoning_low, resolve
 from ..store import Store, now
 from .profile import metrics, profile
 from .prompts import COMPONENTS_SCHEMA, SYSTEM
 
 # defaults from the FACET v5 trees (2,740 prompts): calls ≈ 3 + 1.18 per 1k chars, 1,753 tokens in and 169 out per call
-CALLS_BASE, CALLS_PER_KCHAR, TOKENS_IN, TOKENS_OUT = 3.0, 1.18, 1753, 169
-TOKENS_OUT_ON, SECONDS_PER_CALL_ON = 15_800, 100.0   # reasoning on, DeepSeek v4 flash: FACET pilot v9 (15.8k tokens per call, 321 s per prompt at 3.2 calls)
-MAX_TOKENS = 4096          # reply ceiling with reasoning off
-MAX_TOKENS_ON = 32768      # with reasoning on: hidden reasoning counts against it (FACET's corpus run used 32k; 15.8k tokens per call measured)
-
-
-def ceiling(reasoning: str, max_tokens: Optional[int] = None) -> int:
-    return max_tokens or (MAX_TOKENS_ON if reasoning == "on" else MAX_TOKENS)
-REASONING = "off"      # the default: with reasoning on, gpt-oss-20b spent the whole 4,096-token reply budget thinking and returned a truncated reply after 74 s
+# The model reasons: FACET's pilot v9 read reasoning off as worse (content typed as guidance, sentences cut, polarity
+# inverted) and the stage 1 comparison agreed (2 re-asks per prompt off against 0.3 on). Preview defaults from that pilot
+# on DeepSeek v4 flash: 15.8k output tokens and about 100 s per call. Hidden reasoning counts against the reply ceiling.
+CALLS_BASE, CALLS_PER_KCHAR, TOKENS_IN, TOKENS_OUT, SECONDS_PER_CALL = 3.0, 1.18, 1753, 15_800, 100.0
+MAX_TOKENS = 32768
 
 
 class Stop(Exception):
@@ -67,28 +63,23 @@ def history(store: Store, model: str) -> dict:
     return out
 
 
-def preview(store: Store, corpus: Optional[str] = None, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0,
-            reasoning: str = REASONING) -> dict:
+def preview(store: Store, corpus: Optional[str] = None, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0) -> dict:
     pids = prompt_ids(store, corpus, ids, redo, limit)
     if not pids:
         return {"prompts": 0, "note": "nothing to do"}
     q = ",".join("?" for _ in pids)
     chars = int(store.one(f"SELECT SUM(LENGTH(text)) c FROM prompt WHERE id IN ({q})", pids)["c"] or 0)
-    h = history(store, model) if reasoning == "off" else {}     # the store's timing is measured with reasoning off
+    h = history(store, model)
     per_k = h.get("calls_per_kchar")
     calls = int(round(len(pids) * CALLS_BASE + (per_k if per_k else CALLS_PER_KCHAR) * chars / 1000)) if not per_k else int(round(per_k * chars / 1000 + len(pids) * 1.0))
-    tin, tout = h.get("tokens_in", TOKENS_IN), h.get("tokens_out", TOKENS_OUT_ON if reasoning == "on" else TOKENS_OUT)
+    tin, tout = h.get("tokens_in", TOKENS_IN), h.get("tokens_out", TOKENS_OUT)
     ep = resolve(model)
     pi, po = price(model, ep)
     dollars = calls * (tin * pi + tout * po) / 1e6
-    spc = h.get("seconds_per_call") or (SECONDS_PER_CALL_ON if reasoning == "on" else None)
+    spc = h.get("seconds_per_call") or SECONDS_PER_CALL
     out = {"prompts": len(pids), "chars": chars, "calls": calls, "tokens_in": calls * tin, "tokens_out": calls * tout,
-           "model": model, "endpoint": ep.name, "dollars": round(dollars, 2), "workers": workers, "reasoning": reasoning, "basis": "this store" if per_k else ("FACET pilot v9, reasoning on" if reasoning == "on" else "FACET v5 defaults"), "history": h}
-    if spc:
-        out["seconds"] = round(calls * spc / max(workers, 1))
-    else:
-        out["seconds"] = None
-        out["note"] = "no timing for this model yet: run a pilot to measure seconds per call"
+           "model": model, "endpoint": ep.name, "dollars": round(dollars, 2), "workers": workers, "basis": "this store" if per_k else "FACET pilot v9", "history": h}
+    out["seconds"] = round(calls * spc / max(workers, 1))
     return out
 
 
@@ -123,20 +114,18 @@ def _write(store: Store, pid: str, text: str, tree, model: str) -> dict:
     return m
 
 
-def decompose_one(store: Store, client: Client, pid: str, model: str, reasoning: str = REASONING, max_tokens: Optional[int] = None) -> dict:
+def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens: int = MAX_TOKENS) -> dict:
     row = store.one("SELECT text FROM prompt WHERE id=?", (pid,))
     if not row:
         raise KeyError(pid)
     text = row["text"]
-    extra_body = reasoning_off(model, client.base_url) if reasoning == "off" else None
-    max_tokens = ceiling(reasoning, max_tokens)
     calls = {"n": 0, "cost": 0.0, "errors": 0, "fallbacks": 0}
 
     def ask(prompt: str) -> str:
-        r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=extra_body, stage="decompose", note=pid, system=SYSTEM, schema=COMPONENTS_SCHEMA)
+        r = client.complete(prompt, model=model, max_tokens=max_tokens, stage="decompose", note=pid, system=SYSTEM, schema=COMPONENTS_SCHEMA)
         calls["n"] += 1
         calls["cost"] += r.cost
-        if r.finish_reason == "length" and reasoning == "on" and not r.text.strip():
+        if r.finish_reason == "length" and not r.text.strip():
             # the model spent the ceiling thinking: once more at low effort (FACET's fallback; 183 of 2,068 prompts needed it)
             calls["fallbacks"] += 1
             r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=reasoning_low(model, client.base_url), stage="decompose", note=pid + " fallback:low", system=SYSTEM, schema=COMPONENTS_SCHEMA)
@@ -164,7 +153,7 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, reasoning:
 
 
 def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None,
-        redo: bool = False, limit: int = 0, reasoning: str = REASONING, max_tokens: Optional[int] = None,
+        redo: bool = False, limit: int = 0, max_tokens: int = MAX_TOKENS,
         progress: Optional[Callable[[int, int, dict], None]] = None, max_inflight: Optional[int] = None,
         stop: Optional[threading.Event] = None) -> dict:
     """`stop`, once set (by the caller, or by `progress` raising Stop), cancels the prompts not yet started and aborts
@@ -186,7 +175,7 @@ def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: st
             if stop.is_set():
                 return pid, None, "stopped"
             try:
-                return pid, decompose_one(store, client, pid, model, reasoning, max_tokens), None
+                return pid, decompose_one(store, client, pid, model, max_tokens), None
             except Exception as e:
                 if stop.is_set() or isinstance(e, Stop):
                     return pid, None, "stopped"

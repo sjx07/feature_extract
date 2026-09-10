@@ -144,7 +144,7 @@ def test_stage_run_writes_rows_resumes_and_previews(store):
         s3 = stage.run(store, c, "demo", model="m", workers=2, redo=True)            # redo: served from the cache
         assert s3["done"] == 1 and srv.calls == calls_before
     pv = stage.preview(store, "demo", model="m", workers=4, redo=True)
-    assert pv["prompts"] == 1 and pv["calls"] >= 3 and pv["dollars"] == 0.0 and pv["basis"] == "FACET v5 defaults"
+    assert pv["prompts"] == 1 and pv["calls"] >= 3 and pv["dollars"] == 0.0 and pv["basis"] == "FACET pilot v9"
     assert stage.preview(store, "demo", model="m")["prompts"] == 0
 
 
@@ -182,7 +182,7 @@ def test_gui_api_end_to_end(store, tmp_path):
     cs = t.get("/api/corpora").json()
     assert cs[0]["name"] == "demo" and cs[0]["n_prompts"] == 2
     pv = t.get("/api/preview?corpus=demo&model=m&workers=2").json()
-    assert pv["prompts"] == 2 and "note" in pv
+    assert pv["prompts"] == 2 and pv["seconds"] > 0
     with FakeServer() as srv:
         srv.router = router
         j = t.post("/api/jobs", json={"corpus": "demo", "model": "m", "workers": 2, "base_url": srv.url}).json()
@@ -243,7 +243,7 @@ def test_length_exhausted_reply_is_not_retried_and_falls_back_to_low_effort(stor
         srv.script = [reply("", finish="length", completion_tokens=4096),                              # reasoning spent the ceiling
                       reply('{"components":[{"start":"Answer briefly.","end":"Do not guess.","kind":"atom","facets":[{"verb":"answer","object":"briefly","polarity":"require"}]}]}')]
         c = Client(store, base_url=srv.url, empty_retries=3)
-        m = stage.decompose_one(store, c, pid, "m", reasoning="on")
+        m = stage.decompose_one(store, c, pid, "m")
         assert m["fallbacks"] == 1 and m["calls"] == 2                                              # one call, no empty retries, then the low-effort fallback
         rows = store.rows("SELECT note, error, finish_reason FROM call ORDER BY id")
         assert rows[0]["error"] == "empty" and rows[0]["finish_reason"] == "length" and rows[1]["note"].endswith("fallback:low")
