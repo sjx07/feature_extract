@@ -64,7 +64,7 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
     stop = stop or threading.Event()
     try:
         s = decompose.run(store, client, corpus, model=model, workers=workers, ids=ids, redo=redo, limit=limit, reasoning=reasoning,
-                          progress=progress_writer(store, ws, jid, stop, echo))
+                          progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         status = "stopped" if s["stopped"] else ("done" if not s["failed"] else "done_with_failures")
         finish(store, ws, jid, status)
     except Exception as e:

@@ -167,6 +167,20 @@ def _refine(s: _Session, text, lo, hi, path, norm, parent=None) -> list[Componen
     return components
 
 
+def _facet_check(s: _Session, text, norm) -> None:
+    """An atom is a leaf; if the model emitted it without facets nothing below would ever ask for them.
+    One call on the leaf alone, asking for the atom with its facets (with reasoning off the root reply often skips them)."""
+    for part, _, path in list(s.tree.walk()):
+        if not (part.is_leaf and part.kind == "atom" and part.span is not None) or part.facets:
+            continue
+        lo, hi = part.span
+        forced = _force_atom(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)))
+        if forced is not None:
+            part.facets = forced[0].facets
+            part.flags = [f for f in part.flags if f != "no_facets"] + ["facets_asked"]
+            s.tree.flags.append(f"facets_asked:{path}")
+
+
 def _split_check(s: _Session, text, norm) -> None:
     for part, _, path in list(s.tree.walk()):
         if not (part.is_leaf and part.kind == "atom" and part.span is not None) or "forced_atom" in part.flags:
@@ -196,6 +210,7 @@ def profile(text: str, ask: Ask) -> Tree:
         whole = Component(start=" ".join(text.split()[:3]), end=" ".join(text.split()[-3:]), kind="section")
         whole.span = (0, len(text)); whole.flags += ["unrefined", "unparsed"]
         tree.components = [whole]
+    _facet_check(s, text, norm)
     _split_check(s, text, norm)
     return tree
 

@@ -97,6 +97,14 @@ def cost(model: str, prompt_tokens: int, completion_tokens: int, endpoint: Optio
     return prompt_tokens * pi / 1e6 + completion_tokens * po / 1e6
 
 
+def reasoning_low(model: str, base_url: Optional[str] = None) -> dict:
+    """The extra_body for low reasoning effort: the fallback when a reasoning reply exhausted its ceiling."""
+    ep = resolve(model, base_url)
+    if ep.name == "openrouter":
+        return {"reasoning": {"effort": "low", "exclude": True}}
+    return {"reasoning_effort": "low"}
+
+
 def reasoning_off(model: str, base_url: Optional[str] = None) -> dict:
     """The extra_body that turns a model's hidden reasoning down or off on its endpoint. Measured on
     2026-09-10: vLLM's gpt-oss honours a top-level reasoning_effort (0.8 s, 37 tokens for a small

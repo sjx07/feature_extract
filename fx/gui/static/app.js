@@ -69,7 +69,7 @@ async function viewCorpora(main, q) {
   const rf = $('#rform');
   const params = () => { const d = Object.fromEntries(new FormData(rf)); return { corpus: d.corpus, model: d.model, workers: +d.workers, limit: +d.limit || 0, budget: d.budget || null, reasoning_off: !!d.reasoning_off, redo: !!d.redo }; };
   const showPreview = async () => { const p = params(); $('#preview').innerHTML = '<span class="muted">estimating</span>';
-    const r = await api(`/api/preview?corpus=${encodeURIComponent(p.corpus)}&model=${encodeURIComponent(p.model)}&workers=${p.workers}&redo=${p.redo}&limit=${p.limit}`);
+    const r = await api(`/api/preview?corpus=${encodeURIComponent(p.corpus)}&model=${encodeURIComponent(p.model)}&workers=${p.workers}&redo=${p.redo}&limit=${p.limit}&reasoning=${p.reasoning_off ? 'off' : 'on'}`);
     if (!r.prompts) { $('#preview').innerHTML = '<span class="muted">nothing to do: every prompt is decomposed</span>'; return; }
     $('#preview').innerHTML = `<div class="prev"><span><b>${fmt(r.prompts)}</b>prompts</span><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(Math.round(r.tokens_in / 1000))}k</b>tokens in</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.endpoint)}</span><span><b>${r.seconds == null ? '?' : fmtSec(r.seconds)}</b>at ${r.workers} workers</span></div>
       <div class="muted" style="font-size:12px;margin-top:6px">${esc(r.basis)}${r.note ? ' · ' + esc(r.note) : ''}</div>`; };

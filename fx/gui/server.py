@@ -112,8 +112,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     # ---- preview and jobs
     @app.get("/api/preview")
-    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0):
-        return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit)
+    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0, reasoning: str = "off"):
+        return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit, reasoning="on" if reasoning == "on" else "off")
 
     @app.get("/api/jobs")
     def api_jobs():
@@ -148,6 +148,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         ev = running.get(jid)
         if ev:
             ev.set()
+            with store.lock:
+                store.con.execute("UPDATE job SET status='stopping' WHERE id=? AND status='running'", (jid,)); store.con.commit()
         return {"ok": bool(ev)}
 
     @app.get("/api/jobs/{jid}")

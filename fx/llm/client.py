@@ -88,8 +88,9 @@ def _classify(err: Exception) -> Optional[str]:
 class Client:
     def __init__(self, store: Optional[Store] = None, *, budget: float = float("inf"), timeout: float = 300.0,
                  max_retries: int = 6, empty_retries: int = 3, max_connections: int = 256, base_url: Optional[str] = None,
-                 log_replies: bool = True):
+                 log_replies: bool = True, stop: Optional[threading.Event] = None):
         self.store = store
+        self.stop = stop                        # set it and every retry loop returns error 'stopped'; close() aborts in-flight calls
         self.budget = float(budget)
         self.timeout = timeout
         self.max_retries = max_retries
@@ -113,6 +114,19 @@ class Client:
                 _ = c.chat.completions   # warm the lazy property under one lock, not in a worker pool
                 self._clients[ep.base_url] = c
             return self._clients[ep.base_url]
+
+    def close(self) -> None:
+        """Close every HTTP client so calls waiting on a server return at once (as transport errors)."""
+        with self._lock:
+            cs, self._clients = list(self._clients.values()), {}
+        for c in cs:
+            try:
+                c.close()
+            except Exception:
+                pass
+
+    def _stopped(self) -> bool:
+        return self.stop is not None and self.stop.is_set()
 
     def spent(self) -> float:
         return self.store.spent() if self.store else self.spent_session
@@ -188,6 +202,8 @@ class Client:
         for attempt in range(self.empty_retries + 1):
             resp = None
             for t in range(self.max_retries + 1):
+                if self._stopped():
+                    return "", None, None, "stopped"
                 try:
                     resp = self._create(sdk, model, msgs, params, stream)
                     break
@@ -225,6 +241,10 @@ class Client:
                 finish = getattr(ch, "finish_reason", None) if ch else None
             if text.strip():
                 return text, usage, finish, None
+            if finish == "length":                 # the ceiling was spent before any text: the same request truncates the same way
+                return text, usage, finish, "empty"
+            if self._stopped():
+                return text, usage, finish, "stopped"
             if attempt < self.empty_retries:
                 time.sleep(min(10.0, 2.0 * (attempt + 1)) + random.uniform(0, 1.0))
         return text, usage, finish, "empty"

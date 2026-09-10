@@ -94,7 +94,7 @@ def validate_components(components: list[Component], text: str, lo: int, hi: int
         cursor = part.span[1]
         for name, quote in (("start", part.start), ("end", part.end)):
             if occurrences(text, quote, lo, hi, norm=norm) > 1:
-                failures.append(f"{label}: the {name} quote {quote!r} occurs more than once in the span; quote more words")
+                failures.append(f"{label}: the {name} quote {quote!r} occurs more than once in the span; quote its first five or six words exactly as written")
                 part.flags.append(f"ambiguous_{name}")
         if part.kind == "atom" and not part.facets:
             failures.append(f"{label}: an atom but has no facets")

@@ -234,3 +234,47 @@ def test_schema_is_sent_and_dropped_when_rejected(store):
         assert r.text == "b" and "response_format" not in srv.requests[-1]
         c.complete("q3", model="m2", schema=COMPONENTS_SCHEMA)
         assert "response_format" not in srv.requests[-1]                          # remembered for the model
+
+
+def test_length_exhausted_reply_is_not_retried_and_falls_back_to_low_effort(store):
+    import_text(store, "Answer briefly. Do not guess.", name="one")
+    pid = store.one("SELECT id FROM prompt")["id"]
+    with FakeServer() as srv:
+        srv.script = [reply("", finish="length", completion_tokens=4096),                              # reasoning spent the ceiling
+                      reply('{"components":[{"start":"Answer briefly.","end":"Do not guess.","kind":"atom","facets":[{"verb":"answer","object":"briefly","polarity":"require"}]}]}')]
+        c = Client(store, base_url=srv.url, empty_retries=3)
+        m = stage.decompose_one(store, c, pid, "m", reasoning="on")
+        assert m["fallbacks"] == 1 and m["calls"] == 2                                              # one call, no empty retries, then the low-effort fallback
+        rows = store.rows("SELECT note, error, finish_reason FROM call ORDER BY id")
+        assert rows[0]["error"] == "empty" and rows[0]["finish_reason"] == "length" and rows[1]["note"].endswith("fallback:low")
+
+
+def test_atom_without_facets_gets_one_call_for_them(store):
+    import_text(store, "Answer briefly. Do not guess.", name="one")
+    pid = store.one("SELECT id FROM prompt")["id"]
+    with FakeServer() as srv:
+        srv.script = [reply('{"components":[{"start":"Answer briefly.","end":"Do not guess.","kind":"atom"}]}'),          # root: an atom, no facets
+                      reply('{"components":[{"start":"Answer briefly.","end":"Do not guess.","kind":"atom"}]}'),          # re-ask: same
+                      reply('{"components":[{"start":"Answer briefly.","end":"Do not guess.","kind":"atom","facets":[{"verb":"answer","object":"briefly","polarity":"require"},{"verb":"guess","object":"","polarity":"forbid"}]}]}')]
+        c = Client(store, base_url=srv.url)
+        m = stage.decompose_one(store, c, pid, "m")
+        assert store.one("SELECT COUNT(*) n FROM reading")["n"] == 2
+        assert "facets_asked:0" in json.loads(store.one("SELECT flags FROM decomp")["flags"])
+
+
+def test_stop_cancels_pending_prompts_and_leaves_them_to_do(store):
+    import threading
+    for k in range(8):
+        import_text(store, f"Prompt number {k}. Do the thing carefully.", name="many")
+    with FakeServer() as srv:
+        srv.script = [reply('{"components":[{"start":"Prompt number","end":"carefully.","kind":"atom","facets":[{"verb":"do","object":"the thing","polarity":"require"}]}]}')] * 100
+        c = Client(store, base_url=srv.url)
+        stop = threading.Event()
+
+        def after_two(done, total, info):
+            if done >= 2:
+                stop.set()
+        s = stage.run(store, c, "many", model="m", workers=1, progress=after_two, stop=stop)
+        assert s["stopped"] and s["done"] < 8
+        assert store.one("SELECT COUNT(*) n FROM decomp")["n"] == s["done"]                    # cancelled prompts wrote nothing
+        assert c.complete("x", model="m").error is None                                         # the client reopens after close()
