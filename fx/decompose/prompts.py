@@ -11,7 +11,7 @@ from __future__ import annotations
 
 SPAN_MARK = "[SPAN]"
 
-MATERIAL_KINDS = ("example", "schema", "code", "slot", "template", "title", "reference", "other")
+MATERIAL_KINDS = ("example", "schema", "code", "slot", "template", "title", "reference")   # no catch-all: prose that fits none of these is guidance
 
 _TASK = """\
 # TASK
@@ -30,16 +30,21 @@ _TREE = """\
   - MATERIAL: a leaf; text shown to the model to work on or to copy, not guidance to follow: a
     schema, a table, a worked example with its answer, a code block, an input slot such as
     {question}, an output template, a title or separator, a description of an input, a tool or
-    the environment, a pasted reference. Material is reported as a component with its material
-    kind, is never divided, and carries no facets.
+    the environment, a pasted reference. Never a statement about the model itself or about what
+    is wanted from it. Material is reported as a component with its material kind, is never
+    divided, and carries no facets.
 """
 
 _DEFINITIONS = """\
 # DEFINITIONS
-- guidance: text that tells the model what to do, what not to do, or how to reason or answer.
-  Test: the model can obey or violate it. Text that describes what something is or does (an
-  input, a tool, what a function returns, what the system will do with the answer) fails the
-  test and is material, even when it stands among instructions.
+- guidance: text addressed to the model about itself or its task: who or what it is, what it
+  is for, what it must do or not do, how to reason or answer, what the author wants from it.
+  Test: the model can obey or violate it. "You are a helpful SQL assistant" is guidance (act
+  as a SQL assistant); "I need the queries converted to SQL" is guidance (convert the queries
+  to SQL); "Our focus is set operations" is guidance (focus on set operations). Text that
+  describes something other than the model and its task (an input, a tool, what a function
+  returns, what the system will do with the answer) is material, even when it stands among
+  instructions: "The search tool returns column names" is material.
 - component: a run of consecutive text of one kind inside the SPAN. Divide at the LARGEST units
   the prompt's own organization separates at this level: a titled block, a lead-in together
   with the list or template it introduces, a paragraph, a code block, an example. Inside a
@@ -78,7 +83,11 @@ separate components and never restate each other.
   still says what kind of thing it is (a query language, a search tool, a proof assistant;
   never "the specified X"); words such as question, answer, context, problem, result, step
   are not domain-specific and stay as they are, and neither is a concept the instruction is
-  about (integers, square roots, joins, dependencies): keep it.
+  about (integers, square roots, joins, dependencies): keep it. Keep the object short: a
+  head noun phrase of a few words. When the object is a generic word carrying a relative
+  clause ("a response that completes the request", "an answer which addresses the question"),
+  the clause is the instruction: verb "complete", object "the request". Manner and degree go
+  to the qualifier, never into the object.
 - qualifier: how, or to what extent, the action is done; "" when the component says nothing.
 - polarity: "forbid" if the guidance prohibits the action, else "require".
 - condition: what must hold for the guidance to apply, stated in the component or in the
@@ -97,7 +106,7 @@ _OUTPUT = """\
      "facets":[{"verb":"…","object":"…","qualifier":"","polarity":"require|forbid",
                 "condition":"always","domain_terms":[]}]},
     {"start":"…","end":"…","kind":"section"},
-    {"start":"…","end":"…","kind":"material","material":"example|schema|code|slot|template|title|reference|other"}]}
+    {"start":"…","end":"…","kind":"material","material":"example|schema|code|slot|template|title|reference"}]}
 """
 
 REFINE = (_TASK.replace("{ctx_clause}", ", and the CONTEXT it sits in") + "\n" + _TREE + "\n"
