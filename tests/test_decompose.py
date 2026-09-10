@@ -202,7 +202,7 @@ def test_gui_api_end_to_end(store, tmp_path):
     p = t.get(f"/api/prompt/{pid}").json()
     assert p["decomp"]["status"] == "done" and len(p["spans"]) >= 7 and any(a["kind"] == "material" and a["note"] == "example" for a in p["spans"])
     q = t.get("/api/queues?corpus=demo").json()
-    assert set(q) == {"low_coverage", "gaps", "unrefined", "failed"}
+    assert set(q) == {"low_coverage", "gaps", "unrefined", "failed", "unwrapped"}
     assert t.get("/").status_code == 200 and t.get("/api/spend").json()["total"] == 0.0
 
 

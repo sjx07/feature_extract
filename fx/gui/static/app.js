@@ -65,7 +65,7 @@ async function viewCorpora(main, q) {
   $('#iform input[name=path]').onchange = e => { const v = e.target.value.trim(); if (v && !$('#iform input[name=name]').value) $('#iform input[name=name]').value = v.replace(/\/+$/, '').split('/').pop().replace(/\.[^.]+$/, ''); };
   file.onchange = () => { drop.textContent = file.files[0] ? file.files[0].name : 'drop a file here, or click to choose'; if (!$('#iform input[name=name]').value && file.files[0]) $('#iform input[name=name]').value = file.files[0].name.replace(/\.[^.]+$/, ''); };
   $('#iform').onsubmit = async e => { e.preventDefault(); const fd = new FormData($('#iform')); if (file.files[0]) fd.append('file', file.files[0]); $('#istatus').textContent = 'importing';
-    try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}, ${r.duplicates_elsewhere} also in another corpus`; location.hash = href('/corpora', { corpus: r.corpus }); route(); } catch (err) { $('#istatus').textContent = err.message; } };
+    try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}, ${r.duplicates_elsewhere} also in another corpus${r.unwrapped ? `, ${r.unwrapped} unwrapped from harvest residue` : ''}`; location.hash = href('/corpora', { corpus: r.corpus }); route(); } catch (err) { $('#istatus').textContent = err.message; } };
   const rf = $('#rform');
   const params = () => { const d = Object.fromEntries(new FormData(rf)); return { corpus: d.corpus, model: d.model, workers: +d.workers, limit: +d.limit || 0, budget: d.budget || null, redo: !!d.redo }; };
   const showPreview = async () => { const p = params(); $('#preview').innerHTML = '<span class="muted">estimating</span>';
@@ -145,6 +145,7 @@ async function viewPrompt(main, pid) {
   main.innerHTML = `<h1 class="mono" style="font-size:20px">${esc(p.id)}</h1>
     <div class="facts" style="margin-bottom:16px"><span class="k">corpus</span><span>${esc(p.corpus)}</span><span class="k">source, recorded</span><span>${unknown(p.system)} ${p.domain ? '· ' + esc(p.domain) : ''} ${p.source_id ? '· <span class="mono" style="font-size:12px">' + esc(p.source_id) + '</span>' : ''}</span>
       <span class="k">task label</span><span>${unknown(p.task, 'unknown')}</span>
+      ${p.meta && p.meta.harvest ? `<span class="k">unwrapped from</span><span>${esc(p.meta.harvest.wrapped)} <details style="display:inline"><summary class="muted" style="display:inline;cursor:pointer">show original</summary><pre class="mono" style="font-size:11.5px;white-space:pre-wrap;max-height:30vh;overflow:auto">${esc(p.meta.harvest.original)}</pre></details></span>` : ''}
       <span class="k">decomposition</span><span>${d ? (d.status === 'done' ? `coverage <b>${pct(d.coverage)}</b> of the instruction text · material ${pct(d.material_share)} · ${nAtoms} atoms · ${nReadings} readings · ${d.calls} calls, ${d.reasks} re-asks, ${d.seconds} s · ${esc(d.model)}` : `<span class="err">${esc(d.status)}: ${esc(d.error || '')}</span>`) : '<span class="muted"><i>not decomposed</i></span>'}</span></div>
     <div class="legend"><span><i style="background:var(--req-soft);border-bottom:1.5px solid var(--req)"></i>atom</span><span><i style="background:var(--for-soft);border-bottom:1.5px solid var(--for)"></i>forbid</span><span><i style="background:var(--mat-soft)"></i>material</span><span><i style="background:var(--gap-soft);border-bottom:1.5px dashed var(--gap)"></i>unrefined, or a gap the model declined</span></div>
     <div class="cols2"><div class="rawtext" id="raw">${paint(p.text, sp)}</div>
@@ -165,6 +166,7 @@ async function viewQueues(main, q) {
     <div class="block"><div class="t">low coverage, under 90%</div>${r.low_coverage.length ? `<table class="list">${r.low_coverage.map(x => row(x, `<td class="n">${pct(x.coverage)}</td><td class="n">${x.n_atoms} atoms</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
     <div class="block"><div class="t">gaps the model declined</div>${r.gaps.length ? `<table class="list">${r.gaps.map(x => row(x, `<td class="n">${esc(x.note || '')}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
     <div class="block"><div class="t">unrefined leaves</div>${r.unrefined.length ? `<table class="list">${r.unrefined.map(x => row(x)).join('')}</table>` : '<span class="muted">none</span>'}</div>
+    <div class="block"><div class="t">unwrapped at import (read that the prompt is the whole prompt)</div>${r.unwrapped.length ? `<table class="list">${r.unwrapped.map(x => row(x, `<td class="n">${esc(x.note || '')}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
     <div class="block"><div class="t">failed</div>${r.failed.length ? `<table class="list">${r.failed.map(x => row({ id: x.id, text: x.error })).join('')}</table>` : '<span class="muted">none</span>'}</div>`;
 }
 

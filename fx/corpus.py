@@ -7,7 +7,8 @@
 Prompts are keyed by their text hash inside a corpus, so a re-import of the same file adds
 nothing, and the same text in two corpora is two prompt rows that share a hash (the GUI shows
 the duplicate count). Source metadata is kept as recorded; the task label is unknown unless the
-source carried one.
+source carried one. A prompt that arrived inside the code or record it was harvested from is
+unwrapped first (see fx.unwrap); the original is kept in meta["harvest"].
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from .store import Store, now
+from .unwrap import unwrap
 
 TEXT_SUFFIXES = {".txt", ".md", ".prompt", ".jinja", ".j2", ".yaml", ".yml", ".json"}
 
@@ -38,12 +40,16 @@ def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict]) -> dict:
     """rows: {text, id?, domain?, system?, task?, source_id?, meta?}. Returns counts."""
     have = {r["sha"] for r in store.rows("SELECT sha FROM prompt WHERE corpus=?", (corpus_id,))}
     elsewhere = {r["sha"] for r in store.rows("SELECT sha FROM prompt WHERE corpus!=?", (corpus_id,))}
-    added = skipped = dup = 0
+    added = skipped = dup = unwrapped = 0
     for r in rows:
         text = (r.get("text") or "").strip("\n")
         if not text.strip():
             skipped += 1
             continue
+        meta = dict(r.get("meta") or {})
+        text, how = unwrap(text)
+        if how:
+            meta["harvest"] = {"wrapped": how, "original": (r.get("text") or "").strip("\n")}
         h = sha(text)
         if h in have:
             skipped += 1
@@ -52,12 +58,13 @@ def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict]) -> dict:
         if store.one("SELECT 1 FROM prompt WHERE id=?", (pid,)):
             pid = f"{corpus_id}:{h[:16]}"
         store.insert("prompt", {"id": pid, "corpus": corpus_id, "sha": h, "text": text, "domain": r.get("domain"), "system": r.get("system"),
-                                "task": r.get("task"), "source_id": r.get("source_id"), "meta": r.get("meta") or {}, "at": now()})
+                                "task": r.get("task"), "source_id": r.get("source_id"), "meta": meta, "at": now()})
         have.add(h)
         added += 1
+        unwrapped += bool(how)
         if h in elsewhere:
             dup += 1
-    return {"added": added, "skipped": skipped, "duplicates_elsewhere": dup}
+    return {"added": added, "skipped": skipped, "duplicates_elsewhere": dup, "unwrapped": unwrapped}
 
 
 def _facet_rows(path: Path, domain: Optional[str]) -> Iterable[dict]:

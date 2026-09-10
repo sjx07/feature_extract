@@ -108,7 +108,9 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         spans = lambda kind: [dict(r) for r in store.rows("SELECT s.prompt id, s.lo, s.hi, s.note, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 160)) text FROM span s JOIN prompt p ON p.id=s.prompt JOIN corpus c ON c.id=p.corpus "
                                                           f"WHERE s.kind=?{where} ORDER BY s.hi-s.lo DESC LIMIT 300", [kind] + params)]
         failed = [dict(r) for r in store.rows("SELECT d.prompt id, d.error FROM decomp d JOIN prompt p ON p.id=d.prompt JOIN corpus c ON c.id=p.corpus WHERE d.status='failed'" + where, params)]
-        return {"low_coverage": low, "gaps": spans("gap"), "unrefined": spans("unrefined"), "failed": failed}
+        unwrapped = [dict(r) | {"note": json.loads(r.pop("meta") or "{}").get("harvest", {}).get("wrapped", "")} for r in
+                     (dict(x) for x in store.rows("SELECT p.id, p.meta, SUBSTR(p.text,1,120) text FROM prompt p JOIN corpus c ON c.id=p.corpus WHERE p.meta LIKE '%\"wrapped\":%'" + where + " LIMIT 300", params))]
+        return {"low_coverage": low, "gaps": spans("gap"), "unrefined": spans("unrefined"), "failed": failed, "unwrapped": unwrapped}
 
     # ---- preview and jobs
     @app.get("/api/preview")

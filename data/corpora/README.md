@@ -12,6 +12,10 @@
   | text2cypher.jsonl | 145 | 181,570 |
   | code-generation.jsonl | 142 | 151,614 |
 
+  About 116 of them arrived inside the code or record they were harvested from (a Python
+  string, an argparse default, a Lean literal, a JSON field, or a one-line string with escaped
+  newlines); the importer unwraps those and keeps the original in the prompt's meta, and the
+  queues page lists them.
   Drop one file onto the site or import it from the terminal; pick the count at run time
   (`--limit`, or "first N only" on the site). Rebuild with
   `python tools/facet_corpus.py <prompts.jsonl ...>` (`--domains` to write a subset).
