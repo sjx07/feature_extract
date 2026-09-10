@@ -31,12 +31,6 @@ class Facet:
                 "condition": self.condition, "domain_terms": list(self.domain_terms), "declaration": self.declaration}
 
 
-# what a material leaf provides when the model gave no facet for it, by material kind
-MATERIAL_FACET = {"example": ("provide", "a worked example"), "schema": ("provide", "a schema"), "code": ("provide", "a code block"),
-                  "slot": ("provide", "an input slot"), "template": ("provide", "an output template"), "title": ("use", "a section header"),
-                  "reference": ("provide", "reference material"), "other": ("provide", "material")}
-
-
 @dataclass
 class Component:
     start: str
@@ -54,12 +48,12 @@ class Component:
 
     @property
     def readings(self) -> list[Facet]:
-        """The facets recorded for this leaf: an atom's guidance; for material the one facet saying what the
-        prompt provides (the model's, else by kind); nothing for a section."""
+        """The facets recorded for this leaf, all in one shape: an atom's guidance; for material the one facet
+        saying what the prompt provides; nothing for a section. Every facet is the model's."""
         if self.kind == "atom":
             return self.facets
         if self.kind == "material":
-            return self.facets[:1] or [Facet(*MATERIAL_FACET.get(self.material or "other", MATERIAL_FACET["other"]))]
+            return self.facets[:1]
         return []
 
     @property

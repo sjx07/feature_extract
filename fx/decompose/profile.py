@@ -121,10 +121,12 @@ def _ask(s: _Session, text, lo, hi, path, norm, parent=None):
     return components or [], failures
 
 
-def _force_atom(s: _Session, text, lo, hi, path, norm, parent=None):
-    prompt = P.with_reask(P.render_refine(text, lo, hi, parent), ["the span cannot be divided further: return exactly one component of kind atom with its facets"])
+def _force_atom(s: _Session, text, lo, hi, path, norm, parent=None, kind: str = "atom"):
+    """One call for the span as a single leaf of `kind` with its facets: an atom, or a material leaf with the facet saying what it provides."""
+    what = "kind atom with its facets" if kind == "atom" else f"kind material ({kind} is its material kind) with the one facet saying what it provides"
+    prompt = P.with_reask(P.render_refine(text, lo, hi, parent), [f"the span cannot be divided further: return exactly one component of {what}"])
     components = parse_components(s.call(prompt))
-    if not components or len(components) != 1 or components[0].kind != "atom" or not components[0].facets:
+    if not components or len(components) != 1 or components[0].kind != ("atom" if kind == "atom" else "material") or not components[0].facets:
         return None
     if validate_components(components, text, lo, hi, path, norm=norm):
         return None
@@ -168,13 +170,13 @@ def _refine(s: _Session, text, lo, hi, path, norm, parent=None) -> list[Componen
 
 
 def _facet_check(s: _Session, text, norm) -> None:
-    """An atom is a leaf; if the model emitted it without facets nothing below would ever ask for them.
-    One call on the leaf alone, asking for the atom with its facets (with reasoning off the root reply often skips them)."""
+    """An atom or a material leaf the model emitted without facets: nothing below would ever ask for them, so one
+    call on the leaf alone asks for the leaf with its facets (with reasoning off the root reply often skips them)."""
     for part, _, path in list(s.tree.walk()):
-        if not (part.is_leaf and part.kind == "atom" and part.span is not None) or part.facets:
+        if not (part.is_leaf and part.kind in ("atom", "material") and part.span is not None) or part.facets:
             continue
         lo, hi = part.span
-        forced = _force_atom(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)))
+        forced = _force_atom(s, text, lo, hi, f"{path}.", norm, parent=(0, len(text)), kind="atom" if part.kind == "atom" else (part.material or "reference"))
         if forced is not None:
             part.facets = forced[0].facets
             part.flags = [f for f in part.flags if f != "no_facets"] + ["facets_asked"]
