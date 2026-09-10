@@ -69,7 +69,7 @@ def test_validate_locates_and_names_failures():
     text = "Use the schema. Return JSON only. Use the schema."
     cs = parse_components('{"components":[{"start":"Use the schema.","end":"Use the schema.","kind":"atom","facets":[{"verb":"use","object":"the schema"}]},{"start":"Return JSON only.","end":"Return JSON only.","kind":"atom"},{"start":"nowhere","end":"here","kind":"section"}]}')
     fails = validate_components(cs, text, 0, len(text))
-    assert cs[0].span == (0, 15) and any("more than once" in f for f in fails)
+    assert cs[0].span == (0, 15) and not any("occurs again" in f for f in fails)          # the repeat is after the next component: no ambiguity
     assert cs[1].span == (16, 33) and any("no facets" in f for f in fails)
     assert cs[2].span is None and any("not found" in f for f in fails)
 
@@ -293,3 +293,17 @@ def test_material_leaves_carry_one_reading_of_what_is_provided(store):
         assert m["calls"] == 3                                                                          # root, its re-ask (same), the title alone
         rows = store.rows("SELECT s.kind, s.note, r.verb, r.object FROM reading r JOIN span s ON s.id=r.span ORDER BY s.lo")
         assert [(r["kind"], r["verb"], r["object"]) for r in rows] == [("material", "use", "a task header"), ("atom", "answer", "briefly"), ("material", "provide", "a worked arithmetic example")]
+
+
+def test_repeated_quotes_resolve_in_order_and_only_a_repeated_end_is_ambiguous():
+    from fx.decompose.locate import validate_components
+    from fx.decompose.contract import Component, Facet
+    text = "- required parameters: a table\n- sim_value: finds values\n- required parameters: a column\n- sim_columns: finds columns\n```\ncode one\n```\nthen\n```\ncode two\n```\nDone."
+    f = [Facet("provide", "x")]
+    cs = [Component("- required parameters:", "a table", "material", "reference", facets=f), Component("- sim_value:", "finds values", "material", "reference", facets=f),
+          Component("- required parameters:", "a column", "material", "reference", facets=f), Component("- sim_columns:", "finds columns", "material", "reference", facets=f)]
+    fails = validate_components(cs, text, 0, len(text))
+    assert fails == [] and [c.span for c in cs] == [(0, 30), (31, 56), (57, 88), (89, 117)]         # each repeated header at its own line
+    cs2 = [Component("```", "```", "material", "code", facets=f), Component("Done.", "Done.", "atom", facets=[Facet("finish", "")])]
+    fails = validate_components(cs2, text, 117, len(text))
+    assert len(fails) == 1 and "occurs again before the next component" in fails[0] and "ambiguous_end" in cs2[0].flags

@@ -92,10 +92,6 @@ def validate_components(components: list[Component], text: str, lo: int, hi: int
             part.flags.append("unlocated")
             continue
         cursor = part.span[1]
-        for name, quote in (("start", part.start), ("end", part.end)):
-            if occurrences(text, quote, lo, hi, norm=norm) > 1:
-                failures.append(f"{label}: the {name} quote {quote!r} occurs more than once in the span; quote its first five or six words exactly as written")
-                part.flags.append(f"ambiguous_{name}")
         if part.kind == "atom" and not part.facets:
             failures.append(f"{label}: an atom but has no facets")
             part.flags.append("no_facets")
@@ -104,7 +100,20 @@ def validate_components(components: list[Component], text: str, lo: int, hi: int
             part.flags.append("no_facets")
         if part.kind == "section" and part.facets:
             part.facets = []
+    # A quote is resolved at its first occurrence after the previous component, so a repeated start is harmless
+    # (components are consecutive). A repeated END is the real ambiguity: if the end quote occurs again before
+    # the next located component begins, the component may extend further than the first occurrence.
+    located = [(i, p) for i, p in enumerate(components) if p.span is not None]
+    for k, (i, part) in enumerate(located):
+        nxt = located[k + 1][1].span[0] if k + 1 < len(located) else hi
+        if occurrences(text, part.end, part.span[1], nxt, norm=norm) > 0:
+            failures.append(f"{path_label(path, i)}: the end quote {part.end!r} occurs again before the next component, so the component may reach further; quote its last five or six words exactly as written")
+            part.flags.append("ambiguous_end")
     return failures
+
+
+def path_label(path: str, i: int) -> str:
+    return f"component[{path}{i}]"
 
 
 def nonspace(text: str, lo: int, hi: int) -> int:
