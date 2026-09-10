@@ -38,6 +38,12 @@ PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 
 Then http://localhost:8780: drop `data/corpora/facet/text2sql.jsonl`, preview, run first 30.
 
+## Reasoning: on or off
+
+FACET's v5 library was decomposed with DeepSeek's reasoning on (provider default, 32k ceiling, one low-effort fallback when a call exhausted it): 5.2 calls and 593 s per prompt. Its pilot v9 read reasoning off as worse (content typed as guidance, sentences cut, polarity inverted) and rejected it. The stage 1 default of off came from the local gpt-oss pilot and was not checked against that. What is now in the code: the reply ceiling follows the setting (4,096 off, 32,768 on), a reply that ended by `length` with no text is not retried but answered once more at low effort, an atom the model emitted without facets gets one call for them, and the locator's re-ask asks for a short exact quote instead of "more words". A same-30-prompt comparison, `runs/cmp_off` and `runs/cmp_on`, decides the default; read both in the prompt view.
+
+Stop now works while calls are in flight: the button marks the job `stopping`, prompts not yet started are cancelled, the HTTP clients are closed so waiting calls return, and prompts caught mid-way are left to do for the next run.
+
 ## Open
 
 - Quote failures on long prompts: teach the re-ask to name the offending components and ask for three-word quotes, and measure the re-ask rate (1.85 per prompt in the pilot).
