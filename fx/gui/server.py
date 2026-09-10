@@ -190,7 +190,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
         stop = threading.Event()
         running[jid] = stop
-        client = Client(store)
+        client = Client(store, base_url=body.get("base_url") or None)
 
         def work():
             jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, stop=stop)
