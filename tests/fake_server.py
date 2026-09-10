@@ -23,6 +23,7 @@ def reply(text: str, prompt_tokens: int = 10, completion_tokens: int = 5, **kw) 
 class FakeServer:
     def __init__(self):
         self.script: list[dict] = [reply("ok")]
+        self.router = None                 # optional: body -> entry, consulted before the script
         self.requests: list[dict] = []
         self.calls = 0
         self._lock = threading.Lock()
@@ -37,11 +38,12 @@ class FakeServer:
                 body = json.loads(self.rfile.read(n) or b"{}")
                 with srv._lock:
                     i = min(srv.calls, len(srv.script) - 1)
-                    entry = srv.script[i]
+                    entry = srv.router(body) if srv.router else srv.script[i]
                     srv.calls += 1
                     srv.requests.append(body)
                 if entry.get("reject") and entry["reject"] in body:
-                    self._send(400, {"error": {"message": f"Unsupported parameter: '{entry['reject']}' is not supported with this model. Use 'max_completion_tokens' instead."}})
+                    hint = " Use 'max_completion_tokens' instead." if entry["reject"] == "max_tokens" else ""
+                    self._send(400, {"error": {"message": f"Unsupported parameter: '{entry['reject']}' is not supported with this model.{hint}"}})
                     return
                 if entry.get("reject_temperature") and "temperature" in body:
                     self._send(400, {"error": {"message": "temperature does not support 0.0 with this model. Only the default (1) value is supported."}})

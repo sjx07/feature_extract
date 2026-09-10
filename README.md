@@ -16,7 +16,7 @@ Stages, in the order the data flows:
 | 4 | `fx refine` | splits, edges, reversions, as rules with parameters |
 | 5 | `fx serve` | the GUI |
 
-Stage 0 is in place; the others are planned in that order.
+Stages 0 and 1 are in place; the others follow in that order.
 
 ## Stage 0: models, ledger, cache
 
@@ -54,6 +54,34 @@ fx llm probe --model openai/gpt-oss-20b         one call against the local serve
 fx llm call --model gpt-5.6-sol --stream "..."  a priced, cached call
 fx llm spend                                    dollars by model from the store
 ```
+
+## Stage 1: decomposition and the site
+
+```
+set -a; source ~/FACET/.env; set +a                       # OPENROUTER_API_KEY, OPENAI_API_KEY
+PYTHONPATH=. FX_STORE=runs/dev/store.db python -m fx.cli serve --port 8780
+```
+
+Open http://localhost:8780. Drop a FACET prompts.jsonl (with a domain filter), a folder or zip of
+text files, or paste one prompt. The run panel previews calls, tokens, dollars and, once the store
+has timing for the model, time; "run first N" decomposes a pilot, "run all" the rest. The job page
+follows the run over server-sent events; the prompt page shows the raw text painted with atoms,
+material and declined gaps beside the tree; the queues page lists what to read.
+
+The same from the terminal:
+
+```
+PYTHONPATH=. python -m fx.cli import ~/Documents/FACET/facet_artifact/data/prompt/prompts.jsonl --name text2sql --domain text2sql
+PYTHONPATH=. python -m fx.cli preview --corpus text2sql --model deepseek/deepseek-v4-flash --workers 128
+PYTHONPATH=. python -m fx.cli decompose --corpus text2sql --limit 30
+```
+
+How it decomposes: the REFINE prompt from FACET, applied to the whole prompt and then to every
+section, until every leaf is an atom with its facets or material the model marked as such.
+Every unowned stretch of a sentence or more is refined once as a gap and its outcome recorded.
+Coverage is atom characters over instruction characters, instruction being what the model did
+not call material. Reasoning is off by default (the registry knows how to say that to each
+endpoint) and replies are constrained to the components schema where the server supports it.
 
 ## Tests
 

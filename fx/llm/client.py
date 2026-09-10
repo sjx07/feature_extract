@@ -125,11 +125,14 @@ class Client:
     # ---- the call
     def complete(self, messages: Messages, *, model: str, max_tokens: Optional[int] = 8192, temperature: float = 0.0,
                  extra_body: Optional[dict] = None, stream: bool = False, cache: bool = True, stage: str = "", note: str = "",
-                 system: Optional[str] = None, on_chunk=None) -> Reply:
+                 system: Optional[str] = None, on_chunk=None, schema: Optional[dict] = None) -> Reply:
+        """schema: a JSON schema the reply must satisfy; sent as response_format json_schema, which vLLM
+        and OpenAI enforce at decoding time. A server that rejects response_format has it dropped for
+        that model from then on, so a schema is a request, not a guarantee: parse the reply anyway."""
         msgs = _to_messages(messages)
         if system:
             msgs = [{"role": "system", "content": system}] + msgs
-        params = {"max_tokens": max_tokens, "temperature": temperature, "extra_body": extra_body or None}
+        params = {"max_tokens": max_tokens, "temperature": temperature, "extra_body": extra_body or None, "schema": schema}
         sha = sha_of(model, msgs, params)
         ep = resolve(model, self.base_url)
         if cache and self.store is not None:
@@ -152,12 +155,14 @@ class Client:
         return r
 
     def _create(self, sdk, model: str, msgs, params: dict, stream: bool):
-        shape = self._shape.setdefault(model, {"token_key": "max_tokens", "send_temp": True})
-        tried_token = tried_temp = False
+        shape = self._shape.setdefault(model, {"token_key": "max_tokens", "send_temp": True, "schema": True})
+        tried_token = tried_temp = tried_schema = False
         while True:
             kw: dict[str, Any] = {"model": model, "messages": msgs}
             if params.get("extra_body"):
                 kw["extra_body"] = params["extra_body"]
+            if params.get("schema") and shape["schema"]:
+                kw["response_format"] = {"type": "json_schema", "json_schema": {"name": "reply", "schema": params["schema"]}}
             if params.get("max_tokens") is not None:
                 kw[shape["token_key"]] = params["max_tokens"]
             if shape["send_temp"]:
@@ -173,6 +178,8 @@ class Client:
                     shape["token_key"] = "max_completion_tokens"; tried_token = True; continue
                 if "temperature" in m and not tried_temp and ("unsupported" in m or "does not support" in m or "only the default" in m):
                     shape["send_temp"] = False; tried_temp = True; continue
+                if "response_format" in m and not tried_schema and shape["schema"]:
+                    shape["schema"] = False; tried_schema = True; continue
                 raise
 
     def _call(self, ep: Endpoint, model: str, msgs, params: dict, stream: bool, on_chunk):

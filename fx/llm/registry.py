@@ -84,3 +84,17 @@ def price(model: str, endpoint: Optional[Endpoint] = None) -> tuple[float, float
 def cost(model: str, prompt_tokens: int, completion_tokens: int, endpoint: Optional[Endpoint] = None) -> float:
     pi, po = price(model, endpoint)
     return prompt_tokens * pi / 1e6 + completion_tokens * po / 1e6
+
+
+def reasoning_off(model: str, base_url: Optional[str] = None) -> dict:
+    """The extra_body that turns a model's hidden reasoning down or off on its endpoint. Measured on
+    2026-09-10: vLLM's gpt-oss honours a top-level reasoning_effort (0.8 s, 37 tokens for a small
+    JSON reply) and ignores OpenRouter's reasoning.enabled (136 tokens); Qwen3 on vLLM wants
+    chat_template_kwargs.enable_thinking; OpenRouter wants reasoning.enabled; OpenAI reasoning
+    models take reasoning_effort."""
+    ep = resolve(model, base_url)
+    if ep.name == "openrouter":
+        return {"reasoning": {"enabled": False}}
+    if ep.name == "openai":
+        return {"reasoning_effort": "low"}
+    return {"reasoning_effort": "low", "chat_template_kwargs": {"enable_thinking": False}}

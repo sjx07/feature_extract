@@ -35,16 +35,49 @@ def main(argv=None) -> int:
             p.add_argument("prompt")
     llm.add_parser("spend")
     llm.add_parser("models")
+    imp = sub.add_parser("import", help="a FACET prompts.jsonl, a folder or zip of text files, or one text file")
+    imp.add_argument("path"); imp.add_argument("--name", required=True); imp.add_argument("--domain", default=None, help="keep only this domain from a FACET jsonl")
+    for name in ("preview", "decompose"):
+        p = sub.add_parser(name)
+        p.add_argument("--corpus", default=None); p.add_argument("--ids", default=None, help="comma-separated prompt ids")
+        p.add_argument("--model", default=os.environ.get("FX_MODEL", "deepseek/deepseek-v4-flash")); p.add_argument("--base-url", default=None)
+        p.add_argument("--workers", type=int, default=128); p.add_argument("--redo", action="store_true")
+        if name == "decompose":
+            p.add_argument("--limit", type=int, default=0, help="first N prompts only (a pilot)")
+            p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
+            p.add_argument("--reasoning-on", action="store_true", help="leave the model's reasoning on (off by default for decomposition)")
+    srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args(argv)
 
     from .store import Store
-    if a.sub == "models":
+    if a.cmd == "llm" and a.sub == "models":
         from .llm.registry import PRICES, resolve, price
         for m in sorted(PRICES) + ["openai/gpt-oss-20b", "Qwen/Qwen2.5-7B-Instruct"]:
             ep = resolve(m)
             print(f"{m:36s} {ep.name:11s} {ep.base_url:40s} ${price(m, ep)[0]:.4f}/M in  ${price(m, ep)[1]:.4f}/M out")
         return 0
     store = Store(a.store)
+    if a.cmd == "import":
+        from .corpus import import_path
+        print(json.dumps(import_path(store, a.path, a.name, a.domain)))
+        return 0
+    if a.cmd == "preview":
+        from .decompose import preview
+        print(json.dumps(preview(store, a.corpus, a.model, a.workers, a.ids.split(",") if a.ids else None, a.redo, getattr(a, "limit", 0)), indent=1))
+        return 0
+    if a.cmd == "decompose":
+        from .llm import Client
+        from .decompose import run
+        c = Client(store, budget=a.budget, base_url=a.base_url)
+        def prog(done, total, info):
+            print(f"  {done}/{total}  {info.get('id')}  coverage {info.get('coverage')}  atoms {info.get('n_atoms')}  calls {info.get('calls')}  {info.get('error') or ''}", flush=True)
+        s = run(store, c, a.corpus, model=a.model, workers=a.workers, ids=a.ids.split(",") if a.ids else None, redo=a.redo, limit=a.limit, reasoning="on" if a.reasoning_on else "off", progress=prog)
+        print(json.dumps(s))
+        return 0 if not s["failed"] else 1
+    if a.cmd == "serve":
+        from .gui.server import serve
+        serve(store, a.host, a.port)
+        return 0
     if a.sub == "spend":
         rows = store.spend_by_model()
         for r in rows:
