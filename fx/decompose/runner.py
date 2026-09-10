@@ -22,13 +22,7 @@ from ..llm import Client
 from ..llm.pool import _sem
 from ..llm.registry import DEFAULT_MODEL, price, reasoning_low, reasoning_off, resolve
 from ..store import Store, now
-from .contract import Facet
 from .profile import metrics, profile
-
-# what a material leaf provides when the model gave no facet for it, by material kind
-MATERIAL_FACET = {"example": ("provide", "a worked example"), "schema": ("provide", "a schema"), "code": ("provide", "a code block"),
-                  "slot": ("provide", "an input slot"), "template": ("provide", "an output template"), "title": ("use", "a section header"),
-                  "reference": ("provide", "reference material"), "other": ("provide", "material")}
 from .prompts import COMPONENTS_SCHEMA, SYSTEM
 
 # defaults from the FACET v5 trees (2,740 prompts): calls ≈ 3 + 1.18 per 1k chars, 1,753 tokens in and 169 out per call
@@ -117,9 +111,8 @@ def _write(store: Store, pid: str, text: str, tree, model: str) -> dict:
             kind = "section" if (part.kind == "section" and part.children) else ("atom" if part.kind == "atom" else ("material" if part.kind == "material" else "unrefined"))
             cur = con.execute("INSERT INTO span (prompt, path, lo, hi, kind, note, flags, start, end, depth) VALUES (?,?,?,?,?,?,?,?,?,?)",
                               (pid, path, part.span[0], part.span[1], kind, part.material, json.dumps(part.flags), part.start, part.end, depth))
-            facets = part.facets if part.kind == "atom" else ([part.facets[0]] if part.facets else [Facet(*MATERIAL_FACET.get(part.material or "other", MATERIAL_FACET["other"]))]) if part.kind == "material" else []
             if part.is_leaf:
-                for f in facets:
+                for f in part.readings:
                     con.execute("INSERT INTO reading (prompt, span, verb, object, qualifier, polarity, condition, domain_terms, declaration) VALUES (?,?,?,?,?,?,?,?,?)",
                                 (pid, cur.lastrowid, f.verb, f.object, f.qualifier, f.polarity, f.condition, json.dumps(f.domain_terms), f.declaration))
         for k, g in enumerate(x for x in tree.gaps if x["outcome"] == "declined"):
