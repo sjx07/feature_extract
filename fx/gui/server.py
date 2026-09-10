@@ -50,7 +50,8 @@ def make_app(store: Store) -> FastAPI:
     @app.get("/api/prompts")
     def api_prompts(corpus: str = "", status: str = "", limit: int = 500, offset: int = 0):
         sql = ("SELECT p.id, p.domain, p.system, p.task, SUBSTR(p.text, 1, 140) head, LENGTH(p.text) chars, c.name corpus, "
-               "d.status, d.coverage, d.material_share, d.n_atoms, d.n_material, d.calls, d.gaps "
+               "d.status, d.coverage, d.material_share, d.calls, "
+               "(SELECT COUNT(*) FROM span s WHERE s.prompt=p.id AND s.kind='atom') n_atoms "
                "FROM prompt p JOIN corpus c ON c.id=p.corpus LEFT JOIN decomp d ON d.prompt=p.id WHERE 1=1")
         params: list = []
         if corpus:
@@ -61,8 +62,6 @@ def make_app(store: Store) -> FastAPI:
             sql += " AND (d.status IS NULL OR d.status!='done')"
         sql += " ORDER BY p.rowid LIMIT ? OFFSET ?"; params += [limit, offset]
         rows = [dict(r) for r in store.rows(sql, params)]
-        for r in rows:
-            r["gaps"] = json.loads(r["gaps"]) if r["gaps"] else {}
         total = store.one("SELECT COUNT(*) n FROM prompt p JOIN corpus c ON c.id=p.corpus" + (" WHERE c.name=?" if corpus else ""), ([corpus] if corpus else []))["n"]
         return {"total": total, "prompts": rows}
 
@@ -72,18 +71,16 @@ def make_app(store: Store) -> FastAPI:
         if not p:
             raise HTTPException(404, "no such prompt")
         d = store.one("SELECT * FROM decomp WHERE prompt=?", (pid,))
-        atoms = [dict(r) for r in store.rows("SELECT * FROM atom WHERE prompt=? ORDER BY lo, hi DESC", (pid,))]
-        readings = [dict(r) for r in store.rows("SELECT * FROM reading WHERE prompt=? ORDER BY id", (pid,))]
-        by_atom: dict[int, list] = {}
-        for r in readings:
-            r["domain_terms"] = json.loads(r["domain_terms"] or "[]")
-            by_atom.setdefault(r["atom"], []).append(r)
-        for a in atoms:
-            a["flags"] = json.loads(a["flags"] or "[]"); a["readings"] = by_atom.get(a["id"], [])
-        gaps = [dict(r) for r in store.rows("SELECT * FROM gap WHERE prompt=? ORDER BY lo", (pid,))]
-        out = {**dict(p), "meta": json.loads(p["meta"] or "{}"), "decomp": dict(d) if d else None, "atoms": atoms, "gaps": gaps}
+        spans = [dict(r) for r in store.rows("SELECT * FROM span WHERE prompt=? ORDER BY lo, hi DESC", (pid,))]
+        by_span: dict[int, list] = {}
+        for r in store.rows("SELECT * FROM reading WHERE prompt=? ORDER BY id", (pid,)):
+            r = dict(r); r["domain_terms"] = json.loads(r["domain_terms"] or "[]")
+            by_span.setdefault(r["span"], []).append(r)
+        for a in spans:
+            a["flags"] = json.loads(a["flags"] or "[]"); a["readings"] = by_span.get(a["id"], [])
+        out = {**dict(p), "meta": json.loads(p["meta"] or "{}"), "decomp": dict(d) if d else None, "spans": spans}
         if d:
-            out["decomp"]["gaps"] = json.loads(d["gaps"] or "{}"); out["decomp"]["flags"] = json.loads(d["flags"] or "[]"); out["decomp"]["failures"] = json.loads(d["failures"] or "[]")
+            out["decomp"]["flags"] = json.loads(d["flags"] or "[]"); out["decomp"]["failures"] = json.loads(d["failures"] or "[]")
         return out
 
     @app.get("/api/queues")
@@ -91,14 +88,12 @@ def make_app(store: Store) -> FastAPI:
         where, params = "", []
         if corpus:
             where, params = " AND c.name=?", [corpus]
-        low = [dict(r) for r in store.rows("SELECT p.id, c.name corpus, d.coverage, d.n_atoms, SUBSTR(p.text,1,120) head FROM decomp d JOIN prompt p ON p.id=d.prompt JOIN corpus c ON c.id=p.corpus "
-                                           f"WHERE d.status='done' AND d.coverage < ?{where} ORDER BY d.coverage LIMIT 200", [min_coverage] + params)]
-        gaps = [dict(r) for r in store.rows("SELECT g.prompt id, g.lo, g.hi, g.outcome, SUBSTR(p.text, g.lo+1, MIN(g.hi-g.lo, 160)) text FROM gap g JOIN prompt p ON p.id=g.prompt JOIN corpus c ON c.id=p.corpus "
-                                            f"WHERE g.outcome='declined'{where} ORDER BY g.hi-g.lo DESC LIMIT 300", params)]
-        nofacet = [dict(r) for r in store.rows("SELECT a.prompt id, a.lo, a.hi, SUBSTR(p.text, a.lo+1, MIN(a.hi-a.lo, 160)) text FROM atom a JOIN prompt p ON p.id=a.prompt JOIN corpus c ON c.id=p.corpus "
-                                               f"WHERE a.kind='unrefined'{where} ORDER BY a.hi-a.lo DESC LIMIT 200", params)]
+        low = [dict(r) for r in store.rows("SELECT p.id, c.name corpus, d.coverage, (SELECT COUNT(*) FROM span s WHERE s.prompt=p.id AND s.kind='atom') n_atoms, SUBSTR(p.text,1,120) head "
+                                           f"FROM decomp d JOIN prompt p ON p.id=d.prompt JOIN corpus c ON c.id=p.corpus WHERE d.status='done' AND d.coverage < ?{where} ORDER BY d.coverage LIMIT 200", [min_coverage] + params)]
+        spans = lambda kind: [dict(r) for r in store.rows("SELECT s.prompt id, s.lo, s.hi, s.note, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 160)) text FROM span s JOIN prompt p ON p.id=s.prompt JOIN corpus c ON c.id=p.corpus "
+                                                          f"WHERE s.kind=?{where} ORDER BY s.hi-s.lo DESC LIMIT 300", [kind] + params)]
         failed = [dict(r) for r in store.rows("SELECT d.prompt id, d.error FROM decomp d JOIN prompt p ON p.id=d.prompt JOIN corpus c ON c.id=p.corpus WHERE d.status='failed'" + where, params)]
-        return {"low_coverage": low, "gaps": gaps, "unrefined": nofacet, "failed": failed}
+        return {"low_coverage": low, "gaps": spans("gap"), "unrefined": spans("unrefined"), "failed": failed}
 
     # ---- preview and jobs
     @app.get("/api/preview")

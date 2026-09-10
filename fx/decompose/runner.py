@@ -51,7 +51,7 @@ def prompt_ids(store: Store, corpus: Optional[str] = None, ids: Optional[list[st
 
 def history(store: Store, model: str) -> dict:
     """What this store has seen for this model: calls per 1k chars and tokens per call, from finished prompts."""
-    r = store.one("SELECT COUNT(*) n, SUM(calls) calls, SUM(chars) chars FROM decomp WHERE status='done' AND model=?", (model,))
+    r = store.one("SELECT COUNT(*) n, SUM(d.calls) calls, SUM(LENGTH(p.text)) chars FROM decomp d JOIN prompt p ON p.id=d.prompt WHERE d.status='done' AND d.model=?", (model,))
     c = store.one("SELECT COUNT(*) n, AVG(prompt_tokens) tin, AVG(completion_tokens) tout, AVG(latency) lat FROM call WHERE stage='decompose' AND model=? AND cached=0 AND error IS NULL", (model,))
     out = {"prompts_seen": int(r["n"] or 0), "calls_seen": int(c["n"] or 0)}
     if r and (r["n"] or 0) >= 20 and r["chars"]:
@@ -87,9 +87,8 @@ def preview(store: Store, corpus: Optional[str] = None, model: str = "deepseek/d
 
 def _clear(store: Store, pid: str) -> None:
     with store.lock:
-        for t in ("atom", "reading", "gap"):
+        for t in ("reading", "span", "decomp"):
             store.con.execute(f"DELETE FROM {t} WHERE prompt=?", (pid,))
-        store.con.execute("DELETE FROM decomp WHERE prompt=?", (pid,))
         store.con.commit()
 
 
@@ -97,25 +96,22 @@ def _write(store: Store, pid: str, text: str, tree, model: str) -> dict:
     m = metrics(tree, text)
     with store.lock:
         con = store.con
-        for t in ("atom", "reading", "gap"):
+        for t in ("reading", "span"):
             con.execute(f"DELETE FROM {t} WHERE prompt=?", (pid,))
         for part, depth, path in tree.walk():
             if part.span is None:
                 continue
-            cur = con.execute("INSERT INTO atom (prompt, path, lo, hi, kind, material, flags, start, end, depth) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                              (pid, path, part.span[0], part.span[1], "section" if (part.kind == "section" and part.children) else ("atom" if part.kind == "atom" else ("material" if part.kind == "material" else "unrefined")),
-                               part.material, json.dumps(part.flags), part.start, part.end, depth))
-            aid = cur.lastrowid
+            kind = "section" if (part.kind == "section" and part.children) else ("atom" if part.kind == "atom" else ("material" if part.kind == "material" else "unrefined"))
+            cur = con.execute("INSERT INTO span (prompt, path, lo, hi, kind, note, flags, start, end, depth) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                              (pid, path, part.span[0], part.span[1], kind, part.material, json.dumps(part.flags), part.start, part.end, depth))
             if part.kind == "atom" and part.is_leaf:
                 for f in part.facets:
-                    con.execute("INSERT INTO reading (prompt, atom, verb, object, qualifier, polarity, condition, domain_terms, declaration) VALUES (?,?,?,?,?,?,?,?,?)",
-                                (pid, aid, f.verb, f.object, f.qualifier, f.polarity, f.condition, json.dumps(f.domain_terms), f.declaration))
-        for g in tree.gaps:
-            con.execute("INSERT INTO gap (prompt, lo, hi, outcome, path) VALUES (?,?,?,?,?)", (pid, g["lo"], g["hi"], g["outcome"], g.get("path")))
-        con.execute("INSERT OR REPLACE INTO decomp (prompt, status, model, chars, instruction_chars, covered_chars, coverage, material_share, n_atoms, n_material, n_readings, calls, seconds, reasks, gaps, flags, failures, error, at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (pid, "done", model, m["chars"], m["instruction_chars"], m["covered_chars"], m["coverage"], m["material_share"], m["n_atoms"], m["n_material"], m["n_readings"],
-                     m["calls"], m["seconds"], m["reasks"], json.dumps(m["gaps"]), json.dumps(tree.flags), json.dumps(tree.failures[:50]), None, now()))
+                    con.execute("INSERT INTO reading (prompt, span, verb, object, qualifier, polarity, condition, domain_terms, declaration) VALUES (?,?,?,?,?,?,?,?,?)",
+                                (pid, cur.lastrowid, f.verb, f.object, f.qualifier, f.polarity, f.condition, json.dumps(f.domain_terms), f.declaration))
+        for k, g in enumerate(x for x in tree.gaps if x["outcome"] == "declined"):
+            con.execute("INSERT INTO span (prompt, path, lo, hi, kind, note, flags, depth) VALUES (?,?,?,?,?,?,?,?)", (pid, f"gap{k}", g["lo"], g["hi"], "gap", "declined", "[]", 0))
+        con.execute("INSERT OR REPLACE INTO decomp (prompt, status, model, coverage, material_share, calls, seconds, reasks, flags, failures, error, at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (pid, "done", model, m["coverage"], m["material_share"], m["calls"], m["seconds"], m["reasks"], json.dumps(tree.flags), json.dumps(tree.failures[:50]), None, now()))
         con.commit()
     return m
 

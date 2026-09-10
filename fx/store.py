@@ -39,22 +39,20 @@ CREATE TABLE IF NOT EXISTS prompt (
 CREATE INDEX IF NOT EXISTS prompt_corpus ON prompt(corpus);
 CREATE INDEX IF NOT EXISTS prompt_sha ON prompt(sha);
 
--- stage 1: decomposition. atom holds every located node (atom, section, material, unrefined); reading holds an atom's facets
-CREATE TABLE IF NOT EXISTS atom (
+-- stage 1: decomposition. span holds every located node of a prompt's tree: sections, atoms, material,
+-- unrefined leaves, and the gaps the model declined; note carries the material kind or the gap's outcome.
+-- reading holds an atom's facets, the unit later stages assign features to. decomp is the stage's record per prompt.
+CREATE TABLE IF NOT EXISTS span (
     id INTEGER PRIMARY KEY, prompt TEXT NOT NULL REFERENCES prompt(id), path TEXT NOT NULL, lo INTEGER NOT NULL, hi INTEGER NOT NULL,
-    kind TEXT NOT NULL, material TEXT, flags TEXT, start TEXT, end TEXT, depth INTEGER);
-CREATE INDEX IF NOT EXISTS atom_prompt ON atom(prompt);
+    kind TEXT NOT NULL, note TEXT, flags TEXT, start TEXT, end TEXT, depth INTEGER);
+CREATE INDEX IF NOT EXISTS span_prompt ON span(prompt);
 CREATE TABLE IF NOT EXISTS reading (
-    id INTEGER PRIMARY KEY, prompt TEXT NOT NULL REFERENCES prompt(id), atom INTEGER NOT NULL REFERENCES atom(id),
+    id INTEGER PRIMARY KEY, prompt TEXT NOT NULL REFERENCES prompt(id), span INTEGER NOT NULL REFERENCES span(id),
     verb TEXT, object TEXT, qualifier TEXT, polarity TEXT, condition TEXT, domain_terms TEXT, declaration TEXT);
 CREATE INDEX IF NOT EXISTS reading_prompt ON reading(prompt);
-CREATE TABLE IF NOT EXISTS gap (
-    id INTEGER PRIMARY KEY, prompt TEXT NOT NULL REFERENCES prompt(id), lo INTEGER NOT NULL, hi INTEGER NOT NULL, outcome TEXT NOT NULL, path TEXT);
-CREATE INDEX IF NOT EXISTS gap_prompt ON gap(prompt);
 CREATE TABLE IF NOT EXISTS decomp (
-    prompt TEXT PRIMARY KEY REFERENCES prompt(id), status TEXT NOT NULL, model TEXT, chars INTEGER, instruction_chars INTEGER, covered_chars INTEGER,
-    coverage REAL, material_share REAL, n_atoms INTEGER, n_material INTEGER, n_readings INTEGER,
-    calls INTEGER, seconds REAL, reasks INTEGER, gaps TEXT, flags TEXT, failures TEXT, error TEXT, at TEXT NOT NULL);
+    prompt TEXT PRIMARY KEY REFERENCES prompt(id), status TEXT NOT NULL, model TEXT, coverage REAL, material_share REAL,
+    calls INTEGER, seconds REAL, reasks INTEGER, flags TEXT, failures TEXT, error TEXT, at TEXT NOT NULL);
 
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (

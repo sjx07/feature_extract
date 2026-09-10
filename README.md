@@ -10,7 +10,7 @@ Stages, in the order the data flows:
 | stage | command | writes |
 |---|---|---|
 | 0 | `fx llm ...` | `call`: every model call with tokens, cost, latency, and a cache |
-| 1 | `fx decompose` | prompts, spans, atoms, readings, gaps, coverage |
+| 1 | `fx decompose` | `span` (the tree: sections, atoms, material, declined gaps), `reading` (an atom's facets), `decomp` (the run per prompt) |
 | 2 | `fx coldstart`, `fx assign` | features, assignments, the leftover rounds, coherence |
 | 3 | `fx align` | folds into the seed library, decisions |
 | 4 | `fx refine` | splits, edges, reversions, as rules with parameters |

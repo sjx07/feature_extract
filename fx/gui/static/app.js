@@ -100,22 +100,25 @@ async function viewPrompts(main, q) {
   main.innerHTML = `<h1>Prompts${q.corpus ? ' · ' + esc(q.corpus) : ''}</h1>
     <p class="lede">${fmt(r.total)} in ${q.corpus ? 'the corpus' : 'the store'}. <a href="${href('/prompts', { corpus: q.corpus, status: 'done' })}">decomposed</a> · <a href="${href('/prompts', { corpus: q.corpus, status: 'todo' })}">not yet</a> · <a href="${href('/prompts', { corpus: q.corpus })}">all</a></p>
     <table class="list"><tr><th>prompt</th><th>starts with</th><th class="n">chars</th><th class="n">coverage</th><th class="n">material</th><th class="n">atoms</th><th class="n">calls</th></tr>
-    ${r.prompts.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:12px">${esc(p.system || p.id)}</a><div class="muted" style="font-size:11.5px">${esc(p.domain || '')} ${esc(p.task || '')}</div></td><td class="serif" style="max-width:520px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(p.head)}</td><td class="n">${fmt(p.chars)}</td><td class="n">${p.status === 'done' ? pct(p.coverage) : p.status ? esc(p.status) : ''}</td><td class="n">${p.status === 'done' ? pct(p.material_share) : ''}</td><td class="n">${p.n_atoms ?? ''}</td><td class="n">${p.calls ?? ''}</td></tr>`).join('')}</table>
+    ${r.prompts.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:12px">${esc(p.system || p.id)}</a><div class="muted" style="font-size:11.5px">${esc(p.domain || '')} ${esc(p.task || '')}</div></td><td class="serif" style="max-width:520px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(p.head)}</td><td class="n">${fmt(p.chars)}</td><td class="n">${p.status === 'done' ? pct(p.coverage) : p.status ? esc(p.status) : ''}</td><td class="n">${p.status === 'done' ? pct(p.material_share) : ''}</td><td class="n">${p.status === 'done' ? p.n_atoms : ''}</td><td class="n">${p.calls ?? ''}</td></tr>`).join('')}</table>
     ${r.total > r.prompts.length ? `<p class="muted">${fmt(r.total - r.prompts.length)} more not listed.</p>` : ''}`;
 }
 
 /* ---------- one prompt ---------- */
-function paint(text, atoms, gaps) {
+function paint(text, spans) {
   const items = [];
-  for (const a of atoms) if (a.kind === 'atom' || a.kind === 'material' || a.kind === 'unrefined') items.push({ s: a.lo, e: a.hi, cls: a.kind === 'material' ? 'material' : (a.kind === 'unrefined' ? 'gap' : ((a.readings[0] || {}).polarity === 'forbid' ? 'forbid' : '')), path: a.path, title: a.kind === 'material' ? a.material : a.path });
-  for (const g of gaps) if (g.outcome === 'declined') items.push({ s: g.lo, e: g.hi, cls: 'gap', path: 'gap', title: g.outcome });
+  for (const a of spans) {
+    if (a.kind === 'section') continue;
+    const cls = a.kind === 'material' ? 'material' : (a.kind === 'unrefined' || a.kind === 'gap') ? 'gap' : ((a.readings[0] || {}).polarity === 'forbid' ? 'forbid' : '');
+    items.push({ s: a.lo, e: a.hi, cls, path: a.path, title: a.note || a.path, sup: a.kind === 'atom' || a.kind === 'unrefined' });
+  }
   items.sort((x, y) => x.s - y.s);
   let out = '', pos = 0;
-  for (const it of items) { if (it.s < pos) continue; out += esc(text.slice(pos, it.s)); out += `<mark class="${it.cls}" data-path="${esc(it.path)}" title="${esc(it.title)}">${esc(text.slice(it.s, it.e))}</mark>${it.cls.includes('material') || it.path === 'gap' ? '' : `<sup>${esc(it.path)}</sup>`}`; pos = it.e; }
+  for (const it of items) { if (it.s < pos) continue; out += esc(text.slice(pos, it.s)); out += `<mark class="${it.cls}" data-path="${esc(it.path)}" title="${esc(it.title)}">${esc(text.slice(it.s, it.e))}</mark>${it.sup ? `<sup>${esc(it.path)}</sup>` : ''}`; pos = it.e; }
   return out + esc(text.slice(pos));
 }
-function buildTree(atoms) {
-  const nodes = new Map(atoms.map(a => [a.path, { ...a, children: [] }]));
+function buildTree(spans) {
+  const nodes = new Map(spans.filter(a => a.kind !== 'gap').map(a => [a.path, { ...a, children: [] }]));
   const roots = [];
   for (const n of nodes.values()) { const i = n.path.lastIndexOf('.'); const parent = i < 0 ? null : nodes.get(n.path.slice(0, i)); (parent ? parent.children : roots).push(n); }
   const sortRec = ns => { ns.sort((a, b) => a.lo - b.lo); ns.forEach(n => sortRec(n.children)); };
@@ -125,7 +128,7 @@ function buildTree(atoms) {
 function renderTree(nodes, text) {
   return nodes.map(n => {
     if (n.kind === 'section') return `<details class="tnode section" open><summary><span class="path">${esc(n.path)}</span><span class="muted">section · ${n.children.length} parts · ${fmt(n.hi - n.lo)} chars</span></summary><div class="kids">${renderTree(n.children, text)}</div></details>`;
-    if (n.kind === 'material') return `<div class="tnode leaf material" data-path="${esc(n.path)}"><span class="path">${esc(n.path)}</span><span class="read"><i>material · ${esc(n.material)}</i> <span class="muted">${esc(text.slice(n.lo, n.hi)).slice(0, 90)}</span></span></div>`;
+    if (n.kind === 'material') return `<div class="tnode leaf material" data-path="${esc(n.path)}"><span class="path">${esc(n.path)}</span><span class="read"><i>material · ${esc(n.note)}</i> <span class="muted">${esc(text.slice(n.lo, n.hi)).slice(0, 90)}</span></span></div>`;
     if (n.kind === 'unrefined') return `<div class="tnode leaf unrefined" data-path="${esc(n.path)}"><span class="path">${esc(n.path)}</span><span class="read"><i>unrefined</i> <span class="muted">${esc(text.slice(n.lo, n.hi)).slice(0, 90)}</span></span></div>`;
     const forbid = (n.readings[0] || {}).polarity === 'forbid';
     return `<div class="tnode leaf atom ${forbid ? 'forbid' : ''}" data-path="${esc(n.path)}"><span class="path">${esc(n.path)}</span><span>${n.readings.map(r => `<div class="read"><span class="verb">${esc(r.verb)}</span> ${esc(r.object)}${r.qualifier ? ` <span class="muted">${esc(r.qualifier)}</span>` : ''}${r.condition && r.condition !== 'always' ? ` <span class="muted">if ${esc(r.condition)}</span>` : ''}${r.polarity === 'forbid' ? ' <span class="tag">forbid</span>' : ''}</div>`).join('') || '<span class="muted"><i>no reading</i></span>'}${n.flags.length ? `<span class="tag">${esc(n.flags.join(' '))}</span>` : ''}</span></div>`;
@@ -133,16 +136,17 @@ function renderTree(nodes, text) {
 }
 async function viewPrompt(main, pid) {
   const p = await api('/api/prompt/' + encodeURIComponent(pid));
-  const d = p.decomp;
-  const tree = buildTree(p.atoms);
+  const d = p.decomp, sp = p.spans;
+  const nAtoms = sp.filter(a => a.kind === 'atom').length, nReadings = sp.reduce((n, a) => n + a.readings.length, 0);
+  const tree = buildTree(sp);
   main.innerHTML = `<h1 class="mono" style="font-size:20px">${esc(p.id)}</h1>
     <div class="facts" style="margin-bottom:16px"><span class="k">corpus</span><span>${esc(p.corpus)}</span><span class="k">source, recorded</span><span>${unknown(p.system)} ${p.domain ? '· ' + esc(p.domain) : ''} ${p.source_id ? '· <span class="mono" style="font-size:12px">' + esc(p.source_id) + '</span>' : ''}</span>
       <span class="k">task label</span><span>${unknown(p.task, 'unknown')}</span>
-      <span class="k">decomposition</span><span>${d ? (d.status === 'done' ? `coverage <b>${pct(d.coverage)}</b> of ${fmt(d.instruction_chars)} instruction characters · material ${pct(d.material_share)} · ${d.n_atoms} atoms · ${d.n_readings} readings · ${d.calls} calls, ${d.reasks} re-asks, ${d.seconds} s · ${esc(d.model)}` : `<span class="err">${esc(d.status)}: ${esc(d.error || '')}</span>`) : '<span class="muted"><i>not decomposed</i></span>'}</span></div>
-    <div class="legend"><span><i style="background:var(--req-soft);border-bottom:1.5px solid var(--req)"></i>atom</span><span><i style="background:var(--for-soft);border-bottom:1.5px solid var(--for)"></i>forbid</span><span><i style="background:var(--mat-soft)"></i>material</span><span><i style="background:var(--gap-soft);border-bottom:1.5px dashed var(--gap)"></i>gap the model declined</span></div>
-    <div class="cols2"><div class="rawtext" id="raw">${paint(p.text, p.atoms, p.gaps)}</div>
+      <span class="k">decomposition</span><span>${d ? (d.status === 'done' ? `coverage <b>${pct(d.coverage)}</b> of the instruction text · material ${pct(d.material_share)} · ${nAtoms} atoms · ${nReadings} readings · ${d.calls} calls, ${d.reasks} re-asks, ${d.seconds} s · ${esc(d.model)}` : `<span class="err">${esc(d.status)}: ${esc(d.error || '')}</span>`) : '<span class="muted"><i>not decomposed</i></span>'}</span></div>
+    <div class="legend"><span><i style="background:var(--req-soft);border-bottom:1.5px solid var(--req)"></i>atom</span><span><i style="background:var(--for-soft);border-bottom:1.5px solid var(--for)"></i>forbid</span><span><i style="background:var(--mat-soft)"></i>material</span><span><i style="background:var(--gap-soft);border-bottom:1.5px dashed var(--gap)"></i>unrefined, or a gap the model declined</span></div>
+    <div class="cols2"><div class="rawtext" id="raw">${paint(p.text, sp)}</div>
       <div class="tree" id="tree">${renderTree(tree, p.text)}
-      ${p.gaps.filter(g => g.outcome === 'declined').map(g => `<div class="tnode leaf gap" data-path="gap"><span class="path">gap</span><span class="read"><i>declined</i> <span class="muted">${esc(p.text.slice(g.lo, g.hi)).slice(0, 120)}</span></span></div>`).join('')}</div></div>
+      ${sp.filter(a => a.kind === 'gap').map(g => `<div class="tnode leaf gap" data-path="${esc(g.path)}"><span class="path">gap</span><span class="read"><i>declined</i> <span class="muted">${esc(p.text.slice(g.lo, g.hi)).slice(0, 120)}</span></span></div>`).join('')}</div></div>
     ${d && (d.failures.length || d.flags.length) ? `<details style="margin-top:18px;font-size:13px"><summary class="muted">calls and failures</summary><div class="mono" style="font-size:12px;margin-top:8px">${esc(d.flags.join(' '))}</div>${d.failures.map(f => `<div class="mono muted" style="font-size:12px">${esc(f)}</div>`).join('')}</details>` : ''}`;
   const hot = (path, on) => document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach(el => el.classList.toggle('hot', on));
   document.querySelectorAll('[data-path]').forEach(el => { el.onmouseenter = () => hot(el.dataset.path, true); el.onmouseleave = () => hot(el.dataset.path, false); });
@@ -156,7 +160,7 @@ async function viewQueues(main, q) {
   const row = (x, extra) => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(x.id))}" class="mono" style="font-size:12px">${esc(x.id)}</a></td><td class="serif">${esc(x.text || x.head || '')}</td>${extra || ''}</tr>`;
   main.innerHTML = `<h1>Queues${q.corpus ? ' · ' + esc(q.corpus) : ''}</h1><p class="lede">What to read: prompts the model covered poorly, stretches it declined twice, leaves it could not refine, and failures.</p>
     <div class="block"><div class="t">low coverage, under 90%</div>${r.low_coverage.length ? `<table class="list">${r.low_coverage.map(x => row(x, `<td class="n">${pct(x.coverage)}</td><td class="n">${x.n_atoms} atoms</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
-    <div class="block"><div class="t">gaps the model declined</div>${r.gaps.length ? `<table class="list">${r.gaps.map(x => row(x, `<td class="n">${esc(x.outcome)}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
+    <div class="block"><div class="t">gaps the model declined</div>${r.gaps.length ? `<table class="list">${r.gaps.map(x => row(x, `<td class="n">${esc(x.note || '')}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
     <div class="block"><div class="t">unrefined leaves</div>${r.unrefined.length ? `<table class="list">${r.unrefined.map(x => row(x)).join('')}</table>` : '<span class="muted">none</span>'}</div>
     <div class="block"><div class="t">failed</div>${r.failed.length ? `<table class="list">${r.failed.map(x => row({ id: x.id, text: x.error })).join('')}</table>` : '<span class="muted">none</span>'}</div>`;
 }

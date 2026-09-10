@@ -133,9 +133,11 @@ def test_stage_run_writes_rows_resumes_and_previews(store):
         s = stage.run(store, c, "demo", model="m", workers=2, progress=lambda d, t, i: seen.append((d, t, i["coverage"])))
         assert s["done"] == 1 and s["failed"] == 0 and seen[-1][0] == 1 and seen[-1][2] > 0.8
         d = store.one("SELECT * FROM decomp WHERE prompt=?", (pid,))
-        assert d["status"] == "done" and d["n_atoms"] == 4 and d["n_material"] == 2
+        kinds = {r["kind"]: r["n"] for r in store.rows("SELECT kind, COUNT(*) n FROM span WHERE prompt=? GROUP BY kind", (pid,))}
+        assert d["status"] == "done" and kinds["atom"] == 4 and kinds["material"] == 2
+        assert kinds["section"] == 2                                     # requirements, and the fenced block the model refined into a material child
         assert store.one("SELECT COUNT(*) n FROM reading WHERE prompt=?", (pid,))["n"] == 4
-        assert store.one("SELECT COUNT(*) n FROM atom WHERE prompt=? AND kind='section'", (pid,))["n"] == 2      # requirements, and the fenced block the model refined into a material child
+        assert store.one("SELECT COUNT(*) n FROM reading r JOIN span s ON s.id=r.span WHERE r.prompt=? AND s.kind='atom'", (pid,))["n"] == 4
         calls_before = srv.calls
         s2 = stage.run(store, c, "demo", model="m", workers=2)                       # resume: nothing to do
         assert s2["total"] == 0 and srv.calls == calls_before
@@ -158,7 +160,7 @@ def test_stage_records_failure_and_stop(store):
         assert s["done"] == 2                                                # unparsable replies leave an unrefined leaf, not a failure
         d = store.rows("SELECT * FROM decomp")
         assert len(d) == 2 and all(r["coverage"] == 0 for r in d)
-        assert store.one("SELECT COUNT(*) n FROM atom WHERE kind='unrefined'")["n"] >= 2
+        assert store.one("SELECT COUNT(*) n FROM span WHERE kind='unrefined'")["n"] >= 2
 
         def stop_after_one(done, total, info):
             if done >= 1:
@@ -193,7 +195,7 @@ def test_gui_api_end_to_end(store, tmp_path):
     assert ps["total"] == 2 and len(ps["prompts"]) == 2
     pid = [p for p in ps["prompts"] if p["n_atoms"] == 4][0]["id"]
     p = t.get(f"/api/prompt/{pid}").json()
-    assert p["decomp"]["status"] == "done" and len(p["atoms"]) >= 7
+    assert p["decomp"]["status"] == "done" and len(p["spans"]) >= 7 and any(a["kind"] == "material" and a["note"] == "example" for a in p["spans"])
     q = t.get("/api/queues?corpus=demo").json()
     assert set(q) == {"low_coverage", "gaps", "unrefined", "failed"}
     assert t.get("/").status_code == 200 and t.get("/api/spend").json()["total"] == 0.0
