@@ -7,6 +7,7 @@ server-sent events.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -17,17 +18,19 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from ..corpus import corpora, import_text, import_upload
-from .. import decompose
+from .. import decompose, jobs
+from ..corpus import corpora, import_path, import_text
 from ..llm import Client
+from ..paths import Workspace
 from ..store import Store, now
 
 STATIC = Path(__file__).resolve().parent / "static"
 
 
-def make_app(store: Store) -> FastAPI:
+def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
+    store = store or Store(ws.store_path)
     app = FastAPI(title="feature_extract")
-    jobs: dict[int, threading.Event] = {}
+    running: dict[int, threading.Event] = {}
 
     # ---- corpora and prompts
     @app.get("/api/corpora")
@@ -42,7 +45,9 @@ def make_app(store: Store) -> FastAPI:
     async def api_import(name: str = Form(...), domain: str = Form(""), file: Optional[UploadFile] = File(None), text: str = Form("")):
         if file is not None:
             data = await file.read()
-            return import_upload(store, file.filename or "upload.txt", data, name, domain or None)
+            saved = ws.upload_dir(name) / Path(file.filename or "upload.txt").name        # kept verbatim, for provenance and re-import
+            saved.write_bytes(data)
+            return import_path(store, saved, name, domain or None)
         if text.strip():
             return import_text(store, text, name)
         raise HTTPException(400, "a file or a text is required")
@@ -107,48 +112,30 @@ def make_app(store: Store) -> FastAPI:
     @app.post("/api/jobs")
     def api_job_start(body: dict):
         corpus_name = body.get("corpus") or None
-        model = body.get("model") or "openai/gpt-oss-20b"
-        workers = int(body.get("workers") or 8)
+        model = body.get("model") or "deepseek/deepseek-v4-flash"
+        workers = int(body.get("workers") or 128)
         limit = int(body.get("limit") or 0)
         redo = bool(body.get("redo"))
         budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else None
         ids = body.get("ids") or None
         reasoning = "off" if body.get("reasoning_off", True) else "on"
         total = len(decompose.prompt_ids(store, corpus_name, ids, redo, limit))
-        jid = store.insert("job", {"kind": "decompose", "corpus": corpus_name, "model": model, "params": {"workers": workers, "limit": limit, "redo": redo, "budget": budget, "ids": ids},
-                                   "status": "running", "total": total, "started": now(), "recent": []})
+        params = {"workers": workers, "limit": limit, "redo": redo, "budget": budget, "ids": ids, "reasoning": reasoning, "from": "gui"}
+        jid = jobs.start(store, ws, "decompose", corpus_name, model, params, total)
         stop = threading.Event()
-        jobs[jid] = stop
+        running[jid] = stop
         client = Client(store, budget=budget if budget is not None else float("inf"), base_url=body.get("base_url") or None)
 
-        def progress(done, total_, info):
-            r = store.one("SELECT recent, calls, spent FROM job WHERE id=?", (jid,))
-            recent = (json.loads(r["recent"] or "[]") + [{k: info.get(k) for k in ("id", "coverage", "n_atoms", "calls", "error")}])[-5:]
-            with store.lock:
-                store.con.execute("UPDATE job SET done=?, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
-                                  (done, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))
-                store.con.commit()
-            if stop.is_set():
-                raise decompose.Stop()
-
         def work():
-            try:
-                s = decompose.run(store, client, corpus_name, model=model, workers=workers, ids=ids, redo=redo, limit=limit, reasoning=reasoning, progress=progress)
-                status = "stopped" if s["stopped"] else ("done" if not s["failed"] else "done_with_failures")
-                err = None
-            except Exception as e:
-                status, err = "failed", f"{type(e).__name__}: {str(e)[:300]}"
-            with store.lock:
-                store.con.execute("UPDATE job SET status=?, error=?, finished=?, seconds=? WHERE id=?", (status, err, now(), None, jid))
-                store.con.commit()
-            jobs.pop(jid, None)
+            jobs.run_decompose(store, ws, client, jid, corpus_name, model=model, workers=workers, ids=ids, redo=redo, limit=limit, reasoning=reasoning, stop=stop)
+            running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()
-        return {"id": jid, "total": total}
+        return {"id": jid, "total": total, "log": str(ws.job_log(jid))}
 
     @app.post("/api/jobs/{jid}/stop")
     def api_job_stop(jid: int):
-        ev = jobs.get(jid)
+        ev = running.get(jid)
         if ev:
             ev.set()
         return {"ok": bool(ev)}
@@ -158,7 +145,13 @@ def make_app(store: Store) -> FastAPI:
         r = store.one("SELECT * FROM job WHERE id=?", (jid,))
         if not r:
             raise HTTPException(404, "no such job")
-        return dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}"), "elapsed": _elapsed(r)}
+        return dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}"), "elapsed": _elapsed(r), "log": str(ws.job_log(jid))}
+
+    @app.get("/api/jobs/{jid}/log")
+    def api_job_log(jid: int, tail: int = 200):
+        p = ws.job_log(jid)
+        lines = p.read_text().rstrip("\n").split("\n") if p.exists() else []
+        return {"path": str(p), "lines": lines[-tail:]}
 
     @app.get("/api/jobs/{jid}/events")
     def api_job_events(jid: int):
@@ -180,7 +173,7 @@ def make_app(store: Store) -> FastAPI:
 
     @app.get("/api/spend")
     def api_spend():
-        return {"total": store.spent(), "by_model": store.spend_by_model()}
+        return {"total": store.spent(), "by_model": store.spend_by_model(), "workspace": str(ws.root)}
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
@@ -199,7 +192,8 @@ def _elapsed(r) -> Optional[float]:
     return round(time.mktime(time.strptime(end, fmt)) - time.mktime(time.strptime(r["started"], fmt)), 0)
 
 
-def serve(store: Store, host: str = "127.0.0.1", port: int = 8780) -> None:
+def serve(ws: Workspace, host: str = "127.0.0.1", port: int = 8780) -> None:
     import uvicorn
-    print(f"feature_extract on http://{host}:{port}  store {store.path}", flush=True)
-    uvicorn.run(make_app(store), host=host, port=port, log_level="warning")
+    jobs.setup_logging(ws)
+    logging.getLogger("fx").info("feature_extract on http://%s:%d  workspace %s", host, port, ws.root)
+    uvicorn.run(make_app(ws), host=host, port=port, log_config=None)

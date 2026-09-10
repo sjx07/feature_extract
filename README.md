@@ -55,11 +55,29 @@ fx llm call --model gpt-5.6-sol --stream "..."  a priced, cached call
 fx llm spend                                    dollars by model from the store
 ```
 
+## Workspace layout
+
+Everything a project produces lives in one workspace directory, the same for the CLI and the
+site: `--workspace runs/<name>` or `FX_WORKSPACE`, default `runs/dev`.
+
+```
+runs/<name>/
+  store.db            the store
+  logs/serve.log      the site's log, rotated
+  logs/job-<id>.log   one log per run, from the terminal or the site: every prompt finished, every error, the traceback if it died
+  uploads/<corpus>/   files dropped into the site or imported from the terminal, kept verbatim
+  exports/            anything written out for use elsewhere
+```
+
+A run is a `job` row plus its log wherever it was started, so a terminal run shows on the site's
+job page and a site run has the same log file. `runs/` is not committed; `data/corpora/` holds
+the checked-in test corpora (thirty FACET prompts across six domains, and two plain-text files).
+
 ## Stage 1: decomposition and the site
 
 ```
 set -a; source ~/FACET/.env; set +a                       # OPENROUTER_API_KEY, OPENAI_API_KEY
-PYTHONPATH=. FX_STORE=runs/dev/store.db python -m fx.cli serve --port 8780
+PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 ```
 
 Open http://localhost:8780. Drop a FACET prompts.jsonl (with a domain filter), a folder or zip of
@@ -71,9 +89,9 @@ material and declined gaps beside the tree; the queues page lists what to read.
 The same from the terminal:
 
 ```
-PYTHONPATH=. python -m fx.cli import ~/Documents/FACET/facet_artifact/data/prompt/prompts.jsonl --name text2sql --domain text2sql
-PYTHONPATH=. python -m fx.cli preview --corpus text2sql --model deepseek/deepseek-v4-flash --workers 128
-PYTHONPATH=. python -m fx.cli decompose --corpus text2sql --limit 30
+PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet_sample_30.jsonl --name sample
+PYTHONPATH=. python -m fx.cli -w runs/dev preview --corpus sample
+PYTHONPATH=. python -m fx.cli -w runs/dev decompose --corpus sample --limit 30
 ```
 
 How it decomposes: the REFINE prompt from FACET, applied to the whole prompt and then to every

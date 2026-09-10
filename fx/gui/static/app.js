@@ -84,12 +84,13 @@ const fmtSec = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s /
 async function viewJob(main, jid) {
   const j = await api('/api/jobs/' + jid);
   main.innerHTML = `<h1>Job #${jid} · ${esc(j.corpus || 'all corpora')}</h1><p class="lede">${esc(j.model)} · ${j.params.workers} workers${j.params.limit ? ` · pilot of ${j.params.limit}` : ''}</p>
-    <div id="jbody"></div><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> <a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a> <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
+    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> <a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a> <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
   const render = d => { const share = d.total ? d.done / d.total : 0; const rate = d.elapsed && d.done ? d.elapsed / d.done : null;
     $('#jbody').innerHTML = `<div class="bar" style="max-width:720px"><i style="width:${(100 * share).toFixed(1)}%"></i></div>
       <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)} / ${fmt(d.total)}</b>prompts</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${rate && d.status === 'running' ? fmtSec(rate * (d.total - d.done)) : d.status}</b>${d.status === 'running' ? 'remaining, projected' : 'status'}</span></div>
       <div class="recent" style="margin-top:12px">${(d.recent || []).map(r => `<div><a href="${href('/prompt/' + encodeURIComponent(r.id))}">${esc(r.id)}</a> · coverage ${pct(r.coverage)} · ${r.n_atoms} atoms · ${r.calls} calls${r.error ? ` · <span class="err">${esc(r.error)}</span>` : ''}</div>`).join('')}</div>${d.error ? `<p class="err">${esc(d.error)}</p>` : ''}`; };
   render(j);
+  document.querySelector('details').addEventListener('toggle', async e => { if (e.target.open) { const l = await api(`/api/jobs/${jid}/log`); $('#jlog').textContent = l.lines.join('\n'); } });
   $('#stop').onclick = () => post(`/api/jobs/${jid}/stop`, {});
   if (j.status === 'running') { ES = new EventSource(`/api/jobs/${jid}/events`); ES.onmessage = e => render(JSON.parse(e.data)); ES.addEventListener('end', () => { ES.close(); ES = null; api('/api/jobs/' + jid).then(render); }); }
 }

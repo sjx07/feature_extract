@@ -172,7 +172,9 @@ def test_stage_records_failure_and_stop(store):
 def test_gui_api_end_to_end(store, tmp_path):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    app = make_app(store)
+    from fx.paths import Workspace
+    ws = Workspace(tmp_path / "ws")
+    app = make_app(ws, store)
     t = TestClient(app)
     r = t.post("/api/import", data={"name": "demo"}, files={"file": ("p.txt", PROMPT.encode())})
     assert r.status_code == 200 and r.json()["added"] == 1
@@ -191,6 +193,9 @@ def test_gui_api_end_to_end(store, tmp_path):
                 break
             time.sleep(0.1)
         assert job["status"] == "done" and job["done"] == 2 and job["calls"] >= 3
+        assert (ws.uploads / "demo" / "p.txt").read_bytes() == PROMPT.encode()                     # the dropped file is kept
+        log = t.get(f"/api/jobs/{j['id']}/log").json()
+        assert ws.job_log(j["id"]).exists() and any("coverage=" in l for l in log["lines"]) and log["lines"][-1].endswith("done")
     ps = t.get("/api/prompts?corpus=demo&status=done").json()
     assert ps["total"] == 2 and len(ps["prompts"]) == 2
     pid = [p for p in ps["prompts"] if p["n_atoms"] == 4][0]["id"]

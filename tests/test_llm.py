@@ -190,8 +190,8 @@ def test_cli_spend_and_models(store, capsys, tmp_path):
     from fx.cli import main
     with FakeServer() as srv:
         srv.script = [reply("ready.", 3, 2)]
-        assert main(["--store", str(store.path), "llm", "probe", "--model", "m", "--base-url", srv.url]) == 0
-    main(["--store", str(store.path), "llm", "spend"])
+        assert main(["--workspace", str(tmp_path / "ws"), "llm", "probe", "--model", "m", "--base-url", srv.url]) == 0
+    main(["--workspace", str(tmp_path / "ws"), "llm", "spend"])
     out = capsys.readouterr().out
     assert "total $" in out and "m " in out
     assert main(["llm", "models"]) == 0
