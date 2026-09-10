@@ -13,7 +13,9 @@ it is. No model call.
 Shapes: a JSON record whose one big string field is the prompt; Python source (an assignment, an
 argparse default, a docstring, an f-string with {slots}, adjacent-string concatenation) whose
 largest string literal is the prompt; a Lean s!"..." literal; and a one-line string with escaped
-newlines and no wrapper at all.
+newlines and no wrapper at all. After any of those, or alone: code fences that a paper's typesetting
+mangled from ``` to "` (on a line of their own, or inside \verb|"`|) are put back, so the model can
+quote them and the fence reads as a fence.
 """
 from __future__ import annotations
 
@@ -108,6 +110,20 @@ def _unescape(s: str) -> str:
     return ESCAPES.sub(lambda m: _UNESC[m.group(0)], s)
 
 
+_FENCE_LINE = re.compile(r'(?m)^([ \t]*)"`([A-Za-z0-9_+#.-]*)[ \t]*$')
+_FENCE_VERB = re.compile(r'\\verb\|"`\|')
+
+
+def mend_fences(text: str) -> tuple[str, bool]:
+    """``` mangled to "` by typesetting: only a "` alone on a line (with an optional language word) or inside
+    \\verb|"`| is a fence; an inline "`name`" is left alone."""
+    if "```" in text:
+        return text, False
+    out = _FENCE_VERB.sub("```", text)
+    out = _FENCE_LINE.sub(lambda m: m.group(1) + "```" + m.group(2), out)
+    return out, out != text
+
+
 def unwrap(text: str) -> tuple[str, Optional[str]]:
     """(the prompt as the model receives it, how it was unwrapped) or (text, None) when nothing applied."""
     stripped = text.strip()
@@ -118,9 +134,10 @@ def unwrap(text: str) -> tuple[str, Optional[str]]:
         r = _from_python(stripped) or _from_fragment(stripped)
     if r is None and "\n" not in stripped and len(ESCAPES.findall(stripped)) >= 3:
         r = (_unescape(stripped), "escaped one-line string")
-    if r is None:
-        return text, None
-    out = _finish(r[0])
+    out, how = (text, None) if r is None else (_finish(r[0]), r[1])
     if not out.strip() or out == stripped:
-        return text, None
-    return out, r[1]
+        out, how = text, None
+    out, mended = mend_fences(out)
+    if mended:
+        how = f"{how} + mangled fences" if how else "mangled fences"
+    return out, how

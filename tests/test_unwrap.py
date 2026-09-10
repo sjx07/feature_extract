@@ -40,3 +40,14 @@ def test_corpus_unwrap_count(tmp_path):
     assert 20 <= r["unwrapped"] <= 60
     hows = [json.loads(p["meta"])["harvest"]["wrapped"] for p in store.rows("SELECT meta FROM prompt WHERE meta LIKE '%\"wrapped\":%'")]
     assert "python string literal" in hows and "escaped one-line string" in hows
+
+
+def test_mangled_fences_are_put_back():
+    t = 'Complete the following Lean 4 code:\n\n"`lean4\nimport Mathlib\n\ntheorem t : 1 = 1 := by sorry\n"`\n'
+    assert unwrap(t) == ('Complete the following Lean 4 code:\n\n```lean4\nimport Mathlib\n\ntheorem t : 1 = 1 := by sorry\n```\n', "mangled fences")
+    t = 'Format:\n\n \\verb|"`|NL Description\n\n Prove that ...\n\n \\verb|"`|\n'
+    assert unwrap(t)[0] == 'Format:\n\n ```NL Description\n\n Prove that ...\n\n ```\n'
+    t = 'Use the identifier (e.g. `"distrib"`, `mul_le`) and the pattern `pat = r"\\b\\w{4}\\b"`.'   # inline quote-backtick pairs are not fences
+    assert unwrap(t) == (t, None)
+    t = 'prompt = """Complete the following Lean 4 code and return only the code:\n"`lean4\nimport Mathlib\n"`\n"""'   # wrapped and mangled
+    assert unwrap(t) == ('Complete the following Lean 4 code and return only the code:\n```lean4\nimport Mathlib\n```', "python string literal + mangled fences")
