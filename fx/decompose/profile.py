@@ -109,8 +109,12 @@ def _better(c2, f2, c1, f1) -> bool:
 
 def _ask(s: _Session, text, lo, hi, path, norm, parent=None):
     prompt = P.render_refine(text, lo, hi, parent)
-    components = parse_components(s.call(prompt))
+    reply = s.call(prompt)
+    components = parse_components(reply)
     failures = _check(components, text, lo, hi, path, norm)
+    if failures and not reply.strip():                 # nothing came back (ceiling spent, or the prompt's call budget is gone): no re-ask
+        s.tree.failures.append(f"{path or 'root'}: no reply")
+        return [], failures
     if failures:
         s.tree.reasks.append({"path": path or "root", "failures": list(failures)})
         components2 = parse_components(s.call(P.with_reask(prompt, failures)))

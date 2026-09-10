@@ -9,6 +9,7 @@ import unicodedata
 from typing import Optional
 
 from .contract import Component, Span
+from .prompts import SHIELD
 
 _WS = re.compile(r"\s+")
 _QUOTE_MAP = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", " ": " "})
@@ -36,6 +37,8 @@ def normalize(text: str) -> tuple[str, list[int]]:
 
 
 def _norm_quote(q: str) -> str:
+    for a, b in SHIELD.items():                     # the model quotes the shielded tag it was shown
+        q = q.replace(b, a)
     return _WS.sub(" ", unicodedata.normalize("NFKC", q.translate(_QUOTE_MAP))).strip()
 
 

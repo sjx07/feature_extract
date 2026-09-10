@@ -130,13 +130,24 @@ REASK = """# PROBLEMS WITH YOUR PREVIOUS REPLY (fix them and reply again in full
 """
 
 
+# A reasoning model cannot copy its own thinking delimiters: DeepSeek quoted "<think>" as "thinking" in 42 replies.
+# The prompt text shows them shielded; the locator unshields the model's quotes (locate._norm_quote).
+SHIELD = {"<think>": "⟨think⟩", "</think>": "⟨/think⟩"}
+
+
+def shield(s: str) -> str:
+    for a, b in SHIELD.items():
+        s = s.replace(a, b)
+    return s
+
+
 def render_refine(text: str, lo: int, hi: int, parent: "tuple[int, int] | None") -> str:
     """The REFINE prompt for text[lo:hi]; the parent span, with the span replaced by SPAN_MARK, is the context."""
     if parent is None:
-        return REFINE_ROOT.replace("{span}", text[lo:hi])
+        return REFINE_ROOT.replace("{span}", shield(text[lo:hi]))
     plo, phi = parent
     context = text[plo:lo] + SPAN_MARK + text[hi:phi]
-    return REFINE.replace("{context}", context).replace("{span}", text[lo:hi])
+    return REFINE.replace("{context}", shield(context)).replace("{span}", shield(text[lo:hi]))
 
 
 def with_reask(prompt: str, failures: list[str]) -> str:

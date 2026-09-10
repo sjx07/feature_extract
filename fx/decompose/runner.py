@@ -31,6 +31,8 @@ from .prompts import COMPONENTS_SCHEMA, SYSTEM
 # on DeepSeek v4 flash: 15.8k output tokens and about 100 s per call. Hidden reasoning counts against the reply ceiling.
 CALLS_BASE, CALLS_PER_KCHAR, TOKENS_IN, TOKENS_OUT, SECONDS_PER_CALL = 3.0, 1.18, 1753, 15_800, 100.0
 MAX_TOKENS = 32768
+MAX_EXHAUSTED = 1          # a span whose ceiling is spent twice (primary, then low effort) stops the prompt's calls: 4ce1150110dbcb85 spent 6 x 8 min this way
+MAX_CALLS = 40             # calls per prompt before it stops calling; what is left stays unrefined and shows in the queues
 
 
 class Stop(Exception):
@@ -119,9 +121,14 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens
     if not row:
         raise KeyError(pid)
     text = row["text"]
-    calls = {"n": 0, "cost": 0.0, "errors": 0, "fallbacks": 0}
+    calls = {"n": 0, "cost": 0.0, "errors": 0, "fallbacks": 0, "exhausted": 0, "stopped": None}
 
     def ask(prompt: str) -> str:
+        if calls["stopped"]:
+            return ""
+        if calls["n"] >= MAX_CALLS:
+            calls["stopped"] = f"calls_stopped:{MAX_CALLS} calls"
+            return ""
         r = client.complete(prompt, model=model, max_tokens=max_tokens, stage="decompose", note=pid, system=SYSTEM, schema=COMPONENTS_SCHEMA)
         calls["n"] += 1
         calls["cost"] += r.cost
@@ -137,10 +144,16 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens
                 raise RuntimeError(r.error)
             if r.error == "stopped":
                 raise Stop()
+        if r.finish_reason == "length" and not r.text.strip():
+            calls["exhausted"] += 1
+            if calls["exhausted"] >= MAX_EXHAUSTED:
+                calls["stopped"] = f"calls_stopped:{MAX_EXHAUSTED} replies spent the {max_tokens}-token ceiling"
         return r.text
 
     try:
         tree = profile(text, ask)
+        if calls["stopped"]:
+            tree.flags.append(calls["stopped"])
     except Stop:
         _clear(store, pid)                    # nothing written: the prompt stays to do and the next run resumes it
         raise

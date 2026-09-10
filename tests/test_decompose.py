@@ -307,3 +307,22 @@ def test_repeated_quotes_resolve_in_order_and_only_a_repeated_end_is_ambiguous()
     cs2 = [Component("```", "```", "material", "code", facets=f), Component("Done.", "Done.", "atom", facets=[Facet("finish", "")])]
     fails = validate_components(cs2, text, 117, len(text))
     assert len(fails) == 1 and "occurs again before the next component" in fails[0] and "ambiguous_end" in cs2[0].flags
+
+
+def test_think_tags_are_shielded_for_the_model_and_unshielded_in_its_quotes():
+    from fx.decompose.prompts import render_refine
+    from fx.decompose.locate import resolve
+    text = "Put your reasoning inside <think> </think> tags.\nThen answer."
+    assert "⟨think⟩ ⟨/think⟩" in render_refine(text, 0, len(text), None) and "<think>" not in render_refine(text, 0, len(text), None)
+    assert resolve(text, "Put your reasoning inside ⟨think⟩", "⟨/think⟩ tags.") == (0, 48)
+
+
+def test_a_prompt_stops_calling_once_a_span_spent_the_ceiling_twice(store):
+    import_text(store, "Do A.\n\nDo B.\n\nDo C.", name="one")
+    pid = store.one("SELECT id FROM prompt")["id"]
+    with FakeServer() as srv:
+        srv.script = [reply("", finish="length", completion_tokens=32768), reply("", finish="length", completion_tokens=32768)] + [reply("SHOULD NOT BE ASKED")] * 20
+        m = stage.decompose_one(store, Client(store, base_url=srv.url), pid, "m")
+        assert store.one("SELECT COUNT(*) n FROM call")["n"] == 2 and m["fallbacks"] == 1 and m["coverage"] == 0     # primary and fallback, nothing after
+        assert any(f.startswith("calls_stopped") for f in json.loads(store.one("SELECT flags FROM decomp")["flags"]))
+        assert store.one("SELECT COUNT(*) n FROM span WHERE kind='unrefined'")["n"] == 1                     # visible in the queues
