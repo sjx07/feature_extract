@@ -7,7 +7,7 @@ from typing import Callable, Optional
 
 from ..llm import Client
 from ..llm.pool import run_many
-from ..llm.registry import DEFAULT_MODEL
+from ..llm.registry import DEFAULT_MODEL, reasoning_low
 from ..store import Store
 from ..util.ids import parse_id, parse_ids
 from ..util.jsonx import extract_object
@@ -15,7 +15,7 @@ from . import prompts as P
 from .codebook import MAX_TOKENS, groups, latest, members
 
 
-def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 16,
+def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 16, effort: str = "low",
           progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     """Read-only coherence on one version: misfit members and splits per feature, indistinct pairs per group. Replaces the version's flags."""
     cbrow = latest(store, corpus, kind, version)
@@ -33,7 +33,7 @@ def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEF
         if len(g["features"]) >= 2:
             samples = {f["id"]: members(store, cb, f["id"], 5) for f in g["features"]}
             jobs.append(P.judge_siblings(g, samples)); meta.append(("group", g, {f["id"] for f in g["features"]}))
-    replies = run_many(client, jobs, model=model, workers=workers, max_inflight=workers, stage="library", note=f"{corpus}:{kind}:judge:v{cbrow['version']}", system=P.SYSTEM, max_tokens=MAX_TOKENS) if jobs else []
+    replies = run_many(client, jobs, model=model, workers=workers, max_inflight=workers, stage="library", note=f"{corpus}:{kind}:judge:v{cbrow['version']}", system=P.SYSTEM, max_tokens=MAX_TOKENS, extra_body=reasoning_low(model, client.base_url) if effort == "low" else None) if jobs else []
     summary = {"codebook": cb, "version": cbrow["version"], "calls": len(jobs), "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0}
     with store.lock:
         store.con.execute("DELETE FROM flag WHERE codebook=?", (cb,)); store.con.commit()

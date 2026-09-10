@@ -77,7 +77,7 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
 
 
 def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 16,
-                version: Optional[int] = None, stop: Optional[threading.Event] = None, echo=None) -> str:
+                version: Optional[int] = None, effort: str = "low", stop: Optional[threading.Event] = None, echo=None) -> str:
     """One library step as a job: coldstart, assign, judge or revise (collapse runs inline before coldstart and assign)."""
     from . import library as L
     stop = stop or threading.Event()
@@ -87,9 +87,9 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
         if step == "coldstart":
             r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
         elif step == "assign":
-            r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+            r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         elif step == "judge":
-            r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo))
+            r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
         elif step == "revise":
             r = L.revise(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, version=version)
         else:

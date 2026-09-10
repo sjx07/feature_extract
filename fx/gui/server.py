@@ -185,14 +185,15 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         model = body.get("model") or (L.COLDSTART_MODEL if step in ("coldstart", "revise") else DEFAULT_MODEL)
         workers = int(body.get("workers") or 16)
         version = int(body["version"]) if body.get("version") else None
-        params = {"kind": kind, "version": version, "workers": workers, "from": "gui"}
+        effort = body.get("effort") or "low"
+        params = {"kind": kind, "version": version, "workers": workers, "effort": effort, "from": "gui"}
         jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
         stop = threading.Event()
         running[jid] = stop
         client = Client(store)
 
         def work():
-            jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, stop=stop)
+            jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, stop=stop)
             running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()

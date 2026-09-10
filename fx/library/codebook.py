@@ -16,7 +16,7 @@ from . import prompts as P
 
 COLDSTART_MODEL = "gpt-5.6-sol"      # one whole-corpus call per kind; the assign and judge batches use the decomposition model
 MIN_SUPPORT = 3
-BATCH = 40
+BATCH = 20
 MAX_TOKENS = 32768
 KINDS = ("guidance", "material")
 
