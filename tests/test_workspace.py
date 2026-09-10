@@ -20,16 +20,15 @@ def test_workspace_layout(tmp_path):
     assert ws.job_log(3).name == "job-3.log" and ws.upload_dir("a b/c").name == "a_b_c"
 
 
-def test_sample_corpus_imports(tmp_path):
+def test_facet_corpus_imports(tmp_path):
     store = Store(tmp_path / "s.db")
-    r = import_path(store, ROOT / "data" / "corpora" / "facet_sample_30.jsonl", name="sample")
-    assert r["added"] == 30
-    doms = {x["domain"]: x["n"] for x in store.rows("SELECT domain, COUNT(*) n FROM prompt GROUP BY domain")}
-    assert doms == {"code-generation": 5, "math": 5, "science-quantitative": 5, "table-qa": 5, "text2cypher": 5, "text2sql": 5}
+    r = import_path(store, ROOT / "data" / "corpora" / "facet_prompts.jsonl", name="facet", domain="text2cypher")
+    assert r["added"] == 145
     p = store.one("SELECT * FROM prompt")
-    assert json.loads(p["meta"])["provenance"] and p["system"]
+    assert json.loads(p["meta"])["provenance"] and p["system"] and p["domain"] == "text2cypher"
+    assert {x["domain"] for x in store.rows("SELECT DISTINCT domain FROM prompt")} == {"text2cypher"}
     r2 = import_path(store, ROOT / "data" / "corpora" / "plain", name="plain")
-    assert r2["added"] == 2 and r2["duplicates_elsewhere"] == 1        # one of the two is also among the sample's text2cypher prompts
+    assert r2["added"] == 2 and r2["duplicates_elsewhere"] == 2        # both are text2cypher prompts of the corpus
 
 
 def test_cli_decompose_is_a_job_with_a_log(tmp_path):

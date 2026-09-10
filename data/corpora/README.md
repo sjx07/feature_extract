@@ -1,17 +1,15 @@
-# Test corpora
+# Corpora
 
-Small corpora checked in for tests, demos, and a first run on a fresh machine. Nothing here is
-a substitute for a real corpus; the FACET artifact's prompts.jsonl files stay where they are.
-
-- `facet_sample_30.jsonl`: thirty prompts from the FACET harvest, five per domain (code-generation,
-  math, science-quantitative, table-qa, text2cypher, text2sql), the median prompt of each of five
-  length bands per domain, so lengths run from about 140 to 8,400 characters. FACET format, with
-  provenance, system, and use case as recorded. Rebuild with `python tools/sample_corpus.py <prompts.jsonl ...>`.
-- `plain/`: two prompts as bare text files, the two harvested copies of the same "query planning
-  optimizer" system prompt, for the folder importer and for checking that identical text
-  decomposes identically.
+- `facet_prompts.jsonl`: the whole FACET harvest, 2,591 prompts across six domains after
+  deduplication by text (math 1,001, text2sql 806, table-qa 317, science-quantitative 180,
+  text2cypher 145, code-generation 142), in FACET format with provenance, system, and use case as
+  recorded. Pick a domain at import time (`--domain`, or the domain filter on the drop zone) and a
+  count at run time (`--limit`, or "first N only" on the site). Rebuild with
+  `python tools/facet_corpus.py <prompts.jsonl ...>`.
+- `plain/`: the two harvested copies of the same "query planning optimizer" system prompt as bare
+  text files, for the folder importer and for checking that identical text decomposes identically.
 
 ```
-PYTHONPATH=. python -m fx.cli import data/corpora/facet_sample_30.jsonl --name sample
-PYTHONPATH=. python -m fx.cli preview --corpus sample
+PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet_prompts.jsonl --name text2sql --domain text2sql
+PYTHONPATH=. python -m fx.cli -w runs/dev decompose --corpus text2sql --limit 30
 ```

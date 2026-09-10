@@ -71,7 +71,7 @@ runs/<name>/
 
 A run is a `job` row plus its log wherever it was started, so a terminal run shows on the site's
 job page and a site run has the same log file. `runs/` is not committed; `data/corpora/` holds
-the checked-in test corpora (thirty FACET prompts across six domains, and two plain-text files).
+the checked-in corpora: the whole FACET harvest, 2,591 prompts across six domains, and two plain-text files.
 
 ## Stage 1: decomposition and the site
 
@@ -89,9 +89,9 @@ material and declined gaps beside the tree; the queues page lists what to read.
 The same from the terminal:
 
 ```
-PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet_sample_30.jsonl --name sample
-PYTHONPATH=. python -m fx.cli -w runs/dev preview --corpus sample
-PYTHONPATH=. python -m fx.cli -w runs/dev decompose --corpus sample --limit 30
+PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet_prompts.jsonl --name text2sql --domain text2sql
+PYTHONPATH=. python -m fx.cli -w runs/dev preview --corpus text2sql --limit 30
+PYTHONPATH=. python -m fx.cli -w runs/dev decompose --corpus text2sql --limit 30
 ```
 
 How it decomposes: the REFINE prompt from FACET, applied to the whole prompt and then to every

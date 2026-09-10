@@ -17,7 +17,7 @@ open any prompt and see its tree beside the raw text, and read the queues of wha
 - `fx/gui`: FastAPI over the store. Corpora (drop zone, run panel with preview), job page (progress over server-sent events, projected remaining time, spend, stop), prompts, prompt page (raw text painted with atoms, material and declined gaps; the tree beside it, sections collapsible, hover links both ways), queues (low coverage, declined gaps, unrefined leaves, failures).
 - `fx/util/jsonx.py`: reply parsing shared by every stage.
 - `fx/paths.py`, `fx/jobs.py`: the workspace layout (store, logs, uploads, exports under `runs/<name>`) and one job lifecycle for the CLI and the site: a `job` row, a per-job log with every prompt and any traceback, progress into both.
-- `data/corpora/`: a checked-in test corpus, thirty FACET prompts across six domains with provenance, and two plain-text files; `tools/sample_corpus.py` rebuilds it.
+- `data/corpora/`: the whole FACET harvest checked in, 2,591 prompts across six domains with provenance, and two plain-text files; the domain is chosen at import and the count at run time. `tools/facet_corpus.py` rebuilds it.
 
 ## What the pilot showed (text2sql, 20 prompts, gpt-oss-20b on the local vLLM)
 
@@ -36,7 +36,7 @@ set -a; source ~/FACET/.env; set +a
 PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 ```
 
-Then http://localhost:8780: drop `~/Documents/FACET/facet_artifact/data/prompt/prompts.jsonl` with domain `text2sql`, preview, run first 30.
+Then http://localhost:8780: drop `data/corpora/facet_prompts.jsonl` with domain `text2sql`, preview, run first 30.
 
 ## Open
 
