@@ -22,7 +22,7 @@ def test_workspace_layout(tmp_path):
 
 def test_facet_corpus_imports(tmp_path):
     store = Store(tmp_path / "s.db")
-    r = import_path(store, ROOT / "data" / "corpora" / "facet_prompts.jsonl", name="facet", domain="text2cypher")
+    r = import_path(store, ROOT / "data" / "corpora" / "facet" / "text2cypher.jsonl", name="text2cypher")
     assert r["added"] == 145
     p = store.one("SELECT * FROM prompt")
     assert json.loads(p["meta"])["provenance"] and p["system"] and p["domain"] == "text2cypher"

@@ -71,7 +71,7 @@ runs/<name>/
 
 A run is a `job` row plus its log wherever it was started, so a terminal run shows on the site's
 job page and a site run has the same log file. `runs/` is not committed; `data/corpora/` holds
-the checked-in corpora: the whole FACET harvest, 2,591 prompts across six domains, and two plain-text files.
+the checked-in corpora: the FACET harvest as one file per domain, 2,591 prompts across six, and two plain-text files.
 
 ## Stage 1: decomposition and the site
 
@@ -80,8 +80,8 @@ set -a; source ~/FACET/.env; set +a                       # OPENROUTER_API_KEY, 
 PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 ```
 
-Open http://localhost:8780. Drop a FACET prompts.jsonl (with a domain filter), a folder or zip of
-text files, or paste one prompt. The run panel previews calls, tokens, dollars and, once the store
+Open http://localhost:8780. Drop one of the domain files under `data/corpora/facet/`, any FACET
+prompts.jsonl (with a domain filter), a folder or zip of text files, or paste one prompt. The run panel previews calls, tokens, dollars and, once the store
 has timing for the model, time; "run first N" decomposes a pilot, "run all" the rest. The job page
 follows the run over server-sent events; the prompt page shows the raw text painted with atoms,
 material and declined gaps beside the tree; the queues page lists what to read.
@@ -89,7 +89,7 @@ material and declined gaps beside the tree; the queues page lists what to read.
 The same from the terminal:
 
 ```
-PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet_prompts.jsonl --name text2sql --domain text2sql
+PYTHONPATH=. python -m fx.cli -w runs/dev import data/corpora/facet/text2sql.jsonl --name text2sql
 PYTHONPATH=. python -m fx.cli -w runs/dev preview --corpus text2sql --limit 30
 PYTHONPATH=. python -m fx.cli -w runs/dev decompose --corpus text2sql --limit 30
 ```
