@@ -13,6 +13,7 @@ import threading
 import traceback
 from typing import Optional
 
+from .llm.registry import DEFAULT_MODEL
 from .paths import Workspace
 from .store import Store, now
 
@@ -86,9 +87,9 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
         if step == "coldstart":
             r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
         elif step == "assign":
-            r = L.assign(store, client, corpus, kind, model=model or L.runner.DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+            r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         elif step == "judge":
-            r = L.judge(store, client, corpus, kind, model=model or L.runner.DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo))
+            r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo))
         elif step == "revise":
             r = L.revise(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, version=version)
         else:

@@ -270,6 +270,14 @@ class Client:
             "provider": r.provider, "billed": r.billed})
 
 
+def ask(client: "Client", prompt: str, *, model: str, stage: str, note: str, system: Optional[str] = None, schema=None, max_tokens: int = 32768) -> str:
+    """One call whose reply text the caller will parse: a denial stops the run (raised), any other failure is an empty string."""
+    r = client.complete(prompt, model=model, max_tokens=max_tokens, stage=stage, note=note, system=system, schema=schema)
+    if r.error and r.error.startswith("denied"):
+        raise RuntimeError(r.error)
+    return r.text
+
+
 def with_fallback(client: Client, primary: dict, *fallbacks: dict):
     """A callable messages -> Reply that tries the primary model settings, then each fallback on an empty or errored reply.
     Each dict holds complete() keyword arguments (model, extra_body, max_tokens ...)."""
