@@ -13,7 +13,7 @@ let ES = null;
 function parseHash() { const h = location.hash.slice(1) || '/corpora'; const [path, qs] = h.split('?'); return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) }; }
 async function route() {
   const { parts, q } = parseHash(); const view = parts[0] || 'corpora';
-  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues']].map(([k, l]) => `<a href="${href('/' + k, { corpus: q.corpus })}" class="${view.startsWith(k.slice(0, 6)) ? 'on' : ''}">${l}</a>`).join('');
+  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library']].map(([k, l]) => `<a href="${href('/' + k, { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') ? 'on' : ''}">${l}</a>`).join('');
   if (ES) { ES.close(); ES = null; }
   const main = $('#main'); main.innerHTML = '<div class="loading">loading</div>'; window.scrollTo(0, 0);
   try {
@@ -23,6 +23,8 @@ async function route() {
     else if (view === 'prompt') await viewPrompt(main, decodeURIComponent(parts.slice(1).join('/')));
     else if (view === 'queues') await viewQueues(main, q);
     else if (view === 'job') await viewJob(main, +parts[1]);
+    else if (view === 'library') await viewLibrary(main, q);
+    else if (view === 'feature') await viewFeature(main, +parts[1]);
     else main.innerHTML = '<p>No such page.</p>';
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; console.error(e); }
 }
@@ -86,10 +88,10 @@ const fmtSec = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s /
 async function viewJob(main, jid) {
   const j = await api('/api/jobs/' + jid);
   main.innerHTML = `<h1>Job #${jid} · ${esc(j.corpus || 'all corpora')}</h1><p class="lede">${esc(j.model)} · ${j.params.workers} workers${j.params.limit ? ` · pilot of ${j.params.limit}` : ''}</p>
-    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> <a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a> <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
+    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> ${j.kind.startsWith('library') ? `<a href="${href('/library', { corpus: j.corpus, kind: j.params.kind })}" style="margin-left:14px">library →</a>` : `<a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a>`} <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
   const render = d => { const share = d.total ? d.done / d.total : 0; const rate = d.elapsed && d.done ? d.elapsed / d.done : null;
     $('#jbody').innerHTML = `<div class="bar" style="max-width:720px"><i style="width:${(100 * share).toFixed(1)}%"></i></div>
-      <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)} / ${fmt(d.total)}</b>prompts</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${rate && d.status === 'running' ? fmtSec(rate * (d.total - d.done)) : d.status}</b>${d.status === 'running' ? 'remaining, projected' : 'status'}</span></div>
+      <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)}${d.total ? ' / ' + fmt(d.total) : ''}</b>${j.kind.startsWith('library') ? 'batches' : 'prompts'}</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${rate && d.status === 'running' ? fmtSec(rate * (d.total - d.done)) : d.status}</b>${d.status === 'running' ? 'remaining, projected' : 'status'}</span></div>
       <div class="recent" style="margin-top:12px">${(d.recent || []).map(r => `<div><a href="${href('/prompt/' + encodeURIComponent(r.id))}">${esc(r.id)}</a> · coverage ${pct(r.coverage)} · ${r.n_atoms} atoms · ${r.calls} calls${r.error ? ` · <span class="err">${esc(r.error)}</span>` : ''}</div>`).join('')}</div>${d.error ? `<p class="err">${esc(d.error)}</p>` : ''}`; };
   render(j);
   document.querySelector('details').addEventListener('toggle', async e => { if (e.target.open) { const l = await api(`/api/jobs/${jid}/log`); $('#jlog').textContent = l.lines.join('\n'); } });
@@ -172,3 +174,56 @@ async function viewQueues(main, q) {
 
 window.addEventListener('hashchange', route);
 route();
+
+/* ---------- library: the codebook of a corpus, one per kind ---------- */
+async function viewLibrary(main, q) {
+  const cs = await api('/api/corpora');
+  const corpus = q.corpus || (cs[0] && cs[0].name) || '', kind = q.kind || 'guidance';
+  if (!corpus) { main.innerHTML = '<p class="muted">import a corpus first</p>'; return; }
+  const [lib, jobs] = await Promise.all([api(`/api/library?corpus=${encodeURIComponent(corpus)}&kind=${kind}${q.version ? '&version=' + q.version : ''}`), api('/api/jobs')]);
+  const cb = lib.codebook, vs = lib.versions;
+  const sel = `<select id="lcorpus">${cs.map(c => `<option ${c.name === corpus ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+    <span style="margin-left:14px">${['guidance', 'material'].map(k => `<a href="${href('/library', { corpus, kind: k })}" class="${k === kind ? 'on' : ''}" style="margin-right:10px;${k === kind ? 'font-weight:600;color:var(--ink)' : ''}">${k}</a>`).join('')}</span>`;
+  const vtable = vs.length ? `<table class="list"><tr><th>version</th><th>round</th><th>model</th><th class="n">groups</th><th class="n">features</th><th class="n">assigned</th><th class="n">leftover</th><th class="n">low</th><th class="n">reading coverage</th><th class="n">anchors</th><th class="n">flags</th></tr>
+    ${vs.map(v => `<tr><td><a href="${href('/library', { corpus, kind, version: v.version })}">v${v.version}</a>${cb && v.id === cb.id ? ' <span class="muted">shown</span>' : ''}</td><td class="n">${v.round}</td><td>${esc(v.model)}</td><td class="n">${v.groups}</td><td class="n">${v.features}</td><td class="n">${fmt(v.assigned)}${v.unassigned ? ` <span class="muted">(+${fmt(v.unassigned)} to do)</span>` : ''}</td><td class="n">${fmt(v.leftover)}</td><td class="n">${fmt(v.low)}</td><td class="n">${pct(v.reading_coverage)}</td><td class="n">${v.anchor_agreement == null ? '' : pct(v.anchor_agreement)}</td><td class="n">${v.flags}</td></tr>`).join('')}</table>` : '<span class="muted">no codebook yet: run cold start</span>';
+  const flagsBy = {}; for (const f of lib.flags) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
+  const tree = lib.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect)} · ${fmt(g.support)} prompts · ${g.features.length} features</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">
+      ${g.features.map(f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${fmt(f.support)}</span><span class="read"><a href="${href('/feature/' + f.id)}"><span class="verb">${esc(f.polarity)}</span> ${esc(f.name)}</a><span class="tag">${f.realizations} wordings${f.prev ? ' · from v' + (vs.find(v => v.id === (lib.groups.find(x => x.features.includes(f)) || {}).codebook) || {}).version + '' : ''}${(flagsBy[f.id] || []).length ? ` · <span class="err">${(flagsBy[f.id] || []).length} flags</span>` : ''}</span><br><span class="muted" style="font-size:12.5px">${esc(f.definition)}</span></span></div>`).join('')}</div></details>`).join('');
+  main.innerHTML = `<div class="split"><div>
+    <h1>Library</h1><p class="lede">${sel}</p>
+    <div class="block"><div class="t">versions · ${fmt(lib.realizations)} distinct wordings over ${fmt(lib.readings)} readings</div>${vtable}</div>
+    <div class="block"><div class="t">codebook${cb ? ' v' + cb.version : ''}${cb && cb.notes ? ` · <span class="muted">${esc(cb.notes.slice(0, 300))}</span>` : ''}</div><div class="tree" style="max-height:none">${tree || '<span class="muted">empty</span>'}</div></div>
+    ${cb ? `<div class="block"><div class="t">leftover under v${cb.version} (no feature, or low confidence)</div>${lib.leftover.length ? `<table class="list">${lib.leftover.slice(0, 80).map(r => `<tr><td class="serif">${esc(r.polarity === 'forbid' ? 'forbid: ' : '')}${esc(r.declaration)}</td><td class="n">${r.prompts} prompts</td><td class="n">${esc(r.confidence || '')}</td></tr>`).join('')}</table>${lib.leftover.length > 80 ? `<div class="muted">and ${lib.leftover.length - 80} more</div>` : ''}` : '<span class="muted">none</span>'}</div>` : ''}
+  </div><div>
+    <h1 style="font-size:22px">Run</h1>
+    <form id="lform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
+      <label>step</label><select name="step"><option value="coldstart">cold start (v1)</option><option value="assign" selected>assign (latest version)</option><option value="judge">judge (read-only)</option><option value="revise">revise (next version)</option></select>
+      <label>model</label><input type="text" name="model" placeholder="default per step" style="width:100%">
+      <label>workers</label><input type="number" name="workers" value="16" min="1" max="128">
+      <span></span><span><button class="btn quiet" type="button" id="lprev">preview</button> <button class="btn" type="button" id="lrun">run</button> <span id="lstatus" class="muted"></span></span></form>
+    <div id="lpreview" class="block" style="margin-top:16px"></div>
+    <p class="muted" style="font-size:12.5px">Order: cold start, assign, judge, revise, then assign again on the new version. Assign is resumable and runs from scratch per version; judge only reports; revise is the one writer after the cold start.</p>
+    <div class="block"><div class="t">library jobs</div>${jobs.filter(j => j.kind.startsWith('library')).length ? `<table class="list">${jobs.filter(j => j.kind.startsWith('library')).slice(0, 10).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind.slice(8))} ${esc(j.params.kind)} · ${esc(j.corpus)}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
+  </div></div>`;
+  $('#lcorpus').onchange = e => { location.hash = href('/library', { corpus: e.target.value, kind }); };
+  const params = () => { const d = Object.fromEntries(new FormData($('#lform'))); return { corpus, kind, step: d.step, model: d.model, workers: +d.workers }; };
+  $('#lprev').onclick = async () => { const p = params(); const r = await api(`/api/library/preview?corpus=${encodeURIComponent(corpus)}&kind=${kind}&step=${p.step}&model=${encodeURIComponent(p.model)}`);
+    $('#lpreview').innerHTML = `<div class="prev"><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(r.tokens_in)}</b>tokens in</span><span><b>${fmt(r.tokens_out)}</b>tokens out</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.model)} · ${esc(r.endpoint)}</span></div>`; };
+  $('#lrun').onclick = async () => { const p = params(); $('#lstatus').textContent = 'starting'; try { const r = await post('/api/library/jobs', p); location.hash = href('/job/' + r.id); } catch (e) { $('#lstatus').textContent = e.message; } };
+}
+
+async function viewFeature(main, fid) {
+  const r = await api('/api/feature/' + fid); const f = r.feature, cb = r.codebook;
+  const byR = {}; for (const m of r.members) byR[m.id] = m;
+  main.innerHTML = `<h1><span class="verb" style="font-variant:small-caps">${esc(f.polarity)}</span> ${esc(f.name)}</h1>
+    <p class="lede">${esc(f.definition)}</p>
+    <div class="facts" style="margin-bottom:16px"><span class="k">library</span><span><a href="${href('/library', { corpus: cb.corpus_name, kind: cb.kind, version: cb.version })}">${esc(cb.corpus_name)} · ${esc(cb.kind)} · v${cb.version}</a></span>
+      <span class="k">group</span><span>${r.group ? esc(r.group.name) + ' <span class="muted">· ' + esc(r.group.aspect) + ' · ' + esc(r.group.definition) + '</span>' : ''}</span>
+      <span class="k">support</span><span>${fmt(r.members.reduce((s, m) => s + m.prompts, 0))} prompts · ${fmt(r.members.reduce((s, m) => s + m.n, 0))} readings · ${r.members.length} distinct wordings</span>
+      <span class="k">anchors</span><span>${f.examples.map(id => byR[id] ? `<span style="color:var(--req)">✓ ${esc(byR[id].declaration)}</span>` : `<span class="err">✗ R${id} not on this feature</span>`).join(' · ') || '<span class="muted">none</span>'}</span>
+      ${r.lineage.length ? `<span class="k">lineage</span><span>${r.lineage.map(l => `<a href="${href('/feature/' + l.id)}">${esc(l.name)}</a>`).join(' ← ')}</span>` : ''}
+      ${r.flags.length ? `<span class="k">flags</span><span>${r.flags.map(x => `<div><span class="err">${esc(x.verdict)}</span> ${x.verdict === 'indistinct' ? 'with <a href="' + href('/feature/' + (x.feature === f.id ? x.other : x.feature)) + '">' + esc(x.feature === f.id ? x.other_name : x.feature_name) + '</a>' : esc(x.declaration || '')} <span class="muted">${esc(x.verdict === 'split' ? JSON.parse(x.note || '{}').why || '' : x.note || '')}</span></div>`).join('')}</span>` : ''}</div>
+    <div class="cols2"><div><div class="block"><div class="t">members, by support</div><table class="list"><tr><th>declaration</th><th class="n">prompts</th><th class="n">readings</th><th class="n">confidence</th></tr>
+      ${r.members.map(m => `<tr><td class="serif">${esc(m.declaration)}${m.conditions.filter(c => c !== 'always').length ? ` <span class="muted" style="font-size:12px">when: ${esc(m.conditions.filter(c => c !== 'always').slice(0, 2).join('; '))}</span>` : ''}</td><td class="n">${m.prompts}</td><td class="n">${m.n}</td><td class="n">${esc(m.confidence)}</td></tr>`).join('')}</table></div></div>
+    <div><div class="block"><div class="t">in the prompts</div><table class="list">${r.readings.map(x => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(x.prompt))}" class="mono" style="font-size:11.5px">${esc(x.prompt)}</a><div class="serif">${esc(x.text)}</div></td></tr>`).join('')}</table></div></div></div>`;
+}

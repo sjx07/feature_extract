@@ -75,6 +75,36 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
     return status
 
 
+def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 16,
+                version: Optional[int] = None, stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One library step as a job: coldstart, assign, judge or revise (collapse runs inline before coldstart and assign)."""
+    from . import library as L
+    stop = stop or threading.Event()
+    try:
+        if step in ("coldstart", "assign"):
+            L.collapse(store, corpus, kind)
+        if step == "coldstart":
+            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
+        elif step == "assign":
+            r = L.assign(store, client, corpus, kind, model=model or L.runner.DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+        elif step == "judge":
+            r = L.judge(store, client, corpus, kind, model=model or L.runner.DEFAULT_MODEL, version=version, workers=workers, progress=progress_writer(store, ws, jid, stop, echo))
+        elif step == "revise":
+            r = L.revise(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, version=version)
+        else:
+            raise ValueError(step)
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} result {json.dumps(r)}\n")
+        status = "stopped" if r.get("stopped") else "done"
+        finish(store, ws, jid, status)
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        status = "failed"
+    return status
+
+
 def setup_logging(ws: Workspace, level: int = logging.INFO) -> None:
     """The site's log: to the workspace's logs/serve.log (rotated) and to the terminal."""
     from logging.handlers import RotatingFileHandler
