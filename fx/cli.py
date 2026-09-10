@@ -18,6 +18,8 @@ import os
 import sys
 from pathlib import Path
 
+from .llm.registry import DEFAULT_MODEL
+
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="fx")
@@ -42,7 +44,7 @@ def main(argv=None) -> int:
     for name in ("preview", "decompose"):
         p = sub.add_parser(name)
         p.add_argument("--corpus", default=None); p.add_argument("--ids", default=None, help="comma-separated prompt ids")
-        p.add_argument("--model", default=os.environ.get("FX_MODEL", "deepseek/deepseek-v4-flash")); p.add_argument("--base-url", default=None)
+        p.add_argument("--model", default=DEFAULT_MODEL); p.add_argument("--base-url", default=None)
         p.add_argument("--workers", type=int, default=128); p.add_argument("--redo", action="store_true")
         if name == "decompose":
             p.add_argument("--limit", type=int, default=0, help="first N prompts only (a pilot)")
@@ -55,10 +57,9 @@ def main(argv=None) -> int:
     from .store import Store
     ws = Workspace.from_env(a.workspace)
     if a.cmd == "llm" and a.sub == "models":
-        from .llm.registry import PRICES, resolve, price
-        for m in sorted(PRICES) + ["openai/gpt-oss-20b", "Qwen/Qwen2.5-7B-Instruct"]:
-            ep = resolve(m)
-            print(f"{m:36s} {ep.name:11s} {ep.base_url:40s} ${price(m, ep)[0]:.4f}/M in  ${price(m, ep)[1]:.4f}/M out")
+        from .llm.registry import models
+        for r in models():
+            print(f"{r['model']:36s} {r['endpoint']:11s} ${r['price_in']:.4f}/M in  ${r['price_out']:.4f}/M out{'  (default)' if r['default'] else ''}")
         return 0
     store = Store(ws.store_path)
     if a.cmd == "import":

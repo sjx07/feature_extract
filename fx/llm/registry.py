@@ -30,7 +30,18 @@ PRICES: dict[str, tuple[float, float]] = {
 }
 DEFAULT_PRICE = (2.0, 10.0)
 LOCAL_PRICE = (0.0, 0.0)
+DEFAULT_MODEL = os.environ.get("FX_MODEL", "deepseek/deepseek-v4-flash-0731")
+LOCAL_EXAMPLES = ["openai/gpt-oss-20b", "openai/gpt-oss-120b"]
 
+
+def models() -> list[dict]:
+    """Every model the registry knows, with its endpoint and price; what the CLI and the site list."""
+    names = list(PRICES) + [m for m in LOCAL_EXAMPLES if m not in PRICES] + [m for m in _custom() if m not in PRICES]
+    out = []
+    for m in names:
+        ep = resolve(m); pi, po = price(m, ep)
+        out.append({"model": m, "endpoint": ep.name, "price_in": pi, "price_out": po, "default": m == DEFAULT_MODEL})
+    return out
 
 @dataclass(frozen=True)
 class Endpoint:

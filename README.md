@@ -81,10 +81,17 @@ PYTHONPATH=. python -m fx.cli -w runs/dev serve --port 8780
 ```
 
 Open http://localhost:8780. Drop one of the domain files under `data/corpora/facet/`, any FACET
-prompts.jsonl (with a domain filter), a folder or zip of text files, or paste one prompt. The run panel previews calls, tokens, dollars and, once the store
+prompts.jsonl (with a domain filter), a folder or zip of text files, or paste one prompt; from a
+machine without the files, type a path on the server instead (relative to the repo, `~` allowed). The run panel previews calls, tokens, dollars and, once the store
 has timing for the model, time; "run first N" decomposes a pilot, "run all" the rest. The job page
 follows the run over server-sent events; the prompt page shows the raw text painted with atoms,
 material and declined gaps beside the tree; the queues page lists what to read.
+
+The model is a free-text field on the run panel with the registry's models suggested, and
+`--model` on the CLI: `gpt-*` goes to OpenAI, `vendor/model` to OpenRouter, anything else to the
+local server. `FX_MODEL` changes the default (`deepseek/deepseek-v4-flash-0731` out of the box),
+`FX_MODELS` names a JSON file adding models with their endpoint and price, `--base-url` points a
+CLI run at any other server. `fx llm models` prints the list the site shows.
 
 The same from the terminal:
 

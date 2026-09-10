@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import decompose, jobs
 from ..corpus import corpora, import_path, import_text
+from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
 from ..paths import Workspace
 from ..store import Store, now
@@ -42,7 +43,12 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         return rows
 
     @app.post("/api/import")
-    async def api_import(name: str = Form(...), domain: str = Form(""), file: Optional[UploadFile] = File(None), text: str = Form("")):
+    async def api_import(name: str = Form(...), domain: str = Form(""), file: Optional[UploadFile] = File(None), text: str = Form(""), path: str = Form("")):
+        if path.strip():                                                                  # a path on the machine the site runs on
+            p = Path(path.strip()).expanduser()
+            if not p.exists():
+                raise HTTPException(400, f"no such path on this machine: {p}")
+            return import_path(store, p, name, domain or None)
         if file is not None:
             data = await file.read()
             saved = ws.upload_dir(name) / Path(file.filename or "upload.txt").name        # kept verbatim, for provenance and re-import
@@ -50,7 +56,11 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             return import_path(store, saved, name, domain or None)
         if text.strip():
             return import_text(store, text, name)
-        raise HTTPException(400, "a file or a text is required")
+        raise HTTPException(400, "a path, a file or a text is required")
+
+    @app.get("/api/models")
+    def api_models():
+        return {"default": DEFAULT_MODEL, "models": models(), "local_url": LOCAL_URL, "custom": os.environ.get("FX_MODELS", "")}
 
     @app.get("/api/prompts")
     def api_prompts(corpus: str = "", status: str = "", limit: int = 500, offset: int = 0):
@@ -102,7 +112,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     # ---- preview and jobs
     @app.get("/api/preview")
-    def api_preview(corpus: str = "", model: str = "deepseek/deepseek-v4-flash", workers: int = 128, redo: bool = False, limit: int = 0):
+    def api_preview(corpus: str = "", model: str = DEFAULT_MODEL, workers: int = 128, redo: bool = False, limit: int = 0):
         return decompose.preview(store, corpus or None, model, workers, redo=redo, limit=limit)
 
     @app.get("/api/jobs")
@@ -112,7 +122,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
     @app.post("/api/jobs")
     def api_job_start(body: dict):
         corpus_name = body.get("corpus") or None
-        model = body.get("model") or "deepseek/deepseek-v4-flash"
+        model = body.get("model") or DEFAULT_MODEL
         workers = int(body.get("workers") or 128)
         limit = int(body.get("limit") or 0)
         redo = bool(body.get("redo"))

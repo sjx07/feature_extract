@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 from ..llm import Client
 from ..llm.pool import _sem
-from ..llm.registry import price, reasoning_off, resolve
+from ..llm.registry import DEFAULT_MODEL, price, reasoning_off, resolve
 from ..store import Store, now
 from .profile import metrics, profile
 from .prompts import COMPONENTS_SCHEMA, SYSTEM
@@ -61,7 +61,7 @@ def history(store: Store, model: str) -> dict:
     return out
 
 
-def preview(store: Store, corpus: Optional[str] = None, model: str = "deepseek/deepseek-v4-flash", workers: int = 128, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0) -> dict:
+def preview(store: Store, corpus: Optional[str] = None, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None, redo: bool = False, limit: int = 0) -> dict:
     pids = prompt_ids(store, corpus, ids, redo, limit)
     if not pids:
         return {"prompts": 0, "note": "nothing to do"}
@@ -144,7 +144,7 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, reasoning:
     return {"id": pid, **m, "cost": calls["cost"], "call_errors": calls["errors"]}
 
 
-def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: str = "deepseek/deepseek-v4-flash", workers: int = 128, ids: Optional[list[str]] = None,
+def run(store: Store, client: Client, corpus: Optional[str] = None, *, model: str = DEFAULT_MODEL, workers: int = 128, ids: Optional[list[str]] = None,
         redo: bool = False, limit: int = 0, reasoning: str = REASONING, max_tokens: int = MAX_TOKENS,
         progress: Optional[Callable[[int, int, dict], None]] = None, max_inflight: Optional[int] = None) -> dict:
     pids = prompt_ids(store, corpus, ids, redo, limit)

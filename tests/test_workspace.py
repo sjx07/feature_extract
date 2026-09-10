@@ -44,3 +44,15 @@ def test_cli_decompose_is_a_job_with_a_log(tmp_path):
     assert job["kind"] == "decompose" and job["status"] == "done" and job["done"] == 1 and json.loads(job["params"])["from"] == "cli"
     log = (Path(ws) / "logs" / "job-1.log").read_text()
     assert "job 1 decompose" in log and "coverage=" in log and log.strip().endswith("done")
+
+
+def test_site_imports_by_path_and_lists_models(tmp_path):
+    from fastapi.testclient import TestClient
+    from fx.gui.server import make_app
+    from fx.llm.registry import DEFAULT_MODEL
+    c = TestClient(make_app(Workspace(tmp_path / "w")))
+    r = c.post("/api/import", data={"name": "cypher", "path": str(ROOT / "data" / "corpora" / "facet" / "text2cypher.jsonl")}).json()
+    assert r["added"] == 145
+    assert c.post("/api/import", data={"name": "x", "path": "/no/such/file"}).status_code == 400
+    m = c.get("/api/models").json()
+    assert m["default"] == DEFAULT_MODEL and any(x["model"] == DEFAULT_MODEL and x["default"] for x in m["models"])

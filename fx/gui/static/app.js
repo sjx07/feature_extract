@@ -29,13 +29,14 @@ async function route() {
 
 /* ---------- corpora: import and run ---------- */
 async function viewCorpora(main, q) {
-  const [cs, jobs] = await Promise.all([api('/api/corpora'), api('/api/jobs')]);
+  const [cs, jobs, ms] = await Promise.all([api('/api/corpora'), api('/api/jobs'), api('/api/models')]);
   const sel = q.corpus || (cs[0] && cs[0].name) || '';
   main.innerHTML = `<div class="split"><div>
     <h1>Corpora</h1>
-    <p class="lede">Drop a FACET prompts file, a folder zipped, or a text file; or paste one prompt. Then decompose.</p>
+    <p class="lede">Drop a FACET prompts file, a folder zipped, or a text file; or name a path on this machine; or paste one prompt. Then decompose.</p>
     <div class="drop" id="drop">drop a file here, or click to choose<input type="file" id="file" hidden></div>
     <form id="iform" class="form" style="margin-top:14px">
+      <label>or a path here</label><input type="text" name="path" placeholder="e.g. data/corpora/facet/text2sql.jsonl, a folder, or a zip" list="paths"><datalist id="paths"><option value="data/corpora/facet/text2sql.jsonl"><option value="data/corpora/facet/math.jsonl"><option value="data/corpora/facet/table-qa.jsonl"><option value="data/corpora/facet/science-quantitative.jsonl"><option value="data/corpora/facet/text2cypher.jsonl"><option value="data/corpora/facet/code-generation.jsonl"><option value="data/corpora/plain"></datalist>
       <label>corpus name</label><input type="text" name="name" placeholder="e.g. text2sql" required>
       <label>domain filter</label><input type="text" name="domain" placeholder="for a FACET jsonl: keep only this domain">
       <label>or paste a prompt</label><textarea name="text"></textarea>
@@ -47,7 +48,7 @@ async function viewCorpora(main, q) {
     <h1 style="font-size:22px">Decompose</h1>
     <form id="rform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
       <label>corpus</label><select name="corpus">${cs.map(c => `<option value="${esc(c.name)}" ${c.name === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-      <label>model</label><input type="text" name="model" value="deepseek/deepseek-v4-flash" list="models"><datalist id="models"><option value="deepseek/deepseek-v4-flash"><option value="deepseek/deepseek-v4-pro"><option value="openai/gpt-oss-20b"><option value="gpt-5.6-luna"></datalist>
+      <label>model</label><span><input type="text" name="model" value="${esc(ms.default)}" list="models" style="width:100%"><datalist id="models">${ms.models.map(m => `<option value="${esc(m.model)}">${esc(m.endpoint)} · $${m.price_in}/M in, $${m.price_out}/M out</option>`).join('')}</datalist><span class="muted" style="font-size:12px">any model name works: gpt-* goes to OpenAI, vendor/model to OpenRouter, anything else to the local server at ${esc(ms.local_url)}; FX_MODEL sets the default, FX_MODELS adds models with prices</span></span>
       <label>workers</label><input type="number" name="workers" value="128" min="1" max="512">
       <label>first N only</label><input type="number" name="limit" value="30" min="0" placeholder="0 for all">
       <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="0.5">
@@ -61,6 +62,7 @@ async function viewCorpora(main, q) {
   drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
   drop.ondragleave = () => drop.classList.remove('over');
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) file.files = e.dataTransfer.files; drop.textContent = e.dataTransfer.files[0] ? e.dataTransfer.files[0].name : drop.textContent; if (!$('#iform input[name=name]').value) $('#iform input[name=name]').value = (e.dataTransfer.files[0]?.name || '').replace(/\.[^.]+$/, ''); };
+  $('#iform input[name=path]').onchange = e => { const v = e.target.value.trim(); if (v && !$('#iform input[name=name]').value) $('#iform input[name=name]').value = v.replace(/\/+$/, '').split('/').pop().replace(/\.[^.]+$/, ''); };
   file.onchange = () => { drop.textContent = file.files[0] ? file.files[0].name : 'drop a file here, or click to choose'; if (!$('#iform input[name=name]').value && file.files[0]) $('#iform input[name=name]').value = file.files[0].name.replace(/\.[^.]+$/, ''); };
   $('#iform').onsubmit = async e => { e.preventDefault(); const fd = new FormData($('#iform')); if (file.files[0]) fd.append('file', file.files[0]); $('#istatus').textContent = 'importing';
     try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}, ${r.duplicates_elsewhere} also in another corpus`; location.hash = href('/corpora', { corpus: r.corpus }); route(); } catch (err) { $('#istatus').textContent = err.message; } };
