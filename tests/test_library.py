@@ -89,6 +89,7 @@ def test_coldstart_assign_judge_revise(store):
         assert v2["version"] == 2 and v2["kept"] == 1 and v2["leftover_seen"] == 2 and v2["flags_seen"] == 2            # leftover: none + low
         t2 = L.groups(store, v2["codebook"])
         assert t2[0]["prev"] == tree[0]["id"] and t2[0]["features"][0]["prev"] == f_think["id"] and t2[1]["features"][0]["prev"] is None
+        assert t2[0]["features"][0]["examples"] == f_think["examples"]                          # a kept feature keeps its anchors
         assert L.latest(store, "c", "guidance")["version"] == 2 and L.latest(store, "c", "guidance", 1)["id"] == r["codebook"]
 
 

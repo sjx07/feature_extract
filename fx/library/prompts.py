@@ -118,7 +118,7 @@ raised on the current version. Return the next version.
 
 # RULES
 - Keep the id of every feature and group whose meaning is unchanged; you may sharpen a definition without changing
-  what it covers. A feature whose meaning changes, or that merges others, is a new feature (id null) that lists the
+  what it covers. A kept feature keeps its example wordings (they are its anchors); give examples for new features only. A feature whose meaning changes, or that merges others, is a new feature (id null) that lists the
   ids it replaces in "replaces".
 - Add a feature only for at least {min_support} leftover declarations that carry it, under an existing group or a new
   group (id null). Give examples as listed declaration ids, the clearest first.

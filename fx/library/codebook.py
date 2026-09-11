@@ -91,9 +91,12 @@ def write_codebook(store: Store, cb: int, obj: dict, kind: str, realization_ids:
             fprev = parse_id(f.get("id"), set(old_feats)) if old else None
             kept += fprev is not None
             pol = str(f.get("polarity") or "require").lower()
-            ex = parse_ids(f.get("examples"), realization_ids) or (parse_ids(f.get("replaces"), realization_ids) if not old else [])   # a cold start that misfiled its examples
-            if not ex and fprev is not None:
+            # anchors are fixed at a feature's birth: a kept feature keeps them, so anchor agreement measures drift in the assigner and
+            # the definitions, not in the revise's choice of examples (the pilot's revise picked weak ones and agreement fell to 0.73)
+            if fprev is not None and old_feats[fprev]["examples"]:
                 ex = old_feats[fprev]["examples"]
+            else:
+                ex = parse_ids(f.get("examples"), realization_ids) or (parse_ids(f.get("replaces"), realization_ids) if not old else [])   # a cold start that misfiled its examples
             store.insert("feature", {"codebook": cb, "level": "feature", "parent": gid, "prev": fprev, "aspect": None, "name": str(f["name"]).strip(),
                                      "definition": str(f.get("definition") or "").strip(), "polarity": pol if pol in ("require", "forbid") else "require", "examples": ex})
             n_feats += 1
