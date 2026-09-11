@@ -49,7 +49,8 @@ def progress_writer(store: Store, ws: Workspace, jid: int, stop: threading.Event
             store.con.execute("UPDATE job SET done=?, total=CASE WHEN ?>0 THEN ? ELSE total END, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
                               (done, total, total, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))   # a step that learns its total (batches) reports it
             store.con.commit()
-        line = f"{now()} {done}/{total} {info.get('id')} coverage={info.get('coverage')} atoms={info.get('n_atoms')} calls={info.get('calls')}" + (f" ERROR {info['error']}" if info.get("error") else "")
+        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
+        line = f"{now()} {done}/{total} " + " ".join(f"{k}={v}" for k, v in shown.items()) + (f" ERROR {info['error']}" if info.get("error") else "")
         with open(ws.job_log(jid), "a") as fh:
             fh.write(line + "\n")
         if echo:
