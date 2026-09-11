@@ -56,3 +56,14 @@ def test_site_imports_by_path_and_lists_models(tmp_path):
     assert c.post("/api/import", data={"name": "x", "path": "/no/such/file"}).status_code == 400
     m = c.get("/api/models").json()
     assert m["default"] == DEFAULT_MODEL and any(x["model"] == DEFAULT_MODEL and x["default"] for x in m["models"])
+
+
+def test_store_created_before_the_ledger_columns_is_migrated(tmp_path):
+    import sqlite3
+    old = tmp_path / "old.db"
+    con = sqlite3.connect(old)
+    con.executescript("CREATE TABLE call (id INTEGER PRIMARY KEY, at TEXT NOT NULL, stage TEXT, note TEXT, model TEXT NOT NULL, base_url TEXT, prompt_sha TEXT NOT NULL, prompt_chars INTEGER, reply_chars INTEGER, prompt_tokens INTEGER, completion_tokens INTEGER, cost REAL NOT NULL DEFAULT 0, latency REAL, finish_reason TEXT, cached INTEGER NOT NULL DEFAULT 0, error TEXT, reply TEXT);")
+    con.commit(); con.close()
+    s = Store(old)
+    s.insert("call", {"at": "now", "model": "m", "prompt_sha": "x", "provider": "Wafer", "billed": 0.01})
+    assert s.one("SELECT provider, billed FROM call")["provider"] == "Wafer"

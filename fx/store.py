@@ -78,6 +78,7 @@ class Store:
     def migrate(self, schema: str) -> None:
         with self.lock:
             self.con.executescript(schema)
+            self._migrate()
 
     def _migrate(self) -> None:
         """Columns added after a store was created: provider and billed on call (2026-09-10)."""
@@ -85,7 +86,7 @@ class Store:
         for col, typ in (("provider", "TEXT"), ("billed", "REAL")):
             if col not in have:
                 self.con.execute(f"ALTER TABLE call ADD COLUMN {col} {typ}")
-        self.con.commit()
+        self.con.commit()                        # called under self.lock from migrate()
 
     def insert(self, table: str, row: dict[str, Any]) -> int:
         keys = list(row)
