@@ -22,7 +22,7 @@ from .collapse import realizations
 
 
 MIN_GROW_GAIN = 0.02     # a grow block whose proposals cover under this share of the leftovers it saw ends the growth
-GROW_BLOCK_TOKENS = 30_000
+GROW_BLOCK_TOKENS = 8_000       # ~250 wordings a block: one 30k block over 1,208 leftovers yielded 14 features covering 8% (round 3)
 
 
 def revise(store: Store, client: Client, corpus: str, kind: str, model: str = COLDSTART_MODEL, version: Optional[int] = None, min_support: int = MIN_SUPPORT,
