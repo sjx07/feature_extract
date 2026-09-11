@@ -202,3 +202,38 @@ def test_assign_prompt_carries_anchors_quotes_and_domain_terms(store):
     from fx.library import prompts as P
     text = P.assign("guidance", L.groups(store, r["codebook"]), rz[:2])
     assert "e.g. think step by step" in text and 'quote: "' in text and "Identity is the instruction" in text
+
+
+def test_revise_sharpens_then_grows_and_assign_second_pass_recovers_leftovers(store):
+    seed(store)
+    L.collapse(store, "c", "guidance")
+    rz = L.realizations(store, "c", "guidance"); ids = {r["declaration"]: r["id"] for r in rz}
+    with FakeServer() as srv:
+        c = Client(store, base_url=srv.url)
+        def router(body):
+            text = body["messages"][-1]["content"]
+            if "# FLAGS" in text:                                                                   # sharpen: keep everything by id
+                t = L.groups(store, L.latest(store, "c", "guidance")["id"])
+                return _cb_reply(rz, old=(t[0]["id"], t[0]["features"][0]["id"]))
+            if "# LEFTOVER" in text:                                                                # grow: one feature for the two forbid/prose wordings + a third id, under a new group
+                return reply(json.dumps({"features": [{"name": "avoid prose", "definition": "prose answers are prohibited", "polarity": "forbid", "group": {"name": "output policy", "definition": "what the answer may contain", "aspect": "answer"},
+                                                        "examples": [f"R{ids['return prose']}"], "members": [f"R{ids['return prose']}", f"R{ids['reason step by step']}", f"R{ids['return JSON only']}"]},
+                                                       {"name": "tiny", "definition": "x", "polarity": "require", "group": "G1", "examples": [], "members": [f"R{ids['return prose']}"]}]}))   # under min support: dropped
+            if "# CODEBOOK" in text and "# DECLARATIONS" in text:
+                feats = [int(x) for x in __import__("re").findall(r"^  F(\d+) \(", text, __import__("re").M)]
+                got = __import__("re").findall(r"^R(\d+) \|", text, __import__("re").M)
+                shortlist = len(feats) == 1 and body.get("messages") and "reason" in text and "R" + str(ids["reason step by step"]) in [f"R{g}" for g in got] and "shortlist" not in text
+                if len(feats) <= 2:                                                                 # the second pass: a shortlist; put 'reason step by step' on its feature
+                    return reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{feats[0]}", "confidence": "high"} for g in got]}))
+                return reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": None, "confidence": "high"} for g in got]}))   # first pass: everything leftover
+            if "# MEMBERS" in text: return reply(json.dumps({"misfits": [], "split": None}))
+            if "# GROUP" in text: return reply(json.dumps({"indistinct": []}))
+            return _cb_reply(rz)
+        srv.router = router
+        L.coldstart(store, c, "c", "guidance", model="m")
+        a = L.assign(store, c, "c", "guidance", model="m", workers=1, batch=4)
+        assert a["leftover"] + a["assigned"] == 4 and a["second_pass"] >= 1 and a["second_pass_assigned"] >= 1     # the shortlist pass recovered what the first pass left
+        r = L.revise(store, c, "c", "guidance", model="m")
+        assert r["kept"] == 1 and r["grow_calls"] == 1 and r["grown"] == 1 and r["grow_dropped"] == 1 and r["leftover_covered"] == 3
+        t = L.groups(store, r["codebook"])
+        assert [g["name"] for g in t][-1] == "output policy" and t[-1]["features"][0]["name"] == "avoid prose" and t[-1]["features"][0]["examples"] == [ids["return prose"]]

@@ -120,6 +120,45 @@ def _codebook_schema(revise: bool) -> dict:
 
 
 COLDSTART_SCHEMA, REVISE_SCHEMA = _codebook_schema(False), _codebook_schema(True)
+GROW_SCHEMA = {"type": "object", "properties": {"features": {"type": "array", "items": {"type": "object", "properties": {
+    "name": {"type": "string"}, "definition": {"type": "string"}, "polarity": {"type": "string", "enum": ["require", "forbid"]},
+    "group": {"anyOf": [{"type": "string"}, {"type": "object", "properties": {"name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"}}, "required": ["name", "definition", "aspect"], "additionalProperties": False}]},
+    "examples": {"type": "array", "items": {"type": "string"}}, "members": {"type": "array", "items": {"type": "string"}}},
+    "required": ["name", "definition", "polarity", "group", "examples", "members"], "additionalProperties": False}}}, "required": ["features"], "additionalProperties": False}
+
+
+def add_grown(store: Store, cb: int, proposals: list[dict], kind: str, realization_ids: set[int], min_support: int) -> dict:
+    """Append the features a GROW call proposed to codebook `cb` (already written). "group" is an existing group of this
+    codebook (by id) or a new one. A proposal under min_support, or duplicating a name already in the codebook, is dropped."""
+    aspects = P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL
+    have_groups = {int(r["id"]): r["name"] for r in store.rows("SELECT id, name FROM feature WHERE codebook=? AND level='group'", (cb,))}
+    have_names = {r["name"].strip().lower() for r in store.rows("SELECT name FROM feature WHERE codebook=? AND level='feature'", (cb,))}
+    added = dropped = 0; covered: set[int] = set()
+    for f in proposals if isinstance(proposals, list) else []:
+        if not isinstance(f, dict) or not str(f.get("name") or "").strip():
+            continue
+        members = parse_ids(f.get("members"), realization_ids)
+        name = str(f["name"]).strip()
+        if len(members) < min_support or name.lower() in have_names:
+            dropped += 1; continue
+        g = f.get("group")
+        gid = parse_id(g, set(have_groups)) if isinstance(g, str) else None
+        if gid is None:
+            if not isinstance(g, dict) or not str(g.get("name") or "").strip():
+                dropped += 1; continue
+            key = str(g["name"]).strip().lower()
+            gid = next((i for i, n in have_groups.items() if n.strip().lower() == key), None)
+            if gid is None:
+                aspect = str(g.get("aspect") or "other").lower()
+                gid = store.insert("feature", {"codebook": cb, "level": "group", "parent": None, "prev": None, "aspect": aspect if aspect in aspects else "other",
+                                               "name": str(g["name"]).strip(), "definition": str(g.get("definition") or "").strip(), "polarity": None, "examples": []})
+                have_groups[gid] = str(g["name"]).strip()
+        pol = str(f.get("polarity") or "require").lower()
+        ex = parse_ids(f.get("examples"), realization_ids) or members[:3]
+        store.insert("feature", {"codebook": cb, "level": "feature", "parent": gid, "prev": None, "aspect": None, "name": name, "definition": str(f.get("definition") or "").strip(),
+                                 "polarity": pol if pol in ("require", "forbid") else "require", "examples": ex})
+        have_names.add(name.lower()); added += 1; covered |= set(members)
+    return {"added": added, "dropped": dropped, "covered": len(covered)}
 ASSIGN_SCHEMA = {"type": "object", "properties": {"assignments": {"type": "array", "items": {"type": "object", "properties": {
     "id": {"type": "string"}, "feature": {"type": ["string", "null"]}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}, "required": ["id", "feature", "confidence"]}}}, "required": ["assignments"]}
 

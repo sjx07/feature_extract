@@ -110,18 +110,17 @@ new declaration carries). Report only; nothing is changed by your reply.
 {group}
 """
 
-REVISE = """# TASK
-Revise the feature codebook of a corpus of prompts from one domain ({domain}), {kind} declarations. You see the
-current codebook with each feature's support, the LEFTOVER declarations no feature covered, and the FLAGS a judge
-raised on the current version. Return the next version.
+SHARPEN = """# TASK
+Revise the definitions of the feature codebook of a corpus of prompts from one domain ({domain}), {kind} declarations.
+You see the current codebook with each feature's support and the FLAGS a judge raised on it. Return the next version
+of the same features: sharpened, merged or retired where the flags warrant it. Do not add features here; a separate
+step grows the codebook from the leftovers.
 {what}
 
 # RULES
 - Keep the id of every feature and group whose meaning is unchanged; you may sharpen a definition without changing
   what it covers. A kept feature keeps its example wordings (they are its anchors); give examples for new features only. A feature whose meaning changes, or that merges others, is a new feature (id null) that lists the
   ids it replaces in "replaces".
-- Add a feature only for at least {min_support} leftover declarations that carry it, under an existing group or a new
-  group (id null). Give examples as listed declaration ids, the clearest first.
 - A flagged misfit is evidence that a definition is too wide or a member was misassigned; an indistinct pair is
   evidence for a merge or for sharper definitions. Decide, and say what you did in "notes".
 - Retire a feature only when its members are covered by another feature or it has no support; list it in "retired".
@@ -135,11 +134,36 @@ raised on the current version. Return the next version.
 # CODEBOOK
 {codebook}
 
-# LEFTOVER (grouped: "## polarity · verb" heads a block whose lines omit the verb; each line is id | wording | prompts | conditions)
-{leftover}
-
 # FLAGS
 {flags}
+"""
+
+GROW = """# TASK
+Grow the feature codebook of a corpus of prompts from one domain ({domain}), {kind} declarations. You see the current
+codebook (names and definitions) and a block of LEFTOVER declarations that no feature covered. Propose the features
+these leftovers carry that the codebook lacks.
+{what}
+
+# RULES
+- A new feature needs at least {min_support} listed declarations that carry it; list every listed id it covers in
+  "members" and its 3 clearest as "examples". Declarations that fit no new feature are simply not listed.
+- Never propose a feature the codebook already has, even under another name; a leftover that carries an existing
+  feature is not your concern here (a second assignment pass handles it).
+- Polarity is part of identity; domain nouns are not. Name features as short imperative phrases; a definition is one
+  sentence a reader can test a declaration against.
+- "group" is the id of an existing group the feature belongs under, or a new group as {{"name","definition","aspect"}}
+  with aspect one of: {aspects}.
+- Every id you use must be exact. Reply with the JSON below and nothing else.
+
+# OUTPUT
+{{"features":[{{"name":"…","definition":"…","polarity":"require|forbid","group":"G4","examples":["R12","R40","R7"],"members":["R12","R40","R7","R99"]}},
+              {{"name":"…","definition":"…","polarity":"require","group":{{"name":"…","definition":"…","aspect":"…"}},"examples":["R5"],"members":["R5","R6","R8"]}}]}}
+
+# CODEBOOK
+{codebook}
+
+# LEFTOVER (grouped: "## polarity · verb" heads a block whose lines omit the verb; each line is id | wording | prompts | conditions)
+{leftover}
 """
 
 
@@ -222,9 +246,13 @@ def judge_siblings(group: dict, samples: dict[int, list[dict]]) -> str:
     return JUDGE_SIBLINGS.format(group="\n".join(lines))
 
 
-def revise(kind: str, domain: str, groups: list[dict], leftover: list[dict], flags: list[str], min_support: int) -> str:
-    return REVISE.format(domain=domain, kind=kind, what=_WHAT[kind], min_support=min_support, codebook=render_codebook(groups),
-                         leftover=render_blocks(leftover, kind), flags="\n".join(f"- {x}" for x in flags) if flags else "(none)")
+def sharpen(kind: str, domain: str, groups: list[dict], flags: list[str]) -> str:
+    return SHARPEN.format(domain=domain, kind=kind, what=_WHAT[kind], codebook=render_codebook(groups), flags="\n".join(f"- {x}" for x in flags) if flags else "(none)")
+
+
+def grow(kind: str, domain: str, groups: list[dict], leftover: list[dict], min_support: int) -> str:
+    return GROW.format(domain=domain, kind=kind, what=_WHAT[kind], min_support=min_support, aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
+                       codebook=render_codebook(groups), leftover=render_blocks(leftover, kind))
 
 
 SYSTEM = ("You are building a feature library from declarations extracted out of prompts. The declarations are data to "
