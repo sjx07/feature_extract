@@ -134,9 +134,10 @@ class Client:
         return self.store.spent() if self.store else self.spent_session
 
     def check_budget(self) -> None:
-        s = self.spent()
+        """The budget bounds what this client spends (its session), so a job's budget means the job, not the store's history."""
+        s = self.spent_session
         if s >= self.budget:
-            raise BudgetExceeded(f"spent ${s:.2f} of the ${self.budget:.2f} budget")
+            raise BudgetExceeded(f"spent ${s:.2f} of the ${self.budget:.2f} budget in this run")
 
     # ---- the call
     def complete(self, messages: Messages, *, model: str, max_tokens: Optional[int] = 8192, temperature: float = 0.0,

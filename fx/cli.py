@@ -57,6 +57,7 @@ def main(argv=None) -> int:
         p.add_argument("--model", default=None, help="default: the decomposition model for assign and judge; --codebook-model for coldstart and name")
         p.add_argument("--version", type=int, default=None, help="codebook version (default: latest)"); p.add_argument("--workers", type=int, default=128); p.add_argument("--effort", default="low", choices=("low", "default"), help="reasoning effort for assign and judge batches")
         p.add_argument("--base-url", default=None, help="any OpenAI-compatible server for this step's model (e.g. a second local vLLM)")
+        p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")), help="dollars this run may spend")
         if name == "round":
             p.add_argument("--rounds", type=int, default=5); p.add_argument("--tau", type=float, default=None, help="neighbour threshold for clustering (default: measured from the anchors)")
         p.add_argument("--codebook-model", default=None, help=f"cold start and naming model (default {L_COLDSTART})")
@@ -114,9 +115,9 @@ def main(argv=None) -> int:
         setup_logging(ws)
         model = a.model or (L.COLDSTART_MODEL if a.sub == "coldstart" else DEFAULT_MODEL)
         rounds, codebook_model, tau = getattr(a, "rounds", 5), getattr(a, "codebook_model", None), getattr(a, "tau", None)
-        jid = start(store, ws, f"library:{a.sub}", a.corpus, model, {"kind": a.kind, "version": a.version, "workers": a.workers, "effort": a.effort, "rounds": rounds, "codebook_model": codebook_model, "from": "cli"}, 0)
+        jid = start(store, ws, f"library:{a.sub}", a.corpus, model, {"kind": a.kind, "version": a.version, "workers": a.workers, "effort": a.effort, "rounds": rounds, "codebook_model": codebook_model, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, 0)
         print(f"job {jid}: {a.sub} {a.kind} on {a.corpus}, log {ws.job_log(jid)}")
-        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, tau=tau, echo=lambda line: print("  " + line, flush=True))
+        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, tau=tau, echo=lambda line: print("  " + line, flush=True))
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
         return 0 if status == "done" else 1
     if a.cmd == "serve":

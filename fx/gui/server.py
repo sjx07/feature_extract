@@ -191,7 +191,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
         stop = threading.Event()
         running[jid] = stop
-        client = Client(store, base_url=body.get("base_url") or None, max_connections=workers + 64)
+        budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else float("inf")
+        client = Client(store, base_url=body.get("base_url") or None, max_connections=workers + 64, budget=budget)
 
         def work():
             jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, rounds=rounds, codebook_model=codebook_model, stop=stop)
