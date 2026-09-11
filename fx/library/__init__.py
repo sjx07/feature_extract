@@ -20,7 +20,8 @@ from .embed import embed, vectors
 from .judge import judge
 from .name import name
 from .preview import preview
+from .reopen import reopen
 from .round import run_round
 
 __all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest",
-           "leftovers", "members", "name", "nodes", "preview", "realizations", "run_round", "status", "threshold", "vectors"]
+           "leftovers", "members", "name", "nodes", "preview", "realizations", "reopen", "run_round", "status", "threshold", "vectors"]

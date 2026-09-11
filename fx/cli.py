@@ -51,7 +51,7 @@ def main(argv=None) -> int:
         if name == "decompose":
             p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
     lib = sub.add_parser("library", help="stage 2: the feature library of a corpus").add_subparsers(dest="sub", required=True)
-    for name in ("round", "collapse", "coldstart", "assign", "judge", "cluster", "name", "status", "preview"):
+    for name in ("round", "collapse", "coldstart", "assign", "judge", "reopen", "cluster", "name", "status", "preview"):
         p = lib.add_parser(name)
         p.add_argument("--corpus", required=True); p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
         p.add_argument("--model", default=None, help="default: the decomposition model for assign and judge; --codebook-model for coldstart and name")

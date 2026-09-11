@@ -92,7 +92,7 @@ def candidates(store: Store, cb: int, corpus: str, kind: str, tau: Optional[floa
     specific = [ids[i] for i in range(len(ids)) if not has_neighbour[i]]
     in_cluster = {d["id"] for c in clusters for d in c["members"]}
     with store.lock:
-        store.con.executemany("UPDATE assignment SET note=? WHERE codebook=? AND realization=?", [("specific", cb, r) for r in specific])
+        store.con.executemany("UPDATE assignment SET note=? WHERE codebook=? AND realization=? AND (note IS NULL OR note='specific')", [("specific", cb, r) for r in specific])
         store.con.executemany("UPDATE assignment SET note=NULL WHERE codebook=? AND realization=? AND note='specific'", [(cb, r) for r in ids if r not in specific])
         store.con.commit()
     return {"tau": round(tau, 3), "open": len(ids), "specific": len(specific), "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": len(ids) - len(specific) - len(in_cluster)}

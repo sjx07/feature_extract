@@ -163,7 +163,7 @@ def test_round_runs_the_growing_loop(store):
         srv.router = router
         logged = []
         r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, min_yield=1, encoder=fake_encoder, log=lambda n, res: logged.append(n))
-        assert logged[:6] == ["collapse", "embed", "coldstart", "assign", "judge", "cluster"] and "name" in logged
+        assert logged[:7] == ["collapse", "embed", "coldstart", "assign", "judge", "reopen", "cluster"] and "name" in logged
         assert r["stopped_because"].startswith("no candidate clusters left")
         v = r["versions"][0]
         assert v["features"] == 4 and v["rounds"] == 1 and v["specific"] >= 1 and v["assigned"] >= 4
@@ -194,3 +194,22 @@ def test_site_library_endpoints_and_job(tmp_path):
         assert c.get(f"/api/feature/{fid}").json()["feature"]["name"] == "think step by step"
         assert c.get("/api/library/preview?corpus=c&kind=guidance&step=assign&model=m").json()["calls"] == 1
         assert c.get("/api/library/preview?corpus=c&kind=guidance&step=cluster").json()["dollars"] == 0
+
+
+def test_reopen_sends_flagged_members_open_and_bars_the_node(store):
+    seed(store); L.collapse(store, "c", "guidance"); L.embed(store, "c", "guidance", enc=fake_encoder)
+    ids = ids_of(store)
+    with FakeServer() as srv:
+        c = Client(store, base_url=srv.url)
+        srv.calls = 0; srv.script = [cb_reply(store)]
+        cb = L.coldstart(store, c, "c", "guidance", model="m")["codebook"]
+        f_think = L.groups(store, cb)[0]["features"][0]
+        srv.router = lambda body: reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}", "confidence": "high"} for g in re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)]}))
+        L.assign(store, c, "c", "guidance", model="m", workers=1, shortlist=False)          # the fake puts everything on 'think step by step'
+        store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": ids["return prose"], "other": None, "verdict": "misfit", "note": "not reasoning"})
+        r = L.reopen(store, cb)
+        assert r["reopened_misfits"] == 1
+        a = store.one("SELECT feature, note FROM assignment WHERE realization=?", (ids["return prose"],))
+        assert a["feature"] is None and a["note"] == f"reopened:F{f_think['id']}"
+        a2 = L.assign(store, c, "c", "guidance", model="m", workers=1, only_open=True, shortlist=False)   # the fake insists on the same node: barred, so it stays open
+        assert a2["leftover"] == 1 and store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] is None

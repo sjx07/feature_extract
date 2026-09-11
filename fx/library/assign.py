@@ -29,6 +29,7 @@ from . import prompts as P
 from .codebook import ASSIGN_SCHEMA, BATCH, MAX_TOKENS, anchors, groups, latest, nodes
 from collections import defaultdict
 from .collapse import realizations
+from .reopen import excluded
 
 
 def _subtree(tree: list[dict], keep: set[int]) -> list[dict]:
@@ -91,9 +92,10 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
                "second_pass": 0, "second_pass_assigned": 0, "stopped": False}
     stop = stop or threading.Event()
     note = f"{corpus}:{kind}:assign:v{cbrow['version']}"
+    excl = excluded(store, cb)                               # reopened wordings never go back to the node they left
     jobs = [(b, tree, False) for b in batches]
     if jobs:
-        _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop)
+        _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, excl)
     if shortlist and not summary["stopped"]:
         # the second pass: the open wordings, each against its nearest nodes, batched by their nearest node
         open_ids = [int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=? AND feature IS NULL", (cb,))]
@@ -101,6 +103,8 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
         by_id = {d["id"]: d for d in realizations(store, corpus, kind)}
         by_first: dict[int, list[int]] = defaultdict(list)
         for rid, ns in lists.items():
+            ns = [n for n in ns if n != excl.get(rid)]
+            lists[rid] = ns
             if ns:
                 by_first[ns[0]].append(rid)
         jobs2 = []
@@ -111,12 +115,12 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
                 jobs2.append(([by_id[r] for r in chunk], _subtree(tree, keep), True))
         summary["second_pass"] = len(jobs2)
         if jobs2:
-            _run(store, client, cb, kind, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop)
+            _run(store, client, cb, kind, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop, excl)
     summary["anchor_agreement"] = anchors(store, cb)
     return summary
 
 
-def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop) -> None:
+def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, excl=None) -> None:
     """jobs: (batch, tree to show, second_pass). Writes each batch as its reply lands."""
     client.stop = stop
     sem = _sem(resolve(model, client.base_url).base_url, max(workers, 1))
@@ -156,6 +160,8 @@ def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, sum
                         if rid is None:
                             continue
                         fid = parse_id(a.get("feature"), valid) if a.get("feature") not in (None, "", "null") else None
+                        if fid is not None and excl and excl.get(rid) == fid:
+                            fid = None
                         conf = str(a.get("confidence") or "medium").lower()
                         got[rid] = (fid, conf if conf in ("high", "medium", "low") else "medium")
                     with store.lock:
