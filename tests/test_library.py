@@ -162,3 +162,18 @@ def test_round_runs_the_sequence_and_stops_on_no_gain(store):
         assert r["stopped_because"].startswith("anchor agreement fell") and len(r["versions"]) == 2
         v2 = L.status(store, "c", "guidance")["versions"][1]
         assert v2["assigned"] == 4 and v2["anchor_agreement"] < 0.9 and v2["notes"].startswith("[anchors")
+
+
+def test_coldstart_takes_the_head_that_fits_and_records_the_rest(store):
+    from fx.library.codebook import fit
+    seed(store)
+    L.collapse(store, "c", "guidance")
+    rz = L.realizations(store, "c", "guidance")
+    kept, dropped = fit(rz, budget_tokens=3000 + 40)              # room for about two lines after the overhead
+    assert len(kept) >= 1 and dropped == len(rz) - len(kept) and kept[0]["prompts"] >= kept[-1]["prompts"]
+    with FakeServer() as srv:
+        srv.script = [_cb_reply(rz)]
+        r = L.coldstart(store, Client(store, base_url=srv.url), "c", "guidance", model="m", context_tokens=3000 + 40)
+        assert r["shown"] == len(kept) and r["waiting"] == dropped
+        assert "waited for the loop" in L.latest(store, "c", "guidance")["notes"]
+        assert f"\nR{rz[-1]['id']} |" not in srv.requests[0]["messages"][-1]["content"]   # the tail was not sent

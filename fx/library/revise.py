@@ -11,19 +11,22 @@ from ..store import Store
 from ..util.ids import parse_ids
 from ..util.jsonx import extract_object
 from . import prompts as P
-from .codebook import COLDSTART_MODEL, MAX_TOKENS, MIN_SUPPORT, REVISE_SCHEMA, flags, groups, latest, leftovers, new_codebook, write_codebook
+from .codebook import COLDSTART_MODEL, CONTEXT_TOKENS, MAX_TOKENS, MIN_SUPPORT, REVISE_SCHEMA, fit, flags, groups, latest, leftovers, new_codebook, write_codebook
 from .collapse import realizations
 
 
 def revise(store: Store, client: Client, corpus: str, kind: str, model: str = COLDSTART_MODEL, version: Optional[int] = None, min_support: int = MIN_SUPPORT,
-           max_leftover: int = 600, domain: Optional[str] = None) -> dict:
+           context_tokens: int = CONTEXT_TOKENS, domain: Optional[str] = None) -> dict:
     """The next version from the current one, its leftovers and its flags, in one call. Assign it afresh afterwards."""
     cbrow = latest(store, corpus, kind, version)
     if not cbrow:
         raise ValueError("no codebook")
     cb, cid = int(cbrow["id"]), int(cbrow["corpus"])
     tree = groups(store, cb)
-    left = leftovers(store, cb, corpus, kind)[:max_leftover]
+    # the codebook and the flags come first; the leftovers take what is left of the budget, most-supported first
+    n_feat = sum(len(g["features"]) for g in tree)
+    all_left = leftovers(store, cb, corpus, kind)
+    left, waiting = fit(all_left, context_tokens - 60 * n_feat - 40 * len(flags(store, cb)))
     fl = []
     for x in flags(store, cb):
         if x["verdict"] == "misfit":
@@ -43,4 +46,4 @@ def revise(store: Store, client: Client, corpus: str, kind: str, model: str = CO
     w = write_codebook(store, ncb, obj, kind, all_r, old=tree)
     old_feats = {f["id"] for g in tree for f in g["features"]}
     retired = parse_ids(obj.get("retired"), old_feats)
-    return {"corpus": corpus, "kind": kind, "codebook": ncb, "version": nversion, "leftover_seen": len(left), "flags_seen": len(fl), "retired": len(retired), **w, "notes": str(obj.get("notes") or "")[:500]}
+    return {"corpus": corpus, "kind": kind, "codebook": ncb, "version": nversion, "leftover_seen": len(left), "leftover_waiting": waiting, "flags_seen": len(fl), "retired": len(retired), **w, "notes": str(obj.get("notes") or "")[:500]}

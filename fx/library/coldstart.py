@@ -1,4 +1,6 @@
-"""Codebook version 1 from every realization of the corpus in one call."""
+"""Codebook version 1 from the corpus's realizations in one call. When they do not fit the model's context budget the call takes
+the head of the support-ordered list and the codebook row says how many waited; the tail is singletons by construction, and the loop
+(assign over everything, revise over the leftovers) is what reaches it."""
 from __future__ import annotations
 
 from typing import Optional
@@ -8,20 +10,22 @@ from ..llm import Client, ask
 from ..store import Store
 from ..util.jsonx import extract_object
 from . import prompts as P
-from .codebook import COLDSTART_MODEL, COLDSTART_SCHEMA, MAX_TOKENS, MIN_SUPPORT, new_codebook, write_codebook
+from .codebook import COLDSTART_MODEL, COLDSTART_SCHEMA, CONTEXT_TOKENS, MAX_TOKENS, MIN_SUPPORT, fit, new_codebook, write_codebook
 from .collapse import realizations
 
 
-def coldstart(store: Store, client: Client, corpus: str, kind: str, model: str = COLDSTART_MODEL, min_support: int = MIN_SUPPORT, domain: Optional[str] = None) -> dict:
+def coldstart(store: Store, client: Client, corpus: str, kind: str, model: str = COLDSTART_MODEL, min_support: int = MIN_SUPPORT, domain: Optional[str] = None,
+              context_tokens: int = CONTEXT_TOKENS) -> dict:
     cid = corpus_id(store, corpus)
     decl = realizations(store, corpus, kind)
     if not decl:
         raise ValueError(f"no {kind} realizations for {corpus}: run collapse, or decompose first")
     domain = domain or corpus_domain(store, cid, corpus)
-    reply = ask(client, P.coldstart(kind, domain, decl, min_support), model=model, stage="library", note=f"{corpus}:{kind}:coldstart", system=P.SYSTEM, schema=COLDSTART_SCHEMA, max_tokens=MAX_TOKENS)
+    shown, waiting = fit(decl, context_tokens)
+    reply = ask(client, P.coldstart(kind, domain, shown, min_support), model=model, stage="library", note=f"{corpus}:{kind}:coldstart", system=P.SYSTEM, schema=COLDSTART_SCHEMA, max_tokens=MAX_TOKENS)
     obj = extract_object(reply, "groups")
     if obj is None:
         raise RuntimeError("cold start reply was not a codebook (no 'groups' list)")
-    cb, version = new_codebook(store, cid, kind, model, 0)
+    cb, version = new_codebook(store, cid, kind, model, 0, notes=f"cold start over {len(shown)} of {len(decl)} declarations; {waiting} waited for the loop" if waiting else "")
     w = write_codebook(store, cb, obj, kind, {d["id"] for d in decl})
-    return {"corpus": corpus, "kind": kind, "codebook": cb, "version": version, "declarations": len(decl), **w}
+    return {"corpus": corpus, "kind": kind, "codebook": cb, "version": version, "declarations": len(decl), "shown": len(shown), "waiting": waiting, **w}

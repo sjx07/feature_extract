@@ -7,6 +7,7 @@ Settings shared by the steps live here too: the cold-start model, the minimum su
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
 from ..corpus import corpus_id
@@ -18,6 +19,20 @@ COLDSTART_MODEL = "gpt-5.6-sol"      # one whole-corpus call per kind; the assig
 MIN_SUPPORT = 3
 BATCH = 20
 MAX_TOKENS = 32768
+CONTEXT_TOKENS = int(os.environ.get("FX_CONTEXT_TOKENS", 120_000))    # what one cold-start or revise prompt may carry; declarations past it wait for the loop
+
+
+def fit(rows: list[dict], budget_tokens: int = CONTEXT_TOKENS, overhead_tokens: int = 3000) -> tuple[list[dict], int]:
+    """The head of a support-ordered declaration list that fits the budget (4 chars a token, 12 tokens of ids and counts a line).
+    Returns (kept, dropped)."""
+    left = (budget_tokens - overhead_tokens) * 4
+    out = []
+    for r in rows:
+        cost = len(r["declaration"]) + 48 + sum(len(c) for c in (r.get("conditions") or [])[:2])
+        if cost > left:
+            break
+        out.append(r); left -= cost
+    return out, len(rows) - len(out)
 KINDS = ("guidance", "material")
 
 
