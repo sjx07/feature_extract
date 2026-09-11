@@ -103,7 +103,7 @@ def provider_body(model: str, base_url: Optional[str] = None) -> dict:
     changes the sort, FX_PROVIDER_ORDER=A,B,C names upstreams to try first, FX_PROVIDER=Name pins one."""
     if resolve(model, base_url).name != "openrouter":
         return {}
-    only = os.environ.get("FX_PROVIDER", "")
+    only = os.environ.get("FX_PROVIDER", "Wafer")
     if only:
         return {"provider": {"only": [only], "allow_fallbacks": False}}
     prov: dict = {"allow_fallbacks": True}
@@ -111,7 +111,8 @@ def provider_body(model: str, base_url: Optional[str] = None) -> dict:
     # text on 4 of 6 probes of a 185-char prompt (2026-09-10), and a throughput sort lands there first. FX_PROVIDER_IGNORE
     # (comma-separated) replaces the list; empty string keeps every upstream.
     # OpenInference (fp8, the cheapest) looped the same way on 3 of 3 probes at 1,400 s each; DeepInfra returned 3 of 3 clean
-    # but at 400-620 s a call; Wafer returned 5 of 6 clean at 50-86 s. So Wafer first, DeepInfra behind it (FX_PROVIDER_ORDER).
+    # but at 400-620 s a call; Wafer returned 5 of 6 clean at 50-86 s and 1,200 run calls at 127 s with 2% empty, reasoning
+    # returned in the message and counted in usage. So Wafer only by default; FX_PROVIDER_ORDER=Wafer,DeepInfra allows fallback.
     ignore = os.environ.get("FX_PROVIDER_IGNORE", "Reka,OpenInference,Relace,Sail Research,Inceptron,GMICloud,AtlasCloud")
     if ignore:
         prov["ignore"] = [x.strip() for x in ignore.split(",") if x.strip()]
