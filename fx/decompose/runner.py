@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 from ..llm import Client
 from ..llm.pool import _sem
-from ..llm.registry import DEFAULT_MODEL, price, provider_body, reasoning_low, resolve
+from ..llm.registry import DEFAULT_MODEL, price, reasoning_low, resolve
 from ..store import Store, now
 from .profile import metrics, profile
 from .prompts import COMPONENTS_SCHEMA, SYSTEM
@@ -127,11 +127,10 @@ def decompose_one(store: Store, client: Client, pid: str, model: str, max_tokens
     calls = {"n": 0, "cost": 0.0, "errors": 0, "fallbacks": 0, "exhausted": 0, "stopped": None}
     lock = threading.Lock()
     sem = sem or threading.Semaphore(FANOUT * 4)
-    routing = provider_body(model, client.base_url)
 
     def call(prompt: str, extra: Optional[dict], note: str):
         with sem:
-            r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=(routing | (extra or {})) or None, stage="decompose", note=note, system=SYSTEM, schema=COMPONENTS_SCHEMA)
+            r = client.complete(prompt, model=model, max_tokens=max_tokens, extra_body=extra or None, stage="decompose", note=note, system=SYSTEM, schema=COMPONENTS_SCHEMA)
         with lock:
             calls["n"] += 1
             calls["cost"] += r.cost

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence, Union
 
 from ..store import Store, now
-from .registry import Endpoint, cost as price_of, resolve
+from .registry import provider_body, Endpoint, cost as price_of, resolve
 
 Messages = Union[str, Sequence[dict[str, str]]]
 
@@ -148,6 +148,10 @@ class Client:
         msgs = _to_messages(messages)
         if system:
             msgs = [{"role": "system", "content": system}] + msgs
+        # upstream routing for hosted routers belongs to the endpoint, not the caller: every stage's call gets it, the caller's extra_body wins on overlap
+        routing = provider_body(model, self.base_url)
+        if routing:
+            extra_body = routing | (extra_body or {})
         params = {"max_tokens": max_tokens, "temperature": temperature, "extra_body": extra_body or None, "schema": schema}
         sha = sha_of(model, msgs, params)
         ep = resolve(model, self.base_url)
