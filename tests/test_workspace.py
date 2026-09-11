@@ -67,3 +67,28 @@ def test_store_created_before_the_ledger_columns_is_migrated(tmp_path):
     s = Store(old)
     s.insert("call", {"at": "now", "model": "m", "prompt_sha": "x", "provider": "Wafer", "billed": 0.01})
     assert s.one("SELECT provider, billed FROM call")["provider"] == "Wafer"
+
+
+def test_harvest_bank_rows_dedupe_and_keep_provenance():
+    import sys
+    sys.path.insert(0, str(ROOT / "tools"))
+    from harvest_bank import rows
+    bank = {"domain": "entity-resolution", "prompts": [
+        {"id": "a1", "prompt": {"text": "\\texttt{Are A and B the same?}", "text_clean": "Are A and B the same?", "kind": "text_template", "text_clean_transforms": ["unwrap_font_cmd"]},
+         "provenance": {"source_kind": "paper", "source_id": "2205.09911", "file_path": "x.tex", "line_start": 3, "line_end": 3, "locator": "ignored"},
+         "labels": {"domain": "entity-resolution/generic-pairwise", "domain_minor": "generic-pairwise", "stage": "match", "functionality": "pairwise"}, "use_case": {"benchmarks": [{"value": "Abt-Buy", "grade": "x"}]}},
+        {"id": "a2", "prompt": {"text": "Are A and B the same?", "kind": "text_template"}, "provenance": {}, "labels": {}},              # same cleaned text: folded
+        {"id": "a3", "prompt": {"text": "Match the two records.", "kind": "builder_source"}, "provenance": {"source_id": "repo/x"}, "labels": {"domain": "entity-resolution/blocking"}},
+    ]}
+    rs = rows(bank, "entity-resolution")
+    assert [r["record_id"] for r in rs] == ["a1", "a3"] and rs[0]["duplicate_ids"] == ["a2"]
+    assert rs[0]["text"] == "Are A and B the same?" and rs[0]["subtask"] == "generic-pairwise" and rs[0]["use_case"] == {"benchmarks": ["Abt-Buy"]}
+    assert rs[0]["provenance"] == {"source_kind": "paper", "source_id": "2205.09911", "file_path": "x.tex", "line_start": 3, "line_end": 3}
+    assert rs[1]["subtask"] == "entity-resolution/blocking" and rs[1]["system_id"] == "repo/x"
+
+
+def test_entity_resolution_corpus_imports(tmp_path):
+    store = Store(tmp_path / "s.db")
+    r = import_path(store, ROOT / "data" / "corpora" / "entity-resolution.jsonl", name="er")
+    assert r["added"] == 247 and r["skipped"] == 0
+    assert {x["domain"] for x in store.rows("SELECT DISTINCT domain FROM prompt")} == {"entity-resolution"}
