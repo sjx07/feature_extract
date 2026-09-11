@@ -177,3 +177,14 @@ def test_coldstart_takes_the_head_that_fits_and_records_the_rest(store):
         assert r["shown"] == len(kept) and r["waiting"] == dropped
         assert "waited for the loop" in L.latest(store, "c", "guidance")["notes"]
         assert f"\nR{rz[-1]['id']} |" not in srv.requests[0]["messages"][-1]["content"]   # the tail was not sent
+
+
+def test_codebook_prompts_group_declarations_by_head():
+    from fx.library.prompts import render_blocks
+    rows = [{"id": 1, "polarity": "require", "head": "use", "declaration": "use the schema", "prompts": 5, "n": 5, "conditions": ["always"]},
+            {"id": 2, "polarity": "require", "head": "use", "declaration": "use step-by-step reasoning", "prompts": 3, "n": 4, "conditions": ["if the question is hard"]},
+            {"id": 3, "polarity": "forbid", "head": "use", "declaration": "use tools", "prompts": 1, "n": 1, "conditions": []}]
+    text = render_blocks(rows, "guidance")
+    assert text.startswith("## require · use (8 prompts, 2 wordings)\nR1 | the schema | 5\nR2 | step-by-step reasoning | 3 | when: if the question is hard\n## forbid · use (1 prompts, 1 wordings)\nR3 | tools | 1")
+    mat = render_blocks([{"id": 9, "polarity": "require", "head": "example", "declaration": "provide a worked example", "prompts": 2, "n": 2, "conditions": []}], "material")
+    assert mat == "## material kind example (2 prompts, 1 wordings)\nR9 | provide a worked example | 2"

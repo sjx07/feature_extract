@@ -28,7 +28,7 @@ def fit(rows: list[dict], budget_tokens: int = CONTEXT_TOKENS, overhead_tokens: 
     left = (budget_tokens - overhead_tokens) * 4
     out = []
     for r in rows:
-        cost = len(r["declaration"]) + 48 + sum(len(c) for c in (r.get("conditions") or [])[:2])
+        cost = len(r["declaration"]) + 24 + sum(len(c) for c in (r.get("conditions") or [])[:2])
         if cost > left:
             break
         out.append(r); left -= cost

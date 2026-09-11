@@ -21,7 +21,7 @@ def collapse(store: Store, corpus: str, kind: str) -> dict:
     reading at its realization. Idempotent: an existing realization keeps its id, its counts are refreshed."""
     cid = corpus_id(store, corpus)
     span_kind = "atom" if kind == "guidance" else "material"
-    rows = store.rows("SELECT r.id, r.prompt, r.polarity, r.declaration, r.condition FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
+    rows = store.rows("SELECT r.id, r.prompt, r.polarity, r.declaration, r.condition, r.verb, s.note FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
                       "WHERE p.corpus=? AND s.kind=? AND r.declaration IS NOT NULL AND r.declaration != ''", (cid, span_kind))
     groups: dict[str, list] = defaultdict(list)
     for r in rows:
@@ -33,12 +33,14 @@ def collapse(store: Store, corpus: str, kind: str) -> dict:
         for key, rs in groups.items():
             best = max(rs, key=lambda r: len(r["declaration"]))     # the fullest wording stands for the group
             conds = sorted({(r["condition"] or "always") for r in rs}, key=lambda c: (c == "always", c))[:6]
-            vals = (best["polarity"] or "require", best["declaration"], len(rs), len({r["prompt"] for r in rs}), json.dumps(conds))
+            # the head the cold start groups by: the verb of a guidance reading, the material kind of a material one
+            head = (best["note"] or "other") if kind == "material" else re.sub(r"\s+", " ", (best["verb"] or "").strip().lower())
+            vals = (best["polarity"] or "require", best["declaration"], len(rs), len({r["prompt"] for r in rs}), json.dumps(conds), head)
             if key in have:
                 rid = have[key]
-                con.execute("UPDATE realization SET polarity=?, declaration=?, n=?, prompts=?, conditions=? WHERE id=?", vals + (rid,))
+                con.execute("UPDATE realization SET polarity=?, declaration=?, n=?, prompts=?, conditions=?, head=? WHERE id=?", vals + (rid,))
             else:
-                rid = con.execute("INSERT INTO realization (corpus, kind, key, polarity, declaration, n, prompts, conditions) VALUES (?,?,?,?,?,?,?,?)", (cid, kind, key) + vals).lastrowid
+                rid = con.execute("INSERT INTO realization (corpus, kind, key, polarity, declaration, n, prompts, conditions, head) VALUES (?,?,?,?,?,?,?,?,?)", (cid, kind, key) + vals).lastrowid
                 have[key] = rid; new += 1
             con.executemany("UPDATE reading SET realization=? WHERE id=?", [(rid, r["id"]) for r in rs])
         con.commit()

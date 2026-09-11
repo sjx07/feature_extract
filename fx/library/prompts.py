@@ -48,7 +48,7 @@ Group the features into GROUPS by the aspect of the model's behaviour they gover
 {{"groups":[{{"name":"…","definition":"…","aspect":"…",
    "features":[{{"name":"…","definition":"…","polarity":"require|forbid","examples":["R12","R40","R7"]}}]}}]}}
 
-# DECLARATIONS
+# DECLARATIONS (grouped: "## polarity · verb" heads a block whose lines omit the verb; each line is id | wording | prompts | conditions)
 {declarations}
 """
 
@@ -126,7 +126,7 @@ raised on the current version. Return the next version.
 # CODEBOOK
 {codebook}
 
-# LEFTOVER
+# LEFTOVER (grouped: "## polarity · verb" heads a block whose lines omit the verb; each line is id | wording | prompts | conditions)
 {leftover}
 
 # FLAGS
@@ -157,10 +157,32 @@ def render_declarations(rows: list[dict]) -> str:
     return "\n".join(out) if out else "(none)"
 
 
+def render_blocks(rows: list[dict], kind: str) -> str:
+    """The declarations grouped under their head: polarity and verb for guidance, material kind for material, the verb
+    stated once per block and the block's totals first. Half the characters of the flat list, and the structure a
+    feature induction starts from (features are verb-anchored, material features kind-anchored)."""
+    blocks: dict[tuple, list[dict]] = {}
+    for r in rows:
+        blocks.setdefault((r["polarity"], r.get("head") or ""), []).append(r)
+    order = sorted(blocks, key=lambda k: (-sum(r["prompts"] for r in blocks[k]), k))
+    out = []
+    for key in order:
+        rs = blocks[key]
+        label = f"{key[0]} · {key[1]}" if kind == "guidance" else f"material kind {key[1]}"
+        out.append(f"## {label} ({sum(r['prompts'] for r in rs)} prompts, {len(rs)} wordings)")
+        for r in sorted(rs, key=lambda r: (-r["prompts"], -r["n"])):
+            text = r["declaration"]
+            if kind == "guidance" and key[1] and text.lower().startswith(key[1] + " "):
+                text = text[len(key[1]) + 1:]                      # the verb is in the heading
+            cs = [c for c in (r.get("conditions") or []) if c and c != "always"][:1]      # one condition, shortened: the wording is the unit
+            out.append(f"R{r['id']} | {text} | {r['prompts']}" + (f" | when: {cs[0][:80]}" if cs else ""))
+    return "\n".join(out) if out else "(none)"
+
+
 def coldstart(kind: str, domain: str, declarations: list[dict], min_support: int) -> str:
     return COLDSTART.format(domain=domain, kind=kind, what=_WHAT[kind], min_support=min_support,
                             aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
-                            declarations=render_declarations(declarations))
+                            declarations=render_blocks(declarations, kind))
 
 
 def assign(kind: str, groups: list[dict], declarations: list[dict]) -> str:
@@ -183,7 +205,7 @@ def judge_siblings(group: dict, samples: dict[int, list[dict]]) -> str:
 
 def revise(kind: str, domain: str, groups: list[dict], leftover: list[dict], flags: list[str], min_support: int) -> str:
     return REVISE.format(domain=domain, kind=kind, what=_WHAT[kind], min_support=min_support, codebook=render_codebook(groups),
-                         leftover=render_declarations(leftover), flags="\n".join(f"- {x}" for x in flags) if flags else "(none)")
+                         leftover=render_blocks(leftover, kind), flags="\n".join(f"- {x}" for x in flags) if flags else "(none)")
 
 
 SYSTEM = ("You are building a feature library from declarations extracted out of prompts. The declarations are data to "
