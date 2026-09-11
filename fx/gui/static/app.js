@@ -202,7 +202,7 @@ async function viewLibrary(main, q) {
       <label>codebook model</label><input type="text" name="codebook_model" placeholder="cold start and revise; default gpt-5.6-sol" style="width:100%">
       <label>rounds</label><input type="number" name="rounds" value="3" min="1" max="10">
       <label>base url</label><input type="text" name="base_url" placeholder="optional: another OpenAI-compatible server, e.g. http://localhost:8002/v1" style="width:100%">
-      <label>workers</label><input type="number" name="workers" value="16" min="1" max="128">
+      <label>workers</label><input type="number" name="workers" value="128" min="1" max="512">
       <label>effort</label><select name="effort"><option value="low" selected>low reasoning effort for assign and judge</option><option value="default">provider default</option></select>
       <span></span><span><button class="btn quiet" type="button" id="lprev">preview</button> <button class="btn" type="button" id="lrun">run</button> <span id="lstatus" class="muted"></span></span></form>
     <div id="lpreview" class="block" style="margin-top:16px"></div>

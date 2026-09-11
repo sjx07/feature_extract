@@ -188,3 +188,16 @@ def test_codebook_prompts_group_declarations_by_head():
     assert text.startswith("## require · use (8 prompts, 2 wordings)\nR1 | the schema | 5\nR2 | step-by-step reasoning | 3 | when: if the question is hard\n## forbid · use (1 prompts, 1 wordings)\nR3 | tools | 1")
     mat = render_blocks([{"id": 9, "polarity": "require", "head": "example", "declaration": "provide a worked example", "prompts": 2, "n": 2, "conditions": []}], "material")
     assert mat == "## material kind example (2 prompts, 1 wordings)\nR9 | provide a worked example | 2"
+
+
+def test_assign_prompt_carries_anchors_quotes_and_domain_terms(store):
+    seed(store)
+    L.collapse(store, "c", "guidance")
+    rz = L.realizations(store, "c", "guidance")
+    assert rz[0]["sample"] and rz[0]["head"] in ("think", "reason", "return")
+    with FakeServer() as srv:
+        srv.script = [_cb_reply(rz)]
+        r = L.coldstart(store, Client(store, base_url=srv.url), "c", "guidance", model="m")
+    from fx.library import prompts as P
+    text = P.assign("guidance", L.groups(store, r["codebook"]), rz[:2])
+    assert "e.g. think step by step" in text and 'quote: "' in text and "Identity is the instruction" in text

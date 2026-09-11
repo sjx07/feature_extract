@@ -77,7 +77,7 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
     return status
 
 
-def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 16,
+def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 128,
                 version: Optional[int] = None, effort: str = "low", rounds: int = 3, codebook_model: Optional[str] = None,
                 stop: Optional[threading.Event] = None, echo=None) -> str:
     """One library step as a job: coldstart, assign, judge, revise, or a whole round loop (collapse runs inline before coldstart and assign).

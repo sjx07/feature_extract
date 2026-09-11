@@ -55,7 +55,7 @@ def main(argv=None) -> int:
         p = lib.add_parser(name)
         p.add_argument("--corpus", required=True); p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
         p.add_argument("--model", default=None, help="default: the cold-start model for coldstart/revise, the decomposition model otherwise")
-        p.add_argument("--version", type=int, default=None, help="codebook version (default: latest)"); p.add_argument("--workers", type=int, default=16); p.add_argument("--effort", default="low", choices=("low", "default"), help="reasoning effort for assign and judge batches")
+        p.add_argument("--version", type=int, default=None, help="codebook version (default: latest)"); p.add_argument("--workers", type=int, default=128); p.add_argument("--effort", default="low", choices=("low", "default"), help="reasoning effort for assign and judge batches")
         p.add_argument("--base-url", default=None, help="any OpenAI-compatible server for this step's model (e.g. a second local vLLM)")
         if name == "round":
             p.add_argument("--rounds", type=int, default=3); p.add_argument("--codebook-model", default=None, help=f"cold start and revise model (default {L_COLDSTART})")
@@ -115,7 +115,7 @@ def main(argv=None) -> int:
         rounds, codebook_model = getattr(a, "rounds", 3), getattr(a, "codebook_model", None)
         jid = start(store, ws, f"library:{a.sub}", a.corpus, model, {"kind": a.kind, "version": a.version, "workers": a.workers, "effort": a.effort, "rounds": rounds, "codebook_model": codebook_model, "from": "cli"}, 0)
         print(f"job {jid}: {a.sub} {a.kind} on {a.corpus}, log {ws.job_log(jid)}")
-        status = run_library(store, ws, Client(store, base_url=a.base_url), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, echo=lambda line: print("  " + line, flush=True))
+        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, echo=lambda line: print("  " + line, flush=True))
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
         return 0 if status == "done" else 1
     if a.cmd == "serve":

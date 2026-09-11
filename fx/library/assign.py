@@ -8,6 +8,7 @@ spent 25k hidden tokens and 20 minutes per call on DeepSeek v4 flash and hit the
 (pilot, 2026-09-10); FACET's classification ran at batch 15 and low effort for the same reason."""
 from __future__ import annotations
 
+import random
 import threading
 from typing import Callable, Optional
 
@@ -24,7 +25,7 @@ from .codebook import ASSIGN_SCHEMA, BATCH, MAX_TOKENS, anchors, groups, latest
 from .collapse import realizations
 
 
-def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 16, batch: int = BATCH,
+def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, batch: int = BATCH,
            effort: str = "low", progress: Optional[Callable[[int, int, dict], None]] = None, stop: Optional[threading.Event] = None) -> dict:
     cbrow = latest(store, corpus, kind, version)
     if not cbrow:
@@ -34,6 +35,9 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
     valid = {f["id"] for g in tree for f in g["features"]}
     done_ids = {int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=?", (cb,))}
     todo = [d for d in realizations(store, corpus, kind) if d["id"] not in done_ids]
+    # realizations come support-first and, among equals, in prompt order, so a batch would be one prompt's atoms in
+    # sequence and the assigner reads the procedure instead of each line; a fixed shuffle per version breaks that
+    random.Random(cb).shuffle(todo)
     batches = [todo[i:i + batch] for i in range(0, len(todo), batch)]
     summary = {"codebook": cb, "version": cbrow["version"], "realizations": len(todo), "batches": len(batches), "assigned": 0, "leftover": 0, "unparsed": 0, "stopped": False}
     if not batches:

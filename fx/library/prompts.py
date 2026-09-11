@@ -57,8 +57,17 @@ Assign each {kind} declaration below to the one feature of the CODEBOOK it carri
 {what}
 
 # RULES
-- Assign a feature only when the declaration carries it as the definition states; polarity must match.
+- Assign a feature only when the declaration carries it as the definition states; polarity must match. The "e.g." wordings
+  under a feature are its clearest cases: a declaration must be that kind of instruction, not merely on the same topic.
 - A declaration that carries no listed feature gets null. Do not stretch a definition to avoid null.
+- Identity is the instruction, never the domain nouns: the decomposition replaced domain-specific objects by generic words
+  (the "domain nouns replaced" line shows them), so "use the query language" with SQL replaced and with Cypher replaced
+  carry the same feature, and two declarations about the same dataset, entity or tool carry the same feature only
+  when they give the same instruction.
+- Judge each declaration on its own. Neighbouring lines may come from the same prompt; being the next step of a
+  procedure whose earlier steps carry a feature does not put this step on that feature.
+- The quote is the prompt text the wording came from: use it to resolve what the wording means, not to add
+  instructions the wording does not state.
 - confidence: "high" when the definition plainly applies, "medium" when it applies with a reading, "low" when
   you are unsure between two features or between a feature and null.
 - Reply with the JSON below and nothing else; one entry per declaration id, in the given order.
@@ -134,26 +143,36 @@ raised on the current version. Return the next version.
 """
 
 
-def render_codebook(groups: list[dict]) -> str:
-    """groups: [{id, name, definition, aspect, features: [{id, name, definition, polarity, support}]}] as the model sees it."""
+def render_codebook(groups: list[dict], anchors: bool = False) -> str:
+    """groups: [{id, name, definition, aspect, features: [{id, name, definition, polarity, support, anchors}]}] as the model sees it.
+    With anchors, each feature also shows the wordings its author gave as its clearest cases."""
     out = []
     for g in groups:
         out.append(f"G{g['id']} {g['name']} ({g.get('aspect') or 'other'}): {g.get('definition') or ''}")
         for f in g["features"]:
             sup = f" [{f['support']} prompts]" if f.get("support") is not None else ""
             out.append(f"  F{f['id']} ({f['polarity']}) {f['name']}: {f.get('definition') or ''}{sup}")
+            if anchors and f.get("anchors"):
+                out.append("      e.g. " + " | ".join(a[:90] for a in f["anchors"][:3]))
     return "\n".join(out) if out else "(empty)"
 
 
-def render_declarations(rows: list[dict]) -> str:
-    """rows: [{id, polarity, declaration, prompts, conditions}] one per line."""
+def render_declarations(rows: list[dict], source: bool = False) -> str:
+    """rows: [{id, polarity, declaration, prompts, conditions, sample, domain_terms}] one per line. With source, the line also
+    carries the prompt quote the wording came from and the domain nouns the decomposition replaced."""
     out = []
     for r in rows:
         cond = ""
         if r.get("conditions"):
             cs = [c for c in r["conditions"] if c and c != "always"][:2]
             cond = f" | when: {'; '.join(cs)}" if cs else ""
-        out.append(f"R{r['id']} | {r['polarity']} | {r['declaration']} | {r['prompts']} prompts{cond}")
+        line = f"R{r['id']} | {r['polarity']} | {r['declaration']} | {r['prompts']} prompts{cond}"
+        if source:
+            if r.get("sample"):
+                line += f"\n      quote: \"{r['sample'][:200]}\""
+            if r.get("domain_terms"):
+                line += f"\n      domain nouns replaced: {', '.join(r['domain_terms'][:6])}"
+        out.append(line)
     return "\n".join(out) if out else "(none)"
 
 
@@ -186,7 +205,7 @@ def coldstart(kind: str, domain: str, declarations: list[dict], min_support: int
 
 
 def assign(kind: str, groups: list[dict], declarations: list[dict]) -> str:
-    return ASSIGN.format(kind=kind, what=_WHAT[kind], codebook=render_codebook(groups), declarations=render_declarations(declarations))
+    return ASSIGN.format(kind=kind, what=_WHAT[kind], codebook=render_codebook(groups, anchors=True), declarations=render_declarations(declarations, source=True))
 
 
 def judge_members(feature: dict, members: list[dict]) -> str:

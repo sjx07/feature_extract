@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS decomp (
 -- codebook: the version record: which model wrote it, from which round, and the anchor agreement measured on it.
 CREATE TABLE IF NOT EXISTS realization (
     id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, key TEXT NOT NULL,
-    polarity TEXT NOT NULL, declaration TEXT NOT NULL, n INTEGER NOT NULL, prompts INTEGER NOT NULL, conditions TEXT, head TEXT);
+    polarity TEXT NOT NULL, declaration TEXT NOT NULL, n INTEGER NOT NULL, prompts INTEGER NOT NULL, conditions TEXT, head TEXT,
+    sample TEXT, domain_terms TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS realization_key ON realization(corpus, kind, key);
 CREATE TABLE IF NOT EXISTS codebook (
     id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL,
@@ -113,7 +114,7 @@ class Store:
 
     def _migrate(self) -> None:
         """Columns added after a store was created: provider and billed on call (2026-09-10), realization on reading and head on realization (stage 2)."""
-        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"),))):
+        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT")))):
             have = {r[1] for r in self.con.execute(f"PRAGMA table_info({table})")}
             for col, typ in cols:
                 if col not in have:

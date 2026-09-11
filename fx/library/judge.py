@@ -15,7 +15,7 @@ from . import prompts as P
 from .codebook import MAX_TOKENS, groups, latest, members
 
 
-def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 16, effort: str = "low",
+def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, effort: str = "low",
           progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     """Read-only coherence on one version: misfit members and splits per feature, indistinct pairs per group. Replaces the version's flags."""
     cbrow = latest(store, corpus, kind, version)

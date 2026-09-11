@@ -21,7 +21,7 @@ def collapse(store: Store, corpus: str, kind: str) -> dict:
     reading at its realization. Idempotent: an existing realization keeps its id, its counts are refreshed."""
     cid = corpus_id(store, corpus)
     span_kind = "atom" if kind == "guidance" else "material"
-    rows = store.rows("SELECT r.id, r.prompt, r.polarity, r.declaration, r.condition, r.verb, s.note FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
+    rows = store.rows("SELECT r.id, r.prompt, r.polarity, r.declaration, r.condition, r.verb, r.domain_terms, s.note, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 240)) sample FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
                       "WHERE p.corpus=? AND s.kind=? AND r.declaration IS NOT NULL AND r.declaration != ''", (cid, span_kind))
     groups: dict[str, list] = defaultdict(list)
     for r in rows:
@@ -35,12 +35,14 @@ def collapse(store: Store, corpus: str, kind: str) -> dict:
             conds = sorted({(r["condition"] or "always") for r in rs}, key=lambda c: (c == "always", c))[:6]
             # the head the cold start groups by: the verb of a guidance reading, the material kind of a material one
             head = (best["note"] or "other") if kind == "material" else re.sub(r"\s+", " ", (best["verb"] or "").strip().lower())
-            vals = (best["polarity"] or "require", best["declaration"], len(rs), len({r["prompt"] for r in rs}), json.dumps(conds), head)
+            terms = sorted({t for r in rs for t in json.loads(r["domain_terms"] or "[]") if t})[:6]
+            sample = " ".join((best["sample"] or "").split())            # the quote the fullest wording came from, one line
+            vals = (best["polarity"] or "require", best["declaration"], len(rs), len({r["prompt"] for r in rs}), json.dumps(conds), head, sample, json.dumps(terms))
             if key in have:
                 rid = have[key]
-                con.execute("UPDATE realization SET polarity=?, declaration=?, n=?, prompts=?, conditions=?, head=? WHERE id=?", vals + (rid,))
+                con.execute("UPDATE realization SET polarity=?, declaration=?, n=?, prompts=?, conditions=?, head=?, sample=?, domain_terms=? WHERE id=?", vals + (rid,))
             else:
-                rid = con.execute("INSERT INTO realization (corpus, kind, key, polarity, declaration, n, prompts, conditions, head) VALUES (?,?,?,?,?,?,?,?,?)", (cid, kind, key) + vals).lastrowid
+                rid = con.execute("INSERT INTO realization (corpus, kind, key, polarity, declaration, n, prompts, conditions, head, sample, domain_terms) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (cid, kind, key) + vals).lastrowid
                 have[key] = rid; new += 1
             con.executemany("UPDATE reading SET realization=? WHERE id=?", [(rid, r["id"]) for r in rs])
         con.commit()
@@ -49,5 +51,5 @@ def collapse(store: Store, corpus: str, kind: str) -> dict:
 
 def realizations(store: Store, corpus: str, kind: str) -> list[dict]:
     cid = corpus_id(store, corpus)
-    return [dict(r) | {"conditions": json.loads(r["conditions"] or "[]")} for r in
+    return [dict(r) | {"conditions": json.loads(r["conditions"] or "[]"), "domain_terms": json.loads(r["domain_terms"] or "[]")} for r in
             store.rows("SELECT * FROM realization WHERE corpus=? AND kind=? ORDER BY prompts DESC, n DESC, id", (cid, kind))]

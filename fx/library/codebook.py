@@ -50,11 +50,14 @@ def groups(store: Store, cb: int) -> list[dict]:
     feats = [dict(r) | {"examples": json.loads(r["examples"] or "[]")} for r in store.rows("SELECT * FROM feature WHERE codebook=? ORDER BY id", (cb,))]
     sup = {int(r["feature"]): (int(r["n"]), int(r["prompts"]), int(r["k"])) for r in
            store.rows("SELECT a.feature, SUM(r.n) n, SUM(r.prompts) prompts, COUNT(*) k FROM assignment a JOIN realization r ON r.id=a.realization WHERE a.codebook=? AND a.feature IS NOT NULL GROUP BY a.feature", (cb,))}
+    ex_ids = sorted({e for f in feats for e in f["examples"]})
+    ex_text = {int(r["id"]): r["declaration"] for r in store.rows(f"SELECT id, declaration FROM realization WHERE id IN ({','.join('?' * len(ex_ids)) or 'NULL'})", ex_ids)} if ex_ids else {}
     out = []
     for g in [f for f in feats if f["level"] == "group"]:
         g["features"] = []
         for f in [f for f in feats if f["level"] == "feature" and f["parent"] == g["id"]]:
             f["readings"], f["support"], f["realizations"] = sup.get(f["id"], (0, 0, 0))
+            f["anchors"] = [ex_text[e] for e in f["examples"] if e in ex_text]
             g["features"].append(f)
         g["support"] = sum(f["support"] for f in g["features"])
         out.append(g)

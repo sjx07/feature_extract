@@ -37,7 +37,7 @@ def _cov(store: Store, corpus: str, kind: str, version: int) -> Optional[float]:
     return v[0]["reading_coverage"] if v else None
 
 
-def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 16,
+def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 128,
               effort: str = "low", rounds: int = 3, min_gain: float = MIN_GAIN, min_anchors: float = MIN_ANCHORS,
               log: Optional[Callable[[str, dict], None]] = None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     """Returns the loop's record: the steps run with their results, the versions' coverage and anchors, and why it stopped."""
