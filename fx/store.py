@@ -26,7 +26,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS call (
     id INTEGER PRIMARY KEY, at TEXT NOT NULL, stage TEXT, note TEXT, model TEXT NOT NULL, base_url TEXT,
     prompt_sha TEXT NOT NULL, prompt_chars INTEGER, reply_chars INTEGER, prompt_tokens INTEGER, completion_tokens INTEGER,
-    cost REAL NOT NULL DEFAULT 0, latency REAL, finish_reason TEXT, cached INTEGER NOT NULL DEFAULT 0, error TEXT, reply TEXT);
+    cost REAL NOT NULL DEFAULT 0, latency REAL, finish_reason TEXT, cached INTEGER NOT NULL DEFAULT 0, error TEXT, reply TEXT,
+    provider TEXT, billed REAL);
 CREATE INDEX IF NOT EXISTS call_sha ON call(model, prompt_sha);
 CREATE INDEX IF NOT EXISTS call_stage ON call(stage);
 
@@ -78,6 +79,14 @@ class Store:
         with self.lock:
             self.con.executescript(schema)
 
+    def _migrate(self) -> None:
+        """Columns added after a store was created: provider and billed on call (2026-09-10)."""
+        have = {r[1] for r in self.con.execute("PRAGMA table_info(call)")}
+        for col, typ in (("provider", "TEXT"), ("billed", "REAL")):
+            if col not in have:
+                self.con.execute(f"ALTER TABLE call ADD COLUMN {col} {typ}")
+        self.con.commit()
+
     def insert(self, table: str, row: dict[str, Any]) -> int:
         keys = list(row)
         sql = f"INSERT INTO {table} ({', '.join(keys)}) VALUES ({', '.join('?' for _ in keys)})"
@@ -96,7 +105,7 @@ class Store:
 
     # ---- calls
     def spent(self, model: Optional[str] = None, stage: Optional[str] = None) -> float:
-        sql, params = "SELECT COALESCE(SUM(cost), 0) FROM call WHERE cached=0", []
+        sql, params = "SELECT COALESCE(SUM(COALESCE(billed, cost)), 0) FROM call WHERE cached=0", []       # what the server billed when it said, else the list price
         if model:
             sql += " AND model=?"; params.append(model)
         if stage:
@@ -108,7 +117,7 @@ class Store:
         return r["reply"] if r else None
 
     def spend_by_model(self) -> list[dict]:
-        return [dict(r) for r in self.rows("SELECT model, COUNT(*) n, SUM(cached) cached, SUM(prompt_tokens) prompt_tokens, SUM(completion_tokens) completion_tokens, SUM(cost) cost FROM call GROUP BY model ORDER BY cost DESC")]
+        return [dict(r) for r in self.rows("SELECT model, COUNT(*) n, SUM(cached) cached, SUM(prompt_tokens) prompt_tokens, SUM(completion_tokens) completion_tokens, SUM(COALESCE(billed, cost)) cost, SUM(billed IS NOT NULL) billed_calls FROM call GROUP BY model ORDER BY cost DESC")]
 
 
 def _plain(v: Any) -> Any:

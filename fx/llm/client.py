@@ -57,6 +57,8 @@ class Reply:
     cost: float = 0.0
     latency: float = 0.0
     finish_reason: Optional[str] = None
+    provider: Optional[str] = None                  # the upstream that served it (OpenRouter reports one)
+    billed: Optional[float] = None                  # dollars the server reported for the call, when it does
     cached: bool = False
     error: Optional[str] = None                     # "denied: ...", "unreachable: ...", "empty", "transport: ..."
     call_id: Optional[int] = None
@@ -161,7 +163,8 @@ class Client:
         latency = time.time() - t0
         if usage is None:
             usage = {"prompt_tokens": int(sum(len(m["content"]) for m in msgs) / 3.8), "completion_tokens": int(len(text) / 3.8), "estimated": True}
-        r = Reply(text, model, sha, usage=usage, latency=round(latency, 2), finish_reason=finish, error=err)
+        r = Reply(text, model, sha, usage=usage, latency=round(latency, 2), finish_reason=finish, error=err,
+                  provider=(usage or {}).get("provider"), billed=(usage or {}).get("billed"))
         if err is None or err == "empty":
             r.cost = price_of(model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), ep)
             self.spent_session += r.cost
@@ -175,6 +178,8 @@ class Client:
             kw: dict[str, Any] = {"model": model, "messages": msgs}
             if params.get("extra_body"):
                 kw["extra_body"] = params["extra_body"]
+            if "openrouter.ai" in str(getattr(sdk, "base_url", "")):
+                kw["extra_body"] = {**kw.get("extra_body", {}), "usage": {"include": True}}
             if params.get("schema") and shape["schema"]:
                 kw["response_format"] = {"type": "json_schema", "json_schema": {"name": "reply", "schema": params["schema"]}}
             if params.get("max_tokens") is not None:
@@ -236,6 +241,10 @@ class Client:
                 u = getattr(resp, "usage", None)
                 if u is not None:
                     usage = {"prompt_tokens": u.prompt_tokens, "completion_tokens": u.completion_tokens}
+                    if getattr(u, "cost", None) is not None:
+                        usage["billed"] = float(u.cost)
+                if getattr(resp, "provider", None):
+                    usage = dict(usage or {}); usage["provider"] = resp.provider
                 ch = resp.choices[0] if resp.choices else None
                 text = (ch.message.content or "") if ch else ""
                 finish = getattr(ch, "finish_reason", None) if ch else None
@@ -257,7 +266,8 @@ class Client:
             "prompt_sha": r.prompt_sha, "prompt_chars": sum(len(m["content"]) for m in msgs), "reply_chars": len(r.text),
             "prompt_tokens": r.usage.get("prompt_tokens"), "completion_tokens": r.usage.get("completion_tokens"),
             "cost": 0.0 if r.cached else r.cost, "latency": r.latency, "finish_reason": r.finish_reason,
-            "cached": int(r.cached), "error": r.error, "reply": r.text if self.log_replies else None})
+            "cached": int(r.cached), "error": r.error, "reply": r.text if self.log_replies else None,
+            "provider": r.provider, "billed": r.billed})
 
 
 def with_fallback(client: Client, primary: dict, *fallbacks: dict):

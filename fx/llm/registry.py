@@ -110,13 +110,15 @@ def provider_body(model: str, base_url: Optional[str] = None) -> dict:
     # Upstreams serving this family at fp4 loop in their reasoning: Reka's DeepSeek v4 flash ran to the 32k ceiling with no
     # text on 4 of 6 probes of a 185-char prompt (2026-09-10), and a throughput sort lands there first. FX_PROVIDER_IGNORE
     # (comma-separated) replaces the list; empty string keeps every upstream.
-    ignore = os.environ.get("FX_PROVIDER_IGNORE", "Reka,Relace,Sail Research,Inceptron,GMICloud,AtlasCloud")
+    # OpenInference (fp8, the cheapest) looped the same way on 3 of 3 probes at 1,400 s each; DeepInfra returned 3 of 3 clean
+    # but at 400-620 s a call; Wafer returned 5 of 6 clean at 50-86 s. So Wafer first, DeepInfra behind it (FX_PROVIDER_ORDER).
+    ignore = os.environ.get("FX_PROVIDER_IGNORE", "Reka,OpenInference,Relace,Sail Research,Inceptron,GMICloud,AtlasCloud")
     if ignore:
         prov["ignore"] = [x.strip() for x in ignore.split(",") if x.strip()]
     sort = os.environ.get("FX_PROVIDER_SORT", "throughput")
     if sort:
         prov["sort"] = sort
-    order = [p for p in os.environ.get("FX_PROVIDER_ORDER", "").split(",") if p]
+    order = [p for p in os.environ.get("FX_PROVIDER_ORDER", "Wafer,DeepInfra").split(",") if p]
     if order:
         prov["order"] = order
     return {"provider": prov}

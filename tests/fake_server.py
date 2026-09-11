@@ -67,7 +67,7 @@ class FakeServer:
                     return
                 self._send(200, {"id": "x", "object": "chat.completion", "created": 0, "model": body["model"],
                                  "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": entry.get("finish", "stop")}],
-                                 "usage": usage})
+                                 "usage": usage, **({"provider": entry["provider"]} if entry.get("provider") else {})})
 
             def _send(self, status, obj):
                 data = json.dumps(obj).encode()

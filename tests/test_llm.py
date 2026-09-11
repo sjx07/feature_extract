@@ -201,7 +201,17 @@ def test_openrouter_routing_excludes_looping_upstreams(monkeypatch):
     from fx.llm.registry import provider_body
     monkeypatch.delenv("FX_PROVIDER_IGNORE", raising=False); monkeypatch.delenv("FX_PROVIDER_SORT", raising=False); monkeypatch.delenv("FX_PROVIDER", raising=False)
     p = provider_body("deepseek/deepseek-v4-flash-0731")["provider"]
-    assert p["sort"] == "throughput" and p["allow_fallbacks"] and "Reka" in p["ignore"]
+    assert p["sort"] == "throughput" and p["allow_fallbacks"] and "Reka" in p["ignore"] and p["order"] == ["Wafer", "DeepInfra"]
     assert provider_body("gpt-5.6-luna") == {} and provider_body("openai/gpt-oss-20b") == {}
     monkeypatch.setenv("FX_PROVIDER", "Baidu")
     assert provider_body("deepseek/deepseek-v4-flash-0731") == {"provider": {"only": ["Baidu"], "allow_fallbacks": False}}
+
+
+def test_ledger_keeps_the_upstream_and_the_billed_cost(store):
+    with FakeServer() as srv:
+        srv.script = [reply("hi", provider="Wafer", usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": 0.0042})]
+        c = Client(store, base_url=srv.url)
+        r = c.complete("x", model="deepseek/deepseek-v4-flash-0731", stage="t")
+        assert r.provider == "Wafer" and r.billed == 0.0042
+        row = store.one("SELECT provider, billed, cost FROM call")
+        assert row["provider"] == "Wafer" and row["billed"] == 0.0042 and abs(store.spent() - 0.0042) < 1e-9        # spend is what was billed, not the list price
