@@ -246,6 +246,14 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
+    @app.middleware("http")
+    async def no_cache(request, call_next):
+        """The script, style and index are re-read on every load, so a restart on new code is never hidden by the browser's cache."""
+        resp = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
     @app.get("/")
     def index():
         return FileResponse(STATIC / "index.html")
