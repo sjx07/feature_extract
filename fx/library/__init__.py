@@ -17,6 +17,7 @@ from .collapse import collapse, realizations
 from .judge import judge
 from .preview import preview
 from .revise import revise
+from .round import run_round
 
 __all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "coldstart", "collapse", "flags", "groups", "judge", "latest",
-           "leftovers", "members", "preview", "realizations", "revise", "status"]
+           "leftovers", "members", "preview", "realizations", "revise", "run_round", "status"]

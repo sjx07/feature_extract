@@ -77,8 +77,10 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
 
 
 def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 16,
-                version: Optional[int] = None, effort: str = "low", stop: Optional[threading.Event] = None, echo=None) -> str:
-    """One library step as a job: coldstart, assign, judge or revise (collapse runs inline before coldstart and assign)."""
+                version: Optional[int] = None, effort: str = "low", rounds: int = 3, codebook_model: Optional[str] = None,
+                stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One library step as a job: coldstart, assign, judge, revise, or a whole round loop (collapse runs inline before coldstart and assign).
+    `model` is the batch model (assign, judge); `codebook_model` the cold-start and revise model."""
     from . import library as L
     stop = stop or threading.Event()
     try:
@@ -92,6 +94,15 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
             r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
         elif step == "revise":
             r = L.revise(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, version=version)
+        elif step == "round":
+            def log_step(name, res):
+                with open(ws.job_log(jid), "a") as fh:
+                    fh.write(f"{now()} step {name} result {json.dumps(res)}\n")
+                if echo:
+                    echo(f"step {name}: {json.dumps(res)[:300]}")
+            r = L.run_round(store, client, corpus, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or L.COLDSTART_MODEL, workers=workers, effort=effort,
+                            rounds=rounds, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+            r["stopped"] = r["stopped_because"] == "stopped"
         else:
             raise ValueError(step)
         with open(ws.job_log(jid), "a") as fh:

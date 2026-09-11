@@ -186,14 +186,15 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         workers = int(body.get("workers") or 16)
         version = int(body["version"]) if body.get("version") else None
         effort = body.get("effort") or "low"
-        params = {"kind": kind, "version": version, "workers": workers, "effort": effort, "from": "gui"}
+        rounds, codebook_model = int(body.get("rounds") or 3), body.get("codebook_model") or None
+        params = {"kind": kind, "version": version, "workers": workers, "effort": effort, "rounds": rounds, "codebook_model": codebook_model, "from": "gui"}
         jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
         stop = threading.Event()
         running[jid] = stop
         client = Client(store, base_url=body.get("base_url") or None)
 
         def work():
-            jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, stop=stop)
+            jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, rounds=rounds, codebook_model=codebook_model, stop=stop)
             running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()

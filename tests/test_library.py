@@ -129,3 +129,36 @@ def test_site_library_endpoints_and_job(tmp_path):
         f = c.get(f"/api/feature/{fid}").json()
         assert f["feature"]["name"] == "think step by step" and f["group"]["name"] == "reasoning"
         assert c.get("/api/library/preview?corpus=c&kind=guidance&step=assign&model=m").json()["calls"] == 1
+
+
+def test_round_runs_the_sequence_and_stops_on_no_gain(store):
+    seed(store)
+    with FakeServer() as srv:
+        c = Client(store, base_url=srv.url)
+        L.collapse(store, "c", "guidance")
+        rz = L.realizations(store, "c", "guidance"); ids = {r["declaration"]: r["id"] for r in rz}
+        cbreply = _cb_reply(rz)
+        def assign_reply(body):
+            import re
+            got = re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)
+            feats = re.findall(r"^  F(\d+) \(", body["messages"][-1]["content"], re.M)
+            return reply(json.dumps({"assignments": [{"id": f"R{r}", "feature": f"F{feats[0]}", "confidence": "high"} for r in got]}))
+        def router(body):
+            text = body["messages"][-1]["content"]
+            if "# DECLARATIONS" in text and "# CODEBOOK" in text and "Revise" not in text and "# LEFTOVER" not in text:
+                return assign_reply(body)
+            if "# LEFTOVER" in text:
+                return _cb_reply(rz, old=(L.groups(store, L.latest(store, "c", "guidance")["id"])[0]["id"], L.groups(store, L.latest(store, "c", "guidance")["id"])[0]["features"][0]["id"]))
+            if "# MEMBERS" in text:
+                return reply(json.dumps({"misfits": [], "split": None}))
+            if "# GROUP" in text:
+                return reply(json.dumps({"indistinct": []}))
+            return cbreply
+        srv.router = router
+        logged = []
+        r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, log=lambda n, res: logged.append(n))
+        assert logged[:5] == ["collapse", "coldstart", "assign", "judge", "revise"] and logged[5] == "assign"
+        # the fake puts every declaration on the first feature, so the other features' anchors fail: the anchor rule ends the loop after one round
+        assert r["stopped_because"].startswith("anchor agreement fell") and len(r["versions"]) == 2
+        v2 = L.status(store, "c", "guidance")["versions"][1]
+        assert v2["assigned"] == 4 and v2["anchor_agreement"] < 0.9 and v2["notes"].startswith("[anchors")

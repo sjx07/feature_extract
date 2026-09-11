@@ -197,18 +197,20 @@ async function viewLibrary(main, q) {
   </div><div>
     <h1 style="font-size:22px">Run</h1>
     <form id="lform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
-      <label>step</label><select name="step"><option value="coldstart">cold start (v1)</option><option value="assign" selected>assign (latest version)</option><option value="judge">judge (read-only)</option><option value="revise">revise (next version)</option></select>
-      <label>model</label><input type="text" name="model" placeholder="default per step" style="width:100%">
+      <label>step</label><select name="step"><option value="round" selected>round loop: cold start if needed, assign, judge, revise, assign, until the gain stops</option><option value="coldstart">cold start (v1)</option><option value="assign">assign (latest version)</option><option value="judge">judge (read-only)</option><option value="revise">revise (next version)</option></select>
+      <label>batch model</label><input type="text" name="model" placeholder="assign and judge; default: the decomposition model" style="width:100%">
+      <label>codebook model</label><input type="text" name="codebook_model" placeholder="cold start and revise; default gpt-5.6-sol" style="width:100%">
+      <label>rounds</label><input type="number" name="rounds" value="3" min="1" max="10">
       <label>base url</label><input type="text" name="base_url" placeholder="optional: another OpenAI-compatible server, e.g. http://localhost:8002/v1" style="width:100%">
       <label>workers</label><input type="number" name="workers" value="16" min="1" max="128">
       <label>effort</label><select name="effort"><option value="low" selected>low reasoning effort for assign and judge</option><option value="default">provider default</option></select>
       <span></span><span><button class="btn quiet" type="button" id="lprev">preview</button> <button class="btn" type="button" id="lrun">run</button> <span id="lstatus" class="muted"></span></span></form>
     <div id="lpreview" class="block" style="margin-top:16px"></div>
-    <p class="muted" style="font-size:12.5px">Order: cold start, assign, judge, revise, then assign again on the new version. Assign is resumable and runs from scratch per version; judge only reports; revise is the one writer after the cold start.</p>
+    <p class="muted" style="font-size:12.5px">A round is cold start (if none), assign, judge, revise, assign again; the loop stops when a revision gains under 2 points of reading coverage, when anchors fall under 90%, or after the rounds given. Each step is one line in the job log; a re-run resumes at the first incomplete step. The single steps are for replay and repair.</p>
     <div class="block"><div class="t">library jobs</div>${jobs.filter(j => j.kind.startsWith('library')).length ? `<table class="list">${jobs.filter(j => j.kind.startsWith('library')).slice(0, 10).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind.slice(8))} ${esc(j.params.kind)} · ${esc(j.corpus)}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
   </div></div>`;
   $('#lcorpus').onchange = e => { location.hash = href('/library', { corpus: e.target.value, kind }); };
-  const params = () => { const d = Object.fromEntries(new FormData($('#lform'))); return { corpus, kind, step: d.step, model: d.model, base_url: d.base_url, workers: +d.workers, effort: d.effort }; };
+  const params = () => { const d = Object.fromEntries(new FormData($('#lform'))); return { corpus, kind, step: d.step, model: d.model, codebook_model: d.codebook_model, rounds: +d.rounds, base_url: d.base_url, workers: +d.workers, effort: d.effort }; };
   $('#lprev').onclick = async () => { const p = params(); const r = await api(`/api/library/preview?corpus=${encodeURIComponent(corpus)}&kind=${kind}&step=${p.step}&model=${encodeURIComponent(p.model)}`);
     $('#lpreview').innerHTML = `<div class="prev"><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(r.tokens_in)}</b>tokens in</span><span><b>${fmt(r.tokens_out)}</b>tokens out</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.model)} · ${esc(r.endpoint)}</span></div>`; };
   $('#lrun').onclick = async () => { const p = params(); $('#lstatus').textContent = 'starting'; try { const r = await post('/api/library/jobs', p); location.hash = href('/job/' + r.id); } catch (e) { $('#lstatus').textContent = e.message; } };
