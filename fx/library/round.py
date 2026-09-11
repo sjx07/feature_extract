@@ -6,6 +6,9 @@
     revise -> the next version
     assign the new version
 
+A corpus that grows (more prompts decomposed after a codebook exists) needs no new cold start: collapse adds the new
+wordings, assign covers only those, the judge reruns because assignments changed, and revise sees the new leftovers.
+
 then the stopping rule: the loop ends when a revision gained under `min_gain` of reading coverage, or when the new
 version's anchor agreement fell under `min_anchors` (the version is kept, marked in its notes, and read first), or
 after `rounds` rounds. Every step is one line in the job log (`step <name> result {...}`) so a run replays as a
@@ -59,11 +62,13 @@ def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_mod
         cb = latest(store, corpus, kind)
         v = int(cb["version"])
         st = [x for x in status(store, corpus, kind)["versions"] if x["version"] == v][0]
+        wrote = False
         if st["unassigned"] or st["assigned"] + st["leftover"] == 0:
             r = step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, version=v, workers=workers, effort=effort, progress=progress, stop=stop))
             if r.get("stopped") or stop.is_set():
                 why = "stopped"; break
-        if not st["flags"]:
+            wrote = r["assigned"] + r["leftover"] > 0
+        if not st["flags"] or wrote:                    # new assignments (an incremental batch of prompts) need a fresh judgement
             step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, version=v, workers=workers, effort=effort, progress=progress))
             if stop.is_set():
                 why = "stopped"; break
