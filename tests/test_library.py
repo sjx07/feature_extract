@@ -162,7 +162,7 @@ def test_round_runs_the_growing_loop(store):
             return cb_reply(store)
         srv.router = router
         logged = []
-        r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, encoder=fake_encoder, log=lambda n, res: logged.append(n))
+        r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, min_yield=1, encoder=fake_encoder, log=lambda n, res: logged.append(n))
         assert logged[:6] == ["collapse", "embed", "coldstart", "assign", "judge", "cluster"] and "name" in logged
         assert r["stopped_because"].startswith("no candidate clusters left")
         v = r["versions"][0]

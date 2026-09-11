@@ -34,7 +34,7 @@ class Stopped(Exception):
 
 
 def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 128,
-              effort: str = "low", rounds: int = 5, tau: Optional[float] = None, encoder=None, log: Optional[Callable[[str, dict], None]] = None, progress=None, stop: Optional[threading.Event] = None) -> dict:
+              effort: str = "low", rounds: int = 5, tau: Optional[float] = None, min_yield: int = 3, encoder=None, log: Optional[Callable[[str, dict], None]] = None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     stop = stop or threading.Event()
     steps: list[dict] = []
 
@@ -62,8 +62,8 @@ def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_mod
             if not c["clusters"]:
                 why = f"no candidate clusters left ({c['specific']} specific, {c['unclustered']} unclustered open wordings)"; break
             n = step("name", lambda: name(store, client, corpus, kind, cb, c["clusters"], rnd, model=codebook_model, workers=min(workers, 16), progress=progress))
-            if n["variants"] + n["features"] == 0:
-                why = f"round {rnd}: every candidate rejected ({n['rejected']} of {n['clusters']})"; break
+            if n["variants"] + n["features"] < min_yield:
+                why = f"round {rnd} named only {n['variants'] + n['features']} nodes from {n['clusters']} candidates (< {min_yield}): growth is done"; break
             step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
             step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
     except Stopped:

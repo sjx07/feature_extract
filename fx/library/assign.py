@@ -163,7 +163,10 @@ def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, sum
                             fid, conf = got.get(d["id"], (None, "low"))     # a declaration the reply skipped is a leftover at low confidence
                             if second and fid is None:
                                 continue                                    # the second pass only adds; a leftover stays as the first pass left it
-                            store.con.execute("INSERT OR REPLACE INTO assignment (realization, codebook, feature, confidence, at) VALUES (?,?,?,?,?)", (d["id"], cb, fid, conf, now()))
+                            # a wording that stays open keeps its note (specific); one that lands loses it
+                            store.con.execute("INSERT INTO assignment (realization, codebook, feature, confidence, at, note) VALUES (?,?,?,?,?,NULL) "
+                                              "ON CONFLICT(realization, codebook) DO UPDATE SET feature=excluded.feature, confidence=excluded.confidence, at=excluded.at, "
+                                              "note=CASE WHEN excluded.feature IS NULL THEN assignment.note ELSE NULL END", (d["id"], cb, fid, conf, now()))
                             if second:
                                 summary["second_pass_assigned"] += 1; summary["leftover"] -= 1; summary["assigned"] += 1
                             else:
