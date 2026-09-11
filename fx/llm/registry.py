@@ -107,6 +107,12 @@ def provider_body(model: str, base_url: Optional[str] = None) -> dict:
     if only:
         return {"provider": {"only": [only], "allow_fallbacks": False}}
     prov: dict = {"allow_fallbacks": True}
+    # Upstreams serving this family at fp4 loop in their reasoning: Reka's DeepSeek v4 flash ran to the 32k ceiling with no
+    # text on 4 of 6 probes of a 185-char prompt (2026-09-10), and a throughput sort lands there first. FX_PROVIDER_IGNORE
+    # (comma-separated) replaces the list; empty string keeps every upstream.
+    ignore = os.environ.get("FX_PROVIDER_IGNORE", "Reka,Relace,Sail Research,Inceptron,GMICloud,AtlasCloud")
+    if ignore:
+        prov["ignore"] = [x.strip() for x in ignore.split(",") if x.strip()]
     sort = os.environ.get("FX_PROVIDER_SORT", "throughput")
     if sort:
         prov["sort"] = sort

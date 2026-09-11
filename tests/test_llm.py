@@ -195,3 +195,13 @@ def test_cli_spend_and_models(store, capsys, tmp_path):
     out = capsys.readouterr().out
     assert "total $" in out and "m " in out
     assert main(["llm", "models"]) == 0
+
+
+def test_openrouter_routing_excludes_looping_upstreams(monkeypatch):
+    from fx.llm.registry import provider_body
+    monkeypatch.delenv("FX_PROVIDER_IGNORE", raising=False); monkeypatch.delenv("FX_PROVIDER_SORT", raising=False); monkeypatch.delenv("FX_PROVIDER", raising=False)
+    p = provider_body("deepseek/deepseek-v4-flash-0731")["provider"]
+    assert p["sort"] == "throughput" and p["allow_fallbacks"] and "Reka" in p["ignore"]
+    assert provider_body("gpt-5.6-luna") == {} and provider_body("openai/gpt-oss-20b") == {}
+    monkeypatch.setenv("FX_PROVIDER", "Baidu")
+    assert provider_body("deepseek/deepseek-v4-flash-0731") == {"provider": {"only": ["Baidu"], "allow_fallbacks": False}}
