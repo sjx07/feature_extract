@@ -88,7 +88,9 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
     # sequence and the assigner reads the procedure instead of each line; a fixed shuffle per version breaks that
     random.Random(cb).shuffle(todo)
     batches = [todo[i:i + batch] for i in range(0, len(todo), batch)]
-    summary = {"codebook": cb, "version": cbrow["version"], "realizations": len(todo), "batches": len(batches), "assigned": 0, "leftover": 0, "unparsed": 0,
+    # leftover starts at what is already open, so the shortlist pass counts down from a real number rather than below zero
+    already_open = int(store.one("SELECT COUNT(*) k FROM assignment WHERE codebook=? AND feature IS NULL", (cb,))["k"]) if not only_open else 0
+    summary = {"codebook": cb, "version": cbrow["version"], "realizations": len(todo), "batches": len(batches), "assigned": 0, "leftover": already_open, "unparsed": 0,
                "second_pass": 0, "second_pass_assigned": 0, "stopped": False}
     stop = stop or threading.Event()
     note = f"{corpus}:{kind}:assign:v{cbrow['version']}"
