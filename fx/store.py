@@ -59,10 +59,12 @@ CREATE TABLE IF NOT EXISTS decomp (
 -- stage 2: the feature library of a corpus, one per kind (guidance readings, material readings).
 -- realization: one distinct declaration (polarity + normalised wording); reading.realization points at it, so
 --   support is a join. Assignment works on realizations, never on single readings.
--- feature: the codebook as a tree in one table: level 'group' rows and level 'feature' rows with parent = their
---   group. A codebook is a version (a full snapshot; a revision writes a new version and links each feature to
---   its predecessor through prev). Realizations are assigned to features only; a group's members are the union.
--- assignment: realization -> feature (NULL = leftover) under one version, with the model's confidence.
+-- feature: the codebook as a tree in one table: level 'group', 'feature' and 'variant' rows, parent = the row above
+--   (a variant is a feature narrowed by a constraint). The tree only grows: a node is never rewritten, and `round`
+--   says when it was added. Realizations are assigned to features and variants; a group's support is the union.
+-- vector: one embedding per realization, the retrieval that sorts the leftovers (see fx.library.cluster).
+-- assignment: realization -> node (NULL = open) under one codebook, with the model's confidence; note says
+--   'specific' (no other prompt says the same thing yet) or 'named' (placed by the naming call that made its node).
 -- flag: what the read-only coherence judge reported under a version: a misfit member, or two siblings it
 --   could not tell apart. Nothing moves on a flag; the next revision sees them.
 -- codebook: the version record: which model wrote it, from which round, and the anchor agreement measured on it.
@@ -77,11 +79,13 @@ CREATE TABLE IF NOT EXISTS codebook (
 CREATE UNIQUE INDEX IF NOT EXISTS codebook_version ON codebook(corpus, kind, version);
 CREATE TABLE IF NOT EXISTS feature (
     id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), level TEXT NOT NULL, parent INTEGER REFERENCES feature(id),
-    prev INTEGER REFERENCES feature(id), aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT);
+    prev INTEGER REFERENCES feature(id), aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT, round INTEGER);
 CREATE INDEX IF NOT EXISTS feature_codebook ON feature(codebook);
 CREATE TABLE IF NOT EXISTS assignment (
     realization INTEGER NOT NULL REFERENCES realization(id), codebook INTEGER NOT NULL REFERENCES codebook(id),
-    feature INTEGER REFERENCES feature(id), confidence TEXT, at TEXT NOT NULL, PRIMARY KEY (realization, codebook));
+    feature INTEGER REFERENCES feature(id), confidence TEXT, at TEXT NOT NULL, note TEXT, PRIMARY KEY (realization, codebook));
+CREATE TABLE IF NOT EXISTS vector (
+    realization INTEGER PRIMARY KEY REFERENCES realization(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS assignment_feature ON assignment(feature);
 CREATE TABLE IF NOT EXISTS flag (
     id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), feature INTEGER NOT NULL REFERENCES feature(id),
@@ -114,7 +118,7 @@ class Store:
 
     def _migrate(self) -> None:
         """Columns added after a store was created: provider and billed on call (2026-09-10), realization on reading and head on realization (stage 2)."""
-        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT")))):
+        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT"))), ("assignment", (("note", "TEXT"),)), ("feature", (("round", "INTEGER"),))):
             have = {r[1] for r in self.con.execute(f"PRAGMA table_info({table})")}
             for col, typ in cols:
                 if col not in have:

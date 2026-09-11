@@ -2,9 +2,9 @@
 assigned under the version is skipped, a batch whose reply does not parse is left for the next run. Runs from scratch
 per version, so no assignment depends on the path that produced it. Ends by measuring the version's anchor agreement.
 
-A second pass follows over the leftovers: each wording sees only the features that share its head (the verb of a
-feature's name or of its anchors), with their anchors, in batches by head. A choice among a few is easier than among
-seventy, so the pass recovers wordings the first pass returned as none (the pilot's first pass missed a quarter of
+A second pass follows over the open wordings: each sees only the few nodes whose anchors are nearest to it by
+retrieval, with their anchors, in batches that share a nearest node. A choice among a few is easier than among
+eighty, so the pass recovers wordings the first pass returned as none (the pilot's first pass missed a quarter of
 the features' own anchors).
 
 Each batch is written the moment its reply arrives, so a stopped or killed run keeps what it had. Batches are small
@@ -26,41 +26,62 @@ from ..store import Store, now
 from ..util.ids import parse_id
 from ..util.jsonx import extract_object
 from . import prompts as P
-from .codebook import ASSIGN_SCHEMA, BATCH, MAX_TOKENS, anchors, groups, latest
+from .codebook import ASSIGN_SCHEMA, BATCH, MAX_TOKENS, anchors, groups, latest, nodes
 from collections import defaultdict
 from .collapse import realizations
 
 
-def _feature_heads(tree: list[dict]) -> dict[str, set[int]]:
-    """head -> feature ids whose name or anchors start with that verb."""
-    heads: dict[str, set[int]] = defaultdict(set)
-    for g in tree:
-        for f in g["features"]:
-            for text in [f["name"]] + list(f.get("anchors") or []):
-                w = (text or "").strip().lower().split()
-                if w:
-                    heads[w[0]].add(f["id"])
-    return heads
-
-
 def _subtree(tree: list[dict], keep: set[int]) -> list[dict]:
+    """The tree cut down to the nodes in `keep` (a variant keeps its feature line for context)."""
     out = []
     for g in tree:
-        fs = [f for f in g["features"] if f["id"] in keep]
+        fs = []
+        for f in g["features"]:
+            vs = [v for v in f.get("variants", []) if v["id"] in keep]
+            if f["id"] in keep or vs:
+                fs.append(dict(f) | {"variants": vs})
         if fs:
             out.append(dict(g) | {"features": fs})
     return out
 
 
-def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, batch: int = BATCH,
+def _shortlists(store: Store, tree: list[dict], open_ids: list[int], k: int = 4) -> dict[int, list[int]]:
+    """For each open wording, the k nodes whose anchors are nearest by cosine (retrieval, no model)."""
+    import numpy as np
+    from .embed import vectors
+    ns = nodes(tree)
+    anchor_ids = sorted({e for n in ns for e in n["examples"]})
+    aid, am = vectors(store, anchor_ids)
+    oid, om = vectors(store, open_ids)
+    if not aid or not oid:
+        return {}
+    owner = {}
+    for n in ns:
+        for e in n["examples"]:
+            owner.setdefault(e, n["id"])
+    sims = om @ am.T
+    out = {}
+    for i, rid in enumerate(oid):
+        best: dict[int, float] = {}
+        for j in np.argsort(-sims[i]):
+            nid = owner.get(aid[j])
+            if nid is not None and nid not in best:
+                best[nid] = float(sims[i][j])
+            if len(best) >= k:
+                break
+        out[rid] = list(best)
+    return out
+
+
+def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, batch: int = BATCH, only_open: bool = False,
            effort: str = "low", shortlist: bool = True, progress: Optional[Callable[[int, int, dict], None]] = None, stop: Optional[threading.Event] = None) -> dict:
     cbrow = latest(store, corpus, kind, version)
     if not cbrow:
         raise ValueError(f"no codebook for {corpus} {kind}: run coldstart first")
     cb = int(cbrow["id"])
     tree = groups(store, cb)
-    valid = {f["id"] for g in tree for f in g["features"]}
-    done_ids = {int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=?", (cb,))}
+    valid = {n["id"] for n in nodes(tree)}
+    done_ids = {int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=?" + (" AND feature IS NOT NULL" if only_open else ""), (cb,))}
     todo = [d for d in realizations(store, corpus, kind) if d["id"] not in done_ids]
     # realizations come support-first and, among equals, in prompt order, so a batch would be one prompt's atoms in
     # sequence and the assigner reads the procedure instead of each line; a fixed shuffle per version breaks that
@@ -74,14 +95,20 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
     if jobs:
         _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop)
     if shortlist and not summary["stopped"]:
-        # the second pass: the version's leftovers, each against the features sharing its head, in batches by head
-        heads = _feature_heads(tree)
-        left = [d for d in realizations(store, corpus, kind) if d["id"] in {int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=? AND feature IS NULL", (cb,))}]
-        by_head: dict[str, list[dict]] = defaultdict(list)
-        for d in left:
-            if heads.get(d.get("head") or ""):
-                by_head[d["head"]].append(d)
-        jobs2 = [(hb[i:i + batch], _subtree(tree, heads[h]), True) for h, hb in by_head.items() for i in range(0, len(hb), batch)]
+        # the second pass: the open wordings, each against its nearest nodes, batched by their nearest node
+        open_ids = [int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=? AND feature IS NULL", (cb,))]
+        lists = _shortlists(store, tree, open_ids)
+        by_id = {d["id"]: d for d in realizations(store, corpus, kind)}
+        by_first: dict[int, list[int]] = defaultdict(list)
+        for rid, ns in lists.items():
+            if ns:
+                by_first[ns[0]].append(rid)
+        jobs2 = []
+        for first, rids in by_first.items():
+            for i in range(0, len(rids), batch):
+                chunk = rids[i:i + batch]
+                keep = {n for rid in chunk for n in lists[rid]}
+                jobs2.append(([by_id[r] for r in chunk], _subtree(tree, keep), True))
         summary["second_pass"] = len(jobs2)
         if jobs2:
             _run(store, client, cb, kind, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop)
@@ -102,7 +129,7 @@ def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, sum
         with sem:
             if stop.is_set():
                 return k, None
-            return k, client.complete(P.assign(kind, tree, b), model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=note, system=P.SYSTEM, schema=ASSIGN_SCHEMA)
+            return k, client.complete(P.assign(kind, tree, b, shortlist=jobs[k][2]), model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=note, system=P.SYSTEM, schema=ASSIGN_SCHEMA)
 
     done = 0
     try:

@@ -182,11 +182,11 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
     @app.post("/api/library/jobs")
     def api_library_job(body: dict):
         corpus_name, kind, step = body["corpus"], body.get("kind") or "guidance", body.get("step") or "assign"
-        model = body.get("model") or (L.COLDSTART_MODEL if step in ("coldstart", "revise") else DEFAULT_MODEL)
+        model = body.get("model") or (L.COLDSTART_MODEL if step == "coldstart" else DEFAULT_MODEL)
         workers = int(body.get("workers") or 128)
         version = int(body["version"]) if body.get("version") else None
         effort = body.get("effort") or "low"
-        rounds, codebook_model = int(body.get("rounds") or 3), body.get("codebook_model") or None
+        rounds, codebook_model = int(body.get("rounds") or 5), body.get("codebook_model") or None
         params = {"kind": kind, "version": version, "workers": workers, "effort": effort, "rounds": rounds, "codebook_model": codebook_model, "from": "gui"}
         jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
         stop = threading.Event()

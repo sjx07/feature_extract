@@ -12,7 +12,7 @@ from ..store import Store
 from ..util.ids import parse_id, parse_ids
 from ..util.jsonx import extract_object
 from . import prompts as P
-from .codebook import MAX_TOKENS, groups, latest, members
+from .codebook import MAX_TOKENS, groups, latest, members, nodes
 
 
 def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, effort: str = "low",
@@ -23,7 +23,7 @@ def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEF
         raise ValueError("no codebook")
     cb = int(cbrow["id"])
     tree = groups(store, cb)
-    feats = [f for g in tree for f in g["features"]]
+    feats = nodes(tree)                                   # features and variants alike
     jobs, meta = [], []
     for f in feats:
         ms = members(store, cb, f["id"])

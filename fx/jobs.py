@@ -78,23 +78,29 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
 
 
 def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 128,
-                version: Optional[int] = None, effort: str = "low", rounds: int = 3, codebook_model: Optional[str] = None,
+                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None, tau: Optional[float] = None,
                 stop: Optional[threading.Event] = None, echo=None) -> str:
-    """One library step as a job: coldstart, assign, judge, revise, or a whole round loop (collapse runs inline before coldstart and assign).
-    `model` is the batch model (assign, judge); `codebook_model` the cold-start and revise model."""
+    """One library step as a job: coldstart, assign, judge, cluster, name, or the whole round loop (collapse and embed run inline before
+    coldstart and assign). `model` is the batch model (assign, judge); `codebook_model` the cold-start and naming model."""
     from . import library as L
     stop = stop or threading.Event()
     try:
-        if step in ("coldstart", "assign"):
-            L.collapse(store, corpus, kind)
+        if step in ("coldstart", "assign", "cluster", "name"):
+            L.collapse(store, corpus, kind); L.embed(store, corpus, kind)
         if step == "coldstart":
             r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
         elif step == "assign":
             r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         elif step == "judge":
             r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
-        elif step == "revise":
-            r = L.revise(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, version=version)
+        elif step in ("cluster", "name"):
+            cb = int(L.latest(store, corpus, kind)["id"])
+            r = L.candidates(store, cb, corpus, kind)
+            if step == "name":
+                rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (cb,))["r"]) + 1
+                r = L.name(store, client, corpus, kind, cb, r["clusters"], rnd, model=codebook_model or L.COLDSTART_MODEL, workers=min(workers, 16), progress=progress_writer(store, ws, jid, stop, echo))
+            else:
+                r = {k: v for k, v in r.items() if k != "clusters"} | {"largest": [[d["declaration"][:60] for d in c["members"][:4]] for c in r["clusters"][:5]]}
         elif step == "round":
             def log_step(name, res):
                 with open(ws.job_log(jid), "a") as fh:
@@ -102,7 +108,7 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
                 if echo:
                     echo(f"step {name}: {json.dumps(res)[:300]}")
             r = L.run_round(store, client, corpus, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or L.COLDSTART_MODEL, workers=workers, effort=effort,
-                            rounds=rounds, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+                            rounds=rounds, tau=tau, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
             r["stopped"] = r["stopped_because"] == "stopped"
         else:
             raise ValueError(step)
