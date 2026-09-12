@@ -3,7 +3,8 @@ to open, with a note naming the node it left. From there it takes the path every
 pass re-decides it with that node excluded, and what fits nowhere clusters with its neighbours and reaches the naming
 call. Nodes, definitions and anchors are untouched, so nothing drifts; a literal flag costs a correct member one
 round in the open. A node's own anchors are never reopened (a flag on one is a report on the node's definition),
-and the loop's last judge is not followed by a reopen, so the finished tree's flags are the report to read.
+and a flag raised again on the same member and node after it was acted on is standing: the member stays, the flag
+is the report, and it is never reopened again. The loop ends when every flag is standing and no candidate remains.
 Indistinct pairs are a report only: acting on one would merge nodes."""
 from __future__ import annotations
 
@@ -14,10 +15,10 @@ from ..store import Store, now
 
 def reopen(store: Store, cb: int) -> dict:
     anchors = {(int(f["id"]), int(e)) for f in store.rows("SELECT id, examples FROM feature WHERE codebook=?", (cb,)) for e in json.loads(f["examples"] or "[]")}
-    misfits = [(int(r["feature"]), int(r["realization"])) for r in store.rows("SELECT feature, realization FROM flag WHERE codebook=? AND verdict='misfit' AND realization IS NOT NULL", (cb,))
+    misfits = [(int(r["feature"]), int(r["realization"])) for r in store.rows("SELECT feature, realization FROM flag WHERE codebook=? AND verdict='misfit' AND realization IS NOT NULL AND standing=0", (cb,))
                if (int(r["feature"]), int(r["realization"])) not in anchors]                  # a node's own anchors stay: a flag on one is a report on the node
     splits = []
-    for r in store.rows("SELECT feature, note FROM flag WHERE codebook=? AND verdict='split'", (cb,)):
+    for r in store.rows("SELECT feature, note FROM flag WHERE codebook=? AND verdict='split' AND standing=0", (cb,)):
         for part in json.loads(r["note"] or "{}").get("parts", []):
             splits += [(int(r["feature"]), int(m)) for m in part.get("members", []) if (int(r["feature"]), int(m)) not in anchors]
     n_mis = n_split = 0

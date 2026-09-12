@@ -171,8 +171,8 @@ def status(store: Store, corpus: str, kind: str) -> dict:
         f = store.one("SELECT SUM(level='feature') f, SUM(level='group') g, SUM(level='variant') v, MAX(round) rounds FROM feature WHERE codebook=?", (cb,))
         a = store.one("SELECT COUNT(*) k, SUM(feature IS NOT NULL) assigned, SUM(feature IS NULL) leftover, SUM(confidence='low') low, SUM(note='specific') specific, SUM(note='named') named FROM assignment WHERE codebook=?", (cb,))
         cov = store.one("SELECT COALESCE(SUM(CASE WHEN a.feature IS NOT NULL THEN r.n ELSE 0 END),0) n FROM assignment a JOIN realization r ON r.id=a.realization WHERE a.codebook=?", (cb,))
-        fl = store.one("SELECT COUNT(*) k FROM flag WHERE codebook=?", (cb,))
+        fl = store.one("SELECT COUNT(*) k, COALESCE(SUM(standing),0) s FROM flag WHERE codebook=?", (cb,))
         versions.append(dict(c) | {"features": int(f["f"] or 0), "groups": int(f["g"] or 0), "variants": int(f["v"] or 0), "rounds": int(f["rounds"] or 0), "specific": int(a["specific"] or 0), "named": int(a["named"] or 0),
                                    "assigned": int(a["assigned"] or 0), "leftover": int(a["leftover"] or 0), "low": int(a["low"] or 0),
-                                   "unassigned": int(rz["k"]) - int(a["k"] or 0), "reading_coverage": round(int(cov["n"]) / int(rz["n"]), 3) if rz["n"] else None, "flags": int(fl["k"])})
+                                   "unassigned": int(rz["k"]) - int(a["k"] or 0), "reading_coverage": round(int(cov["n"]) / int(rz["n"]), 3) if rz["n"] else None, "flags": int(fl["k"]), "standing": int(fl["s"])})
     return {"corpus": corpus, "kind": kind, "realizations": int(rz["k"]), "readings": int(rz["n"]), "versions": versions}

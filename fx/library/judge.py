@@ -34,7 +34,9 @@ def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEF
             samples = {f["id"]: members(store, cb, f["id"], 5) for f in g["features"]}
             jobs.append(P.judge_siblings(g, samples)); meta.append(("group", g, {f["id"] for f in g["features"]}))
     replies = run_many(client, jobs, model=model, workers=workers, max_inflight=workers, stage="library", note=f"{corpus}:{kind}:judge:v{cbrow['version']}", system=P.SYSTEM, max_tokens=MAX_TOKENS, extra_body=reasoning_low(model, client.base_url) if effort == "low" else None) if jobs else []
-    summary = {"codebook": cb, "version": cbrow["version"], "calls": len(jobs), "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0}
+    summary = {"codebook": cb, "version": cbrow["version"], "calls": len(jobs), "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0, "new": 0, "standing": 0}
+    # what the previous judge said: a flag raised again on the same member and node (or the same pair) is standing
+    previous = {(int(r["feature"]), r["realization"] and int(r["realization"]), r["other"] and int(r["other"]), r["verdict"]) for r in store.rows("SELECT feature, realization, other, verdict FROM flag WHERE codebook=?", (cb,))}
     with store.lock:
         store.con.execute("DELETE FROM flag WHERE codebook=?", (cb,)); store.con.commit()
     for (what, node, valid), r in zip(meta, replies):
@@ -63,6 +65,9 @@ def judge(store: Store, client: Client, corpus: str, kind: str, model: str = DEF
                     rows.append({"codebook": cb, "feature": a, "realization": None, "other": b, "verdict": "indistinct", "note": str(pr.get("why") or "")[:300]})
                     summary["indistinct"] += 1
         for row in rows:
+            key = (row["feature"], row["realization"], row["other"], row["verdict"])
+            row["standing"] = int(key in previous)
+            summary["standing" if row["standing"] else "new"] += 1
             store.insert("flag", row)
         if progress:
             progress(summary["calls"], len(jobs), {"what": what, "id": node["id"]})

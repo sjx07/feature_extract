@@ -5,7 +5,7 @@
     assign                               new wordings onto the tree (a batch against the whole codebook, then the retrieval shortlist)
     judge, reopen                        the judge reports; a flagged member goes back to open, barred from the node it left
     repeat: cluster the open wordings -> name the candidates -> assign the open wordings against the tree again
-            until no candidate is left, a naming round yields under three nodes, or the round limit
+            until settled: the judge raises no new flag and no candidate is left (or the round limit)
 
 Nothing is rewritten: the tree only gains nodes (each stamped with its round), a wording assigned stays assigned, and
 only the open wordings are ever looked at again. A wording with no neighbour in the corpus is marked specific and
@@ -59,15 +59,19 @@ def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_mod
         step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
         first = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (cb,))["r"]) + 1
         for rnd in range(first, first + rounds):
-            step("reopen", lambda: reopen(store, cb))                                       # the previous judge's flags, now that a round follows
+            r = step("reopen", lambda: reopen(store, cb))                                   # the previous judge's actionable flags
             c = step("cluster", lambda: candidates(store, cb, corpus, kind, tau=tau))     # tau None: measured from the anchors
+            if not c["clusters"] and r["reopened_misfits"] + r["reopened_split_members"] == 0:
+                why = f"settled: every flag is standing and no candidate cluster is left ({c['specific']} specific, {c['unclustered']} unclustered open wordings)"; break
             if not c["clusters"]:
-                why = f"no candidate clusters left ({c['specific']} specific, {c['unclustered']} unclustered open wordings)"; break
+                step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
+                step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
+                continue
             n = step("name", lambda: name(store, client, corpus, kind, cb, c["clusters"], rnd, model=codebook_model, workers=min(workers, 16), progress=progress))
-            if n["variants"] + n["features"] < min_yield:
-                why = f"round {rnd} named only {n['variants'] + n['features']} nodes from {n['clusters']} candidates (< {min_yield}): growth is done"; break
             step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
-            step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
+            j = step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
+            if n["variants"] + n["features"] < min_yield and j["new"] == 0:
+                why = f"settled: round {rnd} named {n['variants'] + n['features']} nodes and the judge raised nothing new ({j['standing']} standing flags)"; break
     except Stopped:
         why = "stopped"
     return {"corpus": corpus, "kind": kind, "steps": steps, "versions": status(store, corpus, kind)["versions"], "stopped_because": why}

@@ -164,7 +164,7 @@ def test_round_runs_the_growing_loop(store):
         logged = []
         r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, min_yield=1, encoder=fake_encoder, log=lambda n, res: logged.append(n))
         assert logged[:7] == ["collapse", "embed", "coldstart", "assign", "judge", "reopen", "cluster"] and "name" in logged and "reopen" != logged[-1]        # the loop never ends on a reopen
-        assert r["stopped_because"].startswith("no candidate clusters left")
+        assert r["stopped_because"].startswith("settled")
         v = r["versions"][0]
         assert v["features"] == 4 and v["rounds"] == 1 and v["specific"] >= 1 and v["assigned"] >= 4
 
@@ -213,3 +213,27 @@ def test_reopen_sends_flagged_members_open_and_bars_the_node(store):
         assert a["feature"] is None and a["note"] == f"reopened:F{f_think['id']}"
         a2 = L.assign(store, c, "c", "guidance", model="m", workers=1, only_open=True, shortlist=False)   # the fake insists on the same node: barred, so it stays open
         assert a2["leftover"] == 1 and store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] is None
+
+
+def test_a_repeated_flag_is_standing_and_not_reopened(store):
+    seed(store); L.collapse(store, "c", "guidance"); L.embed(store, "c", "guidance", enc=fake_encoder)
+    ids = ids_of(store)
+    with FakeServer() as srv:
+        c = Client(store, base_url=srv.url)
+        srv.calls = 0; srv.script = [cb_reply(store)]
+        cb = L.coldstart(store, c, "c", "guidance", model="m")["codebook"]
+        f_think = L.groups(store, cb)[0]["features"][0]
+        srv.router = lambda body: reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}", "confidence": "high"} for g in re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)]}))
+        L.assign(store, c, "c", "guidance", model="m", workers=1, shortlist=False)
+        judge_reply = lambda body: reply(json.dumps({"misfits": [{"id": f"R{ids['return prose']}", "why": "x"}], "split": None})) if "# MEMBERS" in body["messages"][-1]["content"] else reply(json.dumps({"indistinct": []}))
+        srv.router = judge_reply
+        j1 = L.judge(store, c, "c", "guidance", model="m", workers=1)
+        assert j1["new"] == 1 and j1["standing"] == 0
+        assert L.reopen(store, cb)["reopened_misfits"] == 1                              # first time: acted on
+        with store.lock:                                                                  # nothing else fits: it goes back where it was
+            store.con.execute("UPDATE assignment SET feature=?, note=NULL WHERE realization=?", (f_think["id"], ids["return prose"])); store.con.commit()
+        j2 = L.judge(store, c, "c", "guidance", model="m", workers=1)
+        assert j2["new"] == 0 and j2["standing"] == 1
+        assert L.reopen(store, cb)["reopened_misfits"] == 0                              # second time: standing, the member stays
+        assert store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] == f_think["id"]
+        assert L.status(store, "c", "guidance")["versions"][0]["standing"] == 1
