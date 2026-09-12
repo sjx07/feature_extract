@@ -12,7 +12,7 @@ from ..util.jsonx import extract_object
 from .level import Level
 from typing import Callable, Optional
 from .calls import NAME_SCHEMA, _stream
-from .state import members, nodes, open_units, tree, vectors
+from .state import node_vectors, members, nodes, open_units, tree, vectors
 
 # ---- candidates, name
 def candidates(store: Store, lv: Level) -> dict:
@@ -63,6 +63,28 @@ def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_i
     return {"open": n, "specific": len(marked), "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - len(marked | in_cluster)}
 
 
+def _nearest_group(store: Store, lv: Level, tr: list[dict], kept: list[int], aspect: Optional[str]) -> Optional[int]:
+    """The group whose features' vectors lie nearest the mean of the kept units' vectors; restricted to `aspect` when given and
+    some group carries it. None only when the tree has no group at all."""
+    cands = [g for g in tr if aspect is None or g.get("aspect") == aspect] or list(tr)
+    if not cands:
+        return None
+    ids, m = vectors(store, lv.kind, kept)
+    nid, nm = node_vectors(store, lv, tr)
+    if not ids or not nid:
+        return cands[0]["id"]
+    q = m.mean(axis=0); q = q / max(float(np.linalg.norm(q)), 1e-9)
+    of = dict(zip(nid, nm))
+    best, score = cands[0]["id"], -2.0
+    for g in cands:
+        vs = [of[f["id"]] for f in g["features"] if f["id"] in of]
+        if vs:
+            v = np.mean(vs, axis=0); s = float(v @ q) / max(float(np.linalg.norm(v)), 1e-9)
+            if s > score:
+                best, score = g["id"], s
+    return best
+
+
 def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
     """A neighbourhood's seed that the namer did not place has had its look: specific, unless it carries a judge's reason still
     waiting for the assigner."""
@@ -77,7 +99,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
     group_ids = {g["id"]: g for g in tr}
-    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "groups": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
+    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "placed_by_vector": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
     if not clusters:
         return summary
     prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
@@ -107,20 +129,15 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         if parent is not None:
             row |= {"level": "variant", "parent": parent}
         else:
+            # a naming call never creates a group: one neighbourhood is no view of the whole. It picks a group by id; if it
+            # names an aspect or nothing usable, the feature goes to the nearest existing group by vectors (within that aspect
+            # when one was named), so the groups stay the ones the cold start (or the seed's aspects) laid down
             g = obj.get("group")
             gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
-            if gid is None and isinstance(g, dict) and str(g.get("name") or "").strip() and lv.allow_new_group:
-                key = str(g["name"]).strip().lower()
-                gid = next((i for i, x in group_ids.items() if x["name"].strip().lower() == key), None)
-                if gid is None:
-                    aspect = str(g.get("aspect") or "other").lower()
-                    gid = store.insert("feature", {"codebook": lv.codebook, "level": "group", "parent": None, "prev": None, "aspect": aspect if aspect in lv.aspects else "other",
-                                                   "name": str(g["name"]).strip(), "definition": str(g.get("definition") or "").strip(), "polarity": None, "examples": [], "round": round_})
-                    group_ids[gid] = {"id": gid, "name": str(g["name"]).strip()}; summary["groups"] += 1
-            if gid is None and not lv.allow_new_group:
-                # the groups are fixed: fall back to the aspect named, then to 'other'
-                aspect = str((g or {}).get("aspect") if isinstance(g, dict) else g or "other").lower()
-                gid = next((i for i, x in group_ids.items() if x.get("aspect") == aspect), None) or next((i for i, x in group_ids.items() if x.get("aspect") == "other"), None)
+            if gid is None:
+                aspect = str((g.get("aspect") if isinstance(g, dict) else g) or "").lower()
+                gid = _nearest_group(store, lv, tr, kept, aspect if aspect in lv.aspects else None)
+                summary["placed_by_vector"] += 1
             if gid is None:
                 summary["rejected"] += 1; continue
             row |= {"level": "feature", "parent": gid}

@@ -119,14 +119,14 @@ things, not that they say the same thing. Read them and decide what, if anything
 {what}
 
 # THE THREE ANSWERS
-- "feature": two or more of them give one instruction the codebook lacks. Name it as a short imperative phrase, define
-  it in one sentence a reader could test any declaration against, and pick "group": an existing group id, or a new group
-  as {{"name","definition","aspect"}} with aspect one of {aspects}.
+- "feature": three or more of them, from at least two prompts, give one instruction the codebook lacks. Name it as a
+  short imperative phrase, define it in one sentence a reader could test any declaration against, and pick "group": the
+  id of the existing group it belongs to (never a new one; if none fits well, give the closest and say so in "why").
 - "variant": two or more of them give an existing feature F plus one constraint that narrows it (a manner, a scope, a
   condition each of them states). Give "parent" (F's id), a short name for the variant, and a definition that states the
   constraint.
-- "reject": they do not share one instruction, or what they share is already a feature (say which in "why"; the next
-  assignment pass files them there). This is the common answer.
+- "reject": they do not share one instruction, or what they share is already a feature of the codebook, whose features
+  are all listed below by name (say which in "why"; the next assignment pass files them there). This is the common answer.
 
 # HOW TO FILL IT IN
 - "members": the ids of the declarations that give what you named, and only those; the one under study need not be

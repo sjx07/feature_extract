@@ -128,9 +128,11 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         srv.router = lambda body: reply(json.dumps({"decision": "feature", "why": "", "parent": None, "group": {"name": "answer length", "definition": "how long the answer is", "aspect": "answer"},
                                                    "name": "keep the answer short", "definition": "the answer is brief", "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}))
         n = L.name(store, c, "c", "guidance", cb, cands["clusters"], round_=1, model="m", workers=1)
-        assert n["features"] == 1 and n["groups"] == 1 and n["assigned"] == len(m)
+        assert n["features"] == 1 and n["placed_by_vector"] == 1 and n["assigned"] == len(m)      # a naming call never creates a group
         tree = L.groups(store, cb)
-        assert tree[-1]["name"] == "answer length" and tree[-1]["features"][0]["round"] == 1 and tree[-1]["features"][0]["support"] >= 3
+        assert len(tree) == 2 and [g["name"] for g in tree] == ["reasoning", "output"]              # the cold start's groups, and no other
+        new = [f for g in tree for f in g["features"] if f["name"] == "keep the answer short"]
+        assert len(new) == 1 and new[0]["round"] == 1 and new[0]["support"] >= 3
         assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
         c2 = L.candidates(store, cb, "c", "guidance")                                                      # the odd one out is alone: specific
         assert c2["clusters"] == [] and c2["specific"] >= 1
