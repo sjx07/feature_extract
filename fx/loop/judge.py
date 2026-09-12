@@ -15,11 +15,21 @@ from .calls import _stream
 from .state import members, nodes, tree
 
 # ---- judge, reopen
+def spread(ms: list[dict], keep: int = 60, head: int = 20) -> list[dict]:
+    """Up to `keep` members: the `head` best supported, then an even spread over the rest (by rank, so deterministic).
+    Members by support alone show a node's centre; a bucket's other instructions sit among its one-prompt wordings."""
+    if len(ms) <= keep:
+        return ms
+    rest = ms[head:]
+    step = len(rest) / (keep - head)
+    return ms[:head] + [rest[int(i * step)] for i in range(keep - head)]
+
+
 def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 128, effort: str = "low", progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
     jobs, meta = [], []
     for n in nodes(tr):
-        ms = members(store, lv, n["id"])
+        ms = spread(members(store, lv, n["id"], limit=10000))          # the judge must see the tail: a bucket hides there, not in the top by support
         if len(ms) >= 2:
             jobs.append(lv.prompt_judge(n, ms, {m["id"]: lv.member_samples(m) for m in ms})); meta.append(("node", n, {m["id"] for m in ms}))
     if lv.prompt_siblings:
