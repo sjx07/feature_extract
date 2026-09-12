@@ -44,12 +44,12 @@ def progress_writer(store: Store, ws: Workspace, jid: int, stop: threading.Event
 
     def progress(done: int, total: int, info: dict) -> None:
         r = store.one("SELECT recent FROM job WHERE id=?", (jid,))
-        recent = (json.loads(r["recent"] or "[]") + [{k: info.get(k) for k in ("id", "coverage", "n_atoms", "calls", "error")}])[-5:]
+        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
+        recent = (json.loads(r["recent"] or "[]") + [dict(shown, error=info.get("error"))])[-5:]
         with store.lock:
             store.con.execute("UPDATE job SET done=?, total=CASE WHEN ?>0 THEN ? ELSE total END, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
                               (done, total, total, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))   # a step that learns its total (batches) reports it
             store.con.commit()
-        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
         line = f"{now()} {done}/{total} " + " ".join(f"{k}={v}" for k, v in shown.items()) + (f" ERROR {info['error']}" if info.get("error") else "")
         with open(ws.job_log(jid), "a") as fh:
             fh.write(line + "\n")
