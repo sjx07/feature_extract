@@ -1,6 +1,6 @@
 """Open cards that neighbour cards from other corpora form candidates; an open card with no neighbour in any other corpus
-is domain-specific for now (reversible when a new corpus arrives). The threshold comes from known-same pairs: features
-with the same name in different corpora; with too few, a default."""
+is domain-specific for now (reversible when a new corpus arrives). The threshold is a measured constant (see `threshold`); the naming call
+rejects what it overreaches."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -13,24 +13,19 @@ from .cards import cards
 from .embed import vectors
 from .seed import open_cards
 
-TAU_DEFAULT, TAU_MIN, TAU_MAX = 0.86, 0.7, 0.95
+TAU_DEFAULT = 0.84
 
 
-def threshold(store: Store, kind: str, quantile: float = 0.25) -> tuple[float, int]:
-    by_name: dict[tuple, list[int]] = defaultdict(list)
+def threshold(store: Store, kind: str) -> tuple[float, int]:
+    """The neighbour threshold for cards. Measured on the four guidance libraries (2026-09-11): same-name pairs across
+    corpora sit at 0.90 and above, which is identity of wording, not of instruction; the pairs between 0.85 and 0.90
+    are mostly one instruction under different nouns ("generate a query that answers the question" / "generate an
+    executable query"), the band 0.80 to 0.85 mostly not. So 0.84, and the naming call rejects what retrieval overreached.
+    Returns (tau, same-name pairs found), the count as a check that the libraries overlap at all."""
+    by_name: dict[tuple, int] = defaultdict(int)
     for c in cards(store, kind):
-        by_name[(c["polarity"], c["name"].strip().lower())].append(c["id"])
-    sims = []
-    for ids in by_name.values():
-        if len(ids) < 2:
-            continue
-        got, m = vectors(store, ids)
-        for i in range(len(got)):
-            for j in range(i + 1, len(got)):
-                sims.append(float(m[i] @ m[j]))
-    if len(sims) < 10:
-        return TAU_DEFAULT, len(sims)
-    return float(min(TAU_MAX, max(TAU_MIN, np.quantile(sims, quantile)))), len(sims)
+        by_name[(c["polarity"], c["name"].strip().lower())] += 1
+    return TAU_DEFAULT, sum(n * (n - 1) // 2 for n in by_name.values() if n >= 2)
 
 
 def candidates(store: Store, kind: str, tau: Optional[float] = None, min_corpora: int = 2) -> dict:

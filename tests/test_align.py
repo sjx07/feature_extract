@@ -55,7 +55,7 @@ def test_cards_vectors_and_cross_corpus_candidates(store):
     assert len(cs) == 6 and {c["corpus"] for c in cs} == {"sql", "cypher"} and all(c["anchors"] and c["support"] == 3 for c in cs)
     assert A.embed(store, "guidance", enc=fake_encoder)["embedded"] == 6 and A.embed(store, "guidance", enc=fake_encoder)["embedded"] == 0
     tau, pairs = A.threshold(store, "guidance")
-    assert pairs == 1 and tau == 0.86                                                   # one same-name pair: too few, the default
+    assert pairs == 1 and tau == 0.84
     c = A.candidates(store, "guidance", tau=0.5)
     names = [sorted(m["name"] for m in cl["members"]) for cl in c["clusters"]]
     assert ["think step by step", "think step by step"] in names and ["return Cypher only", "return SQL only"] in names
