@@ -119,14 +119,15 @@ things, not that they say the same thing. Read them and decide what, if anything
 {what}
 
 # THE THREE ANSWERS
-- "feature": two or more of them give one instruction the codebook lacks. Name it as a short imperative phrase, define
-  it in one sentence a reader could test any declaration against, and pick "group": an existing group id, or a new group
-  as {{"name","definition","aspect"}} with aspect one of {aspects}.
+- "feature": three or more of them, from at least two prompts, give one instruction the codebook lacks. Name it as a
+  short imperative phrase, define it in one sentence a reader could test any declaration against, and pick "group": the
+  id of the existing group it belongs to, or null when none fits, with "aspect" (one of {aspects}) so it waits under
+  that aspect until a group for it exists. Never invent a group here.
 - "variant": two or more of them give an existing feature F plus one constraint that narrows it (a manner, a scope, a
   condition each of them states). Give "parent" (F's id), a short name for the variant, and a definition that states the
   constraint.
-- "reject": they do not share one instruction, or what they share is already a feature (say which in "why"; the next
-  assignment pass files them there). This is the common answer.
+- "reject": they do not share one instruction, or what they share is already a feature of the codebook, whose features
+  are all listed below by name (say which in "why"; the next assignment pass files them there). This is the common answer.
 
 # HOW TO FILL IT IN
 - "members": the ids of the declarations that give what you named, and only those; the one under study need not be
@@ -136,7 +137,7 @@ things, not that they say the same thing. Read them and decide what, if anything
 - Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"decision":"variant|feature|reject","why":"…","parent":"F12","group":"G3","name":"…","definition":"…","polarity":"require|forbid","examples":["R1","R2","R3"],"members":["R1","R2","R3","R9"]}}
+{{"decision":"variant|feature|reject","why":"…","parent":"F12","group":"G3","aspect":"…","name":"…","definition":"…","polarity":"require|forbid","examples":["R1","R2","R3"],"members":["R1","R2","R3","R9"]}}
 
 # CODEBOOK (every feature by name; the ones nearest to these declarations with their definitions)
 {codebook}
@@ -144,6 +145,32 @@ things, not that they say the same thing. Read them and decide what, if anything
 # CLUSTER
 {cluster}
 """
+
+
+GROUP = """# TASK
+Below are the GROUPS of a {kind} feature library for one domain ({domain}), each with its features by name, and then
+FEATURES that were named without a group: in the namer's view none fitted. Decide two things.
+1. "place": an unplaced feature that does belong to an existing group after all, with that group's id.
+2. "groups": a new group, only when three or more unplaced features share one purpose that no existing group serves.
+   Give a name (a noun phrase), a one-sentence definition, an aspect (one of {aspects}), and the features it covers.
+   Fewer than three: leave them unplaced; later rounds may bring them company.
+A feature appears at most once across both lists. Every id must be copied exactly. Reply with the JSON below and nothing else.
+
+# OUTPUT
+{{"place":[{{"feature":"F12","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","features":["F1","F2","F3"]}}]}}
+
+# GROUPS
+{groups}
+
+# UNPLACED FEATURES
+{unplaced}
+"""
+
+
+def group(kind: str, domain: str, groups: list[dict], unplaced: list[dict]) -> str:
+    lines = [f"F{f['id']} ({f['polarity']}) [{f.get('aspect') or 'other'}] {f['name']}: {f.get('definition') or ''} [{f.get('support', 0)} prompts]" for f in unplaced]
+    return GROUP.format(kind=kind, domain=domain, aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
+                        groups=render_codebook(groups, detail=set()), unplaced="\n".join(lines))
 
 
 def render_codebook(groups: list[dict], anchors: bool = False, detail: Optional[set] = None) -> str:
@@ -159,7 +186,7 @@ def render_codebook(groups: list[dict], anchors: bool = False, detail: Optional[
         if full and anchors and n.get("anchors"):
             out.append(indent + "    e.g. " + " | ".join(a[:90] for a in n["anchors"][:3]))
     for g in groups:
-        out.append(f"G{g['id']} {g['name']} ({g.get('aspect') or 'other'}): {g.get('definition') or ''}")
+        out.append((f"G{g['id']} {g['name']}" if g["id"] is not None else f"(unplaced, {g.get('aspect') or 'other'}: no group yet)") + f" ({g.get('aspect') or 'other'}): {g.get('definition') or ''}")
         for f in g["features"]:
             line("  ", "F", f)
             for v in f.get("variants") or []:

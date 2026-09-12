@@ -24,7 +24,7 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
             jobs.append(lv.prompt_judge(n, ms, {m["id"]: lv.member_samples(m) for m in ms})); meta.append(("node", n, {m["id"] for m in ms}))
     if lv.prompt_siblings:
         for g in tr:
-            if len(g["features"]) >= 2:
+            if g["id"] is not None and len(g["features"]) >= 2:
                 jobs.append(lv.prompt_siblings(g, {f["id"]: members(store, lv, f["id"], 5) for f in g["features"]})); meta.append(("group", g, {f["id"] for f in g["features"]}))
     summary = {"codebook": lv.codebook, "calls": len(jobs), "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0, "new": 0, "standing": 0}
     previous = {(int(r["feature"]), r["realization"] and int(r["realization"]), r["other"] and int(r["other"]), r["verdict"]) for r in store.rows("SELECT feature, realization, other, verdict FROM flag WHERE codebook=?", (lv.codebook,))}

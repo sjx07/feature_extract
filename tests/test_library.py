@@ -128,9 +128,18 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         srv.router = lambda body: reply(json.dumps({"decision": "feature", "why": "", "parent": None, "group": {"name": "answer length", "definition": "how long the answer is", "aspect": "answer"},
                                                    "name": "keep the answer short", "definition": "the answer is brief", "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}))
         n = L.name(store, c, "c", "guidance", cb, cands["clusters"], round_=1, model="m", workers=1)
-        assert n["features"] == 1 and n["groups"] == 1 and n["assigned"] == len(m)
+        assert n["features"] == 1 and n["unplaced"] == 1 and n["assigned"] == len(m)                # a naming call never creates a group
         tree = L.groups(store, cb)
-        assert tree[-1]["name"] == "answer length" and tree[-1]["features"][0]["round"] == 1 and tree[-1]["features"][0]["support"] >= 3
+        assert [g["name"] for g in tree] == ["reasoning", "output", "unplaced · answer"] and tree[-1]["id"] is None
+        new = tree[-1]["features"]
+        assert len(new) == 1 and new[0]["round"] == 1 and new[0]["support"] >= 3 and new[0]["aspect"] == "answer"
+        # the group step: one call sees the unplaced features beside the groups; a new group needs three, so this one is placed
+        gid_out = tree[1]["id"]
+        srv.router = lambda body: reply(json.dumps({"place": [{"feature": f"F{new[0]['id']}", "group": f"G{gid_out}"}], "groups": [{"name": "answer length", "definition": "how long", "aspect": "answer", "features": [f"F{new[0]['id']}"]}]}))
+        g = L.regroup(store, c, "c", "guidance", model="m")
+        assert g["unplaced"] == 1 and g["placed"] == 1 and g["groups"] == 0 and g["still_unplaced"] == 0
+        tree = L.groups(store, cb)
+        assert len(tree) == 2 and any(f["name"] == "keep the answer short" for f in tree[1]["features"])
         assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
         c2 = L.candidates(store, cb, "c", "guidance")                                                      # the odd one out is alone: specific
         assert c2["clusters"] == [] and c2["specific"] >= 1

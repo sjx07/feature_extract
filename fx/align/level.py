@@ -29,7 +29,7 @@ def feature_level(store: Store, kind: str) -> Level:
         prompt_judge=lambda node, ms, sm: P.judge(node, ms, sm),
         prompt_siblings=None, system=P.SYSTEM, member_samples=samples,
         node_vector="members", unit_prefix="F", node_prefix="S",
-        named_min_members=2, named_min_groups=2, allow_variant=False, allow_new_group=False, batch=12, shortlist_k=5, neighbourhood=5,
+        named_min_members=2, named_min_groups=2, allow_variant=False, batch=12, shortlist_k=5, neighbourhood=5,
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"seed:{kind}")
 
 

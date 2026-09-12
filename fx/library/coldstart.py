@@ -15,14 +15,14 @@ from .collapse import realizations
 
 
 def coldstart(store: Store, client: Client, corpus: str, kind: str, model: str = COLDSTART_MODEL, min_support: int = MIN_SUPPORT, domain: Optional[str] = None,
-              context_tokens: int = CONTEXT_TOKENS) -> dict:
+              context_tokens: int = CONTEXT_TOKENS, cache: bool = True) -> dict:
     cid = corpus_id(store, corpus)
     decl = realizations(store, corpus, kind)
     if not decl:
         raise ValueError(f"no {kind} realizations for {corpus}: run collapse, or decompose first")
     domain = domain or corpus_domain(store, cid, corpus)
     shown, waiting = fit(decl, context_tokens)
-    reply = ask(client, P.coldstart(kind, domain, shown, min_support), model=model, stage="library", note=f"{corpus}:{kind}:coldstart", system=P.SYSTEM, schema=COLDSTART_SCHEMA, max_tokens=MAX_TOKENS)
+    reply = ask(client, P.coldstart(kind, domain, shown, min_support), model=model, stage="library", note=f"{corpus}:{kind}:coldstart", system=P.SYSTEM, schema=COLDSTART_SCHEMA, max_tokens=MAX_TOKENS, cache=cache)   # cache=False: a fresh listing, not the replay of an earlier one
     obj = extract_object(reply, "groups")
     if obj is None:
         raise RuntimeError("cold start reply was not a codebook (no 'groups' list)")

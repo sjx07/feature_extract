@@ -25,13 +25,14 @@ class Level:
     prompt_siblings: Optional[Callable[..., str]]   # (group, samples) -> str, or None to skip the sibling check
     system: str
     member_samples: Callable[[dict], list[str]]     # what the judge sees of a member beyond its line
+    prompt_group: Optional[Callable[..., str]] = None   # (groups, unplaced features) -> str; None: the groups are fixed (the seed)
     node_vector: str = "anchors"                # 'anchors': mean of the node's example units; 'members': mean of its members
     unit_prefix: str = "R"                      # how the unit id is written in prompts
     node_prefix: str = "F"
     named_min_members: int = 2                  # a named node needs this many accepted members ...
     named_min_groups: int = 1                   # ... from this many groups
+    group_min_features: int = 3                 # a new group needs this many unplaced features that share one purpose
     allow_variant: bool = True                  # may the namer place a cluster under a feature as a variant
-    allow_new_group: bool = True                # may the namer create a group (the seed's groups are the aspects, fixed at birth)
     batch: int = 20
     shortlist_k: int = 4
     neighbourhood: int = 5                      # a candidate is a seed unit and its k nearest open units from other groups; no threshold

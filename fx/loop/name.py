@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 from ..llm import Client
+from ..llm.registry import reasoning_low
 from ..store import Store, now
 from ..util.ids import parse_id, parse_ids
 from ..util.jsonx import extract_object
@@ -57,9 +58,9 @@ def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_i
     with store.lock:
         store.con.executemany("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", [(lv.kind, lv.codebook, u) for u in alone])
         store.con.commit()
-    specific = sum(1 for u in by_id.values() if u["note"] == "specific") + len(alone)
-    in_cluster = {u["id"] for c in clusters for u in c["members"]}
-    return {"open": n, "specific": specific, "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - specific - len(in_cluster)}
+    marked = {u["id"] for u in by_id.values() if u["note"] == "specific"} | set(alone)
+    in_cluster = {u["id"] for c in clusters for u in c["members"]}          # specific units sit in clusters too, as neighbours
+    return {"open": n, "specific": len(marked), "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - len(marked | in_cluster)}
 
 
 def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
@@ -71,16 +72,18 @@ def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
             store.con.commit()
 
 
-def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
+def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, effort: str = "low",
+         progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
-    group_ids = {g["id"]: g for g in tr}
-    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "groups": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
+    group_ids = {g["id"]: g for g in tr if g["id"] is not None}
+    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "unplaced": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
     if not clusters:
         return summary
     prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
     done = 0
-    for k, r in _stream(client, prompts, model, workers, f"{lv.label}:name:r{round_}", lv.system, schema=NAME_SCHEMA):
+    extra = reasoning_low(model, client.base_url) if effort == "low" else None       # the same knob as assign and judge, whatever the model
+    for k, r in _stream(client, prompts, model, workers, f"{lv.label}:name:r{round_}", lv.system, schema=NAME_SCHEMA, extra=extra):
         c = clusters[k]
         done += 1
         obj = extract_object(r.text) if r and r.text else None
@@ -104,23 +107,17 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         if parent is not None:
             row |= {"level": "variant", "parent": parent}
         else:
+            # a naming call never creates a group: one neighbourhood is no view of the whole. It picks a group by id; if it
+            # names an aspect or nothing usable, the feature goes to the nearest existing group by vectors (within that aspect
+            # when one was named), so the groups stay the ones the cold start (or the seed's aspects) laid down
             g = obj.get("group")
             gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
-            if gid is None and isinstance(g, dict) and str(g.get("name") or "").strip() and lv.allow_new_group:
-                key = str(g["name"]).strip().lower()
-                gid = next((i for i, x in group_ids.items() if x["name"].strip().lower() == key), None)
-                if gid is None:
-                    aspect = str(g.get("aspect") or "other").lower()
-                    gid = store.insert("feature", {"codebook": lv.codebook, "level": "group", "parent": None, "prev": None, "aspect": aspect if aspect in lv.aspects else "other",
-                                                   "name": str(g["name"]).strip(), "definition": str(g.get("definition") or "").strip(), "polarity": None, "examples": [], "round": round_})
-                    group_ids[gid] = {"id": gid, "name": str(g["name"]).strip()}; summary["groups"] += 1
-            if gid is None and not lv.allow_new_group:
-                # the groups are fixed: fall back to the aspect named, then to 'other'
-                aspect = str((g or {}).get("aspect") if isinstance(g, dict) else g or "other").lower()
-                gid = next((i for i, x in group_ids.items() if x.get("aspect") == aspect), None) or next((i for i, x in group_ids.items() if x.get("aspect") == "other"), None)
-            if gid is None:
-                summary["rejected"] += 1; continue
-            row |= {"level": "feature", "parent": gid}
+            if gid is None:                          # unplaced: the group step (fx.loop.group) sees them all at once
+                aspect = str(obj.get("aspect") or (g.get("aspect") if isinstance(g, dict) else g) or "").lower()
+                summary["unplaced"] += 1
+                row |= {"level": "feature", "parent": None, "aspect": aspect if aspect in lv.aspects else "other"}
+            else:
+                row |= {"level": "feature", "parent": gid}
         nid = store.insert("feature", row)
         summary["variants" if row["level"] == "variant" else "features"] += 1
         with store.lock:
