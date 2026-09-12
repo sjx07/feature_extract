@@ -28,7 +28,8 @@ _cache: dict = {}
 
 def _version(store: Store) -> tuple:
     """Changes whenever the induction wrote: the cube's cache key."""
-    r = store.one("SELECT (SELECT COUNT(*) FROM membership) m, (SELECT MAX(id) FROM feature) f, (SELECT COUNT(*) FROM reading) r, (SELECT COUNT(*) FROM prompt) p, (SELECT MAX(at) FROM membership) a")
+    r = store.one("SELECT (SELECT COUNT(*) FROM membership) m, (SELECT MAX(id) FROM feature) f, (SELECT COUNT(*) FROM feature) fn, (SELECT COUNT(*) FROM reading) r, (SELECT COUNT(*) FROM prompt) p, "
+                  "(SELECT MAX(at) FROM membership) a, (SELECT COUNT(*) FROM codebook) c, (SELECT MAX(at) FROM codebook) ca")      # a seed reset deletes and recreates: counts, ids and times all enter
     return (str(store.path), tuple(r))
 
 
