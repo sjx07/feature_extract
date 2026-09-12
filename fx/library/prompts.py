@@ -176,6 +176,9 @@ def render_declarations(rows: list[dict], source: bool = False) -> str:
                 line += f"\n      quote: \"{r['sample'][:200]}\""
             if r.get("domain_terms"):
                 line += f"\n      domain nouns replaced: {', '.join(r['domain_terms'][:6])}"
+            if r.get("judged"):
+                fid, why = r["judged"]
+                line += f"\n      the judge removed this from F{fid}: {why or 'no reason given'}. Put it back only if the judge is wrong; else the node it carries, or null."
         out.append(line)
     return "\n".join(out) if out else "(none)"
 

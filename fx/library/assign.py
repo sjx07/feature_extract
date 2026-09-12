@@ -29,7 +29,7 @@ from . import prompts as P
 from .codebook import ASSIGN_SCHEMA, BATCH, MAX_TOKENS, anchors, groups, latest, nodes
 from collections import defaultdict
 from .collapse import realizations
-from .reopen import excluded
+from .reopen import judged, settle
 
 
 def _subtree(tree: list[dict], keep: set[int]) -> list[dict]:
@@ -94,10 +94,10 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
                "second_pass": 0, "second_pass_assigned": 0, "stopped": False}
     stop = stop or threading.Event()
     note = f"{corpus}:{kind}:assign:v{cbrow['version']}"
-    excl = excluded(store, cb)                               # reopened wordings never go back to the node they left
-    jobs = [(b, tree, False) for b in batches]
+    jd = judged(store, cb)                                   # reopened wordings carry the judge's reason; the assigner adjudicates
+    jobs = [([d | {"judged": jd.get(d["id"])} for d in b], tree, False) for b in batches]
     if jobs:
-        _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, excl)
+        _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, jd)
     if shortlist and not summary["stopped"]:
         # the second pass: the open wordings, each against its nearest nodes, batched by their nearest node
         open_ids = [int(r["realization"]) for r in store.rows("SELECT realization FROM assignment WHERE codebook=? AND feature IS NULL", (cb,))]
@@ -105,7 +105,8 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
         by_id = {d["id"]: d for d in realizations(store, corpus, kind)}
         by_first: dict[int, list[int]] = defaultdict(list)
         for rid, ns in lists.items():
-            ns = [n for n in ns if n != excl.get(rid)]
+            if rid in jd and jd[rid][0] not in ns:
+                ns = ns + [jd[rid][0]]                            # the node the judge removed it from is on the list, with the reason
             lists[rid] = ns
             if ns:
                 by_first[ns[0]].append(rid)
@@ -114,15 +115,15 @@ def assign(store: Store, client: Client, corpus: str, kind: str, model: str = DE
             for i in range(0, len(rids), batch):
                 chunk = rids[i:i + batch]
                 keep = {n for rid in chunk for n in lists[rid]}
-                jobs2.append(([by_id[r] for r in chunk], _subtree(tree, keep), True))
+                jobs2.append(([by_id[r] | {"judged": jd.get(r)} for r in chunk], _subtree(tree, keep), True))
         summary["second_pass"] = len(jobs2)
         if jobs2:
-            _run(store, client, cb, kind, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop, excl)
+            _run(store, client, cb, kind, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop, jd)
     summary["anchor_agreement"] = anchors(store, cb)
     return summary
 
 
-def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, excl=None) -> None:
+def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, summary, progress, stop, jd=None) -> None:
     """jobs: (batch, tree to show, second_pass). Writes each batch as its reply lands."""
     client.stop = stop
     sem = _sem(resolve(model, client.base_url).base_url, max(workers, 1))
@@ -162,8 +163,9 @@ def _run(store, client, cb, kind, jobs, valid, model, workers, effort, note, sum
                         if rid is None:
                             continue
                         fid = parse_id(a.get("feature"), valid) if a.get("feature") not in (None, "", "null") else None
-                        if fid is not None and excl and excl.get(rid) == fid:
-                            fid = None
+                        if fid is not None and jd and rid in jd and jd[rid][0] == fid:
+                            settle(store, cb, rid, fid)                              # back where the judge removed it from: the assigner disagrees, the flag stands
+                            summary["settled"] = summary.get("settled", 0) + 1
                         conf = str(a.get("confidence") or "medium").lower()
                         got[rid] = (fid, conf if conf in ("high", "medium", "low") else "medium")
                     with store.lock:

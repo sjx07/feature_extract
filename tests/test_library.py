@@ -196,7 +196,7 @@ def test_site_library_endpoints_and_job(tmp_path):
         assert c.get("/api/library/preview?corpus=c&kind=guidance&step=cluster").json()["dollars"] == 0
 
 
-def test_reopen_sends_flagged_members_open_and_bars_the_node(store):
+def test_reopen_sends_the_judgement_to_the_assigner_who_adjudicates(store):
     seed(store); L.collapse(store, "c", "guidance"); L.embed(store, "c", "guidance", enc=fake_encoder)
     ids = ids_of(store)
     with FakeServer() as srv:
@@ -206,13 +206,22 @@ def test_reopen_sends_flagged_members_open_and_bars_the_node(store):
         f_think = L.groups(store, cb)[0]["features"][0]
         srv.router = lambda body: reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}", "confidence": "high"} for g in re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)]}))
         L.assign(store, c, "c", "guidance", model="m", workers=1, shortlist=False)          # the fake puts everything on 'think step by step'
-        store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": ids["return prose"], "other": None, "verdict": "misfit", "note": "not reasoning"})
+        store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": ids["return prose"], "other": None, "verdict": "misfit", "note": "not reasoning", "standing": 0})
         r = L.reopen(store, cb)
         assert r["reopened_misfits"] == 1
         a = store.one("SELECT feature, note FROM assignment WHERE realization=?", (ids["return prose"],))
-        assert a["feature"] is None and a["note"] == f"reopened:F{f_think['id']}"
-        a2 = L.assign(store, c, "c", "guidance", model="m", workers=1, only_open=True, shortlist=False)   # the fake insists on the same node: barred, so it stays open
-        assert a2["leftover"] == 1 and store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] is None
+        assert a["feature"] is None and a["note"] == f"reopened:F{f_think['id']}|not reasoning"
+        seen = []
+        def router(body):
+            text = body["messages"][-1]["content"]; seen.append(text)
+            return reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}", "confidence": "high"} for g in re.findall(r"^R(\d+) \|", text, re.M)]}))
+        srv.router = router
+        a2 = L.assign(store, c, "c", "guidance", model="m", workers=1, only_open=True, shortlist=False)   # the assigner sees the reason and puts it back: the flag is standing
+        assert any("the judge removed this from F" in t and "not reasoning" in t for t in seen)
+        assert a2.get("settled") == 1
+        assert store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] == f_think["id"]
+        assert store.one("SELECT standing FROM flag WHERE realization=?", (ids["return prose"],))["standing"] == 1
+        assert L.reopen(store, cb)["reopened_misfits"] == 0
 
 
 def test_a_repeated_flag_is_standing_and_not_reopened(store):
