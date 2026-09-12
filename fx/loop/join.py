@@ -48,6 +48,21 @@ def _fold(store: Store, lv: Level, younger: int, older: int) -> int:
     return n
 
 
+def _parse(text: str) -> Optional[dict]:
+    """The join's JSON, even when a model let its reasoning run into the reply before the object: the usual extractor first,
+    then the last object that starts at "proposals"."""
+    obj = extract_object(text)
+    if isinstance(obj, dict) and "proposals" in obj:
+        return obj
+    import json, re
+    for m in reversed(list(re.finditer(r'\{\s*"proposals"', text))):
+        try:
+            return json.loads(text[m.start():text.rindex("}") + 1])
+        except (ValueError, json.JSONDecodeError):
+            continue
+    return obj if isinstance(obj, dict) else None
+
+
 def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_: int, model: str, effort: str = "low",
          progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
@@ -95,7 +110,7 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
         for i, r in _stream(client, prompts, model, max(1, min(len(prompts), 16)), f"{lv.label}:join:r{round_}", lv.system, schema=JOIN_SCHEMA, extra=extra):
             c = chunks[i]
             summary["calls"] += 1; cost += r.cost or 0.0
-            obj = extract_object(r.text) if r and r.text else None
+            obj = _parse(r.text) if r and r.text else None
             if not isinstance(obj, dict):
                 summary["unparsed"] += 1; continue
             local = c["proposals"]                                   # local P<j> (1-based) -> global index local[j-1]
