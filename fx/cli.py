@@ -64,7 +64,7 @@ def main(argv=None) -> int:
         if name == "preview":
             p.add_argument("--step", default="assign", choices=("coldstart", "assign", "judge", "name"))
     al = sub.add_parser("align", help="stage 3: the seed library, per-corpus features aligned into global features").add_subparsers(dest="sub", required=True)
-    for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status", "regroup"):
+    for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status", "regroup", "reset"):
         p = al.add_parser(name)
         p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
         p.add_argument("--model", default=None, help="batch model for assign and judge (default: the decomposition model)")
@@ -135,6 +135,9 @@ def main(argv=None) -> int:
             print(json.dumps(A.status(store, a.kind), indent=1)); return 0
         if a.sub == "regroup":
             print(json.dumps(A.regroup_by_aspect(store, a.kind))); return 0
+        if a.sub == "reset":
+            live = store.one("SELECT id FROM job WHERE kind LIKE 'align:%' AND status='running'")
+            print(json.dumps(A.reset(store, a.kind) | ({"warning": f"job {live['id']} shows as running; stop it first if it is"} if live else {}))); return 0
         from .jobs import run_align, setup_logging, start
         from .llm import Client
         setup_logging(ws)
