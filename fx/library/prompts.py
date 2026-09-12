@@ -98,8 +98,11 @@ report; nothing moves because of it.
   fit, not a misfit. A variant may be born from such members later; that is not your call here.
 - A misfit gives another instruction: a different verb on the same topic, the opposite polarity, or a rule about
   something else entirely. Say in "why" which instruction it gives instead.
-- A split is rare: name it only when the members clearly form two or more instructions that a reader would never
-  file together, and list every member under one part.
+- A split is the report for a feature that has become a bucket: its definition is wide ("understand the question and
+  schema") and its members give several distinct instructions under it ("determine necessary joins", "detect hidden
+  constraints such as temporal windows", "understand the user's intention"). Then give "split" with a part per
+  instruction, each with a short name and the members that give it, every member listed under exactly one part. A
+  feature whose members all give its one instruction, in whatever detail, has no split.
 
 # OUTPUT
 {{"misfits":[{{"id":"R12","why":"…"}}],"split":null}}
