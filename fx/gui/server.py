@@ -208,7 +208,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
     def api_seed(kind: str = "guidance"):
         cb = A.seed_codebook(store, kind)
         fl = [dict(r) for r in store.rows("SELECT f.*, x.name global_name, y.name member_name FROM flag f JOIN feature x ON x.id=f.feature LEFT JOIN feature y ON y.id=f.other WHERE f.codebook=?", (cb,))]
-        return A.status(store, kind) | {"groups": A.globals_(store, kind), "open": A.open_cards(store, kind), "flags": fl, "libraries": A.libraries(store, kind)}
+        return {"status": A.status(store, kind), "groups": A.globals_(store, kind), "open": A.open_cards(store, kind), "flags": fl, "libraries": A.libraries(store, kind)}   # counts under status; the lists keep their names
 
     @app.post("/api/align/jobs")
     def api_align_job(body: dict):
