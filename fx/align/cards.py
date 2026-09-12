@@ -25,8 +25,8 @@ def cards(store: Store, kind: str, corpus: Optional[str] = None) -> list[dict]:
     out = []
     for lib in libs:
         cb = lib["codebook"]
-        sup = {int(r["feature"]): (int(r["prompts"]), int(r["k"])) for r in
-               store.rows("SELECT a.feature, SUM(r.prompts) prompts, COUNT(*) k FROM assignment a JOIN realization r ON r.id=a.realization WHERE a.codebook=? AND a.feature IS NOT NULL GROUP BY a.feature", (cb,))}
+        sup = {int(r["node"]): (int(r["prompts"]), int(r["k"])) for r in
+               store.rows("SELECT m.node, SUM(r.prompts) prompts, COUNT(*) k FROM membership m JOIN realization r ON r.id=m.unit WHERE m.kind='realization' AND m.codebook=? AND m.node IS NOT NULL GROUP BY m.node", (cb,))}
         ex_text = {int(r["id"]): r["declaration"] for r in store.rows("SELECT id, declaration FROM realization WHERE corpus=? AND kind=?", (lib["corpus"], kind))}
         for f in store.rows("SELECT f.*, g.name grp FROM feature f JOIN feature g ON g.id=f.parent WHERE f.codebook=? AND f.level='feature' ORDER BY f.id", (cb,)):
             ex = json.loads(f["examples"] or "[]")
@@ -50,5 +50,6 @@ def render_cards(rows: list[dict], ids: bool = True) -> str:
     for c in rows:
         head = f"F{c['id']} " if ids else ""
         out.append(f"{head}[{c['corpus']}] ({c['polarity']}) {c['name']}: {c['definition']}" + (f"\n      e.g. {' | '.join(a[:90] for a in c['anchors'][:3])}" if c["anchors"] else "")
-                   + f"\n      {c['support']} prompts, {c['wordings']} wordings" + (f"; variants: {', '.join(c['variants'][:4])}" if c["variants"] else ""))
+                   + f"\n      {c['support']} prompts, {c['wordings']} wordings" + (f"; variants: {', '.join(c['variants'][:4])}" if c["variants"] else "")
+                   + (f"\n      the judge removed this from S{c['judged'][0]}: {c['judged'][1] or 'no reason given'}. Put it back only if the judge is wrong; else the global it is an instance of, or null." if c.get("judged") else ""))
     return "\n".join(out) if out else "(none)"

@@ -165,7 +165,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         group = dict(store.one("SELECT * FROM feature WHERE id=?", (f["parent"],))) if f["parent"] else None
         ms = L.members(store, f["codebook"], fid, 500)
         readings = [dict(r) for r in store.rows("SELECT r.id, r.prompt, r.declaration, r.condition, s.lo, s.hi, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 200)) text, r.realization FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
-                                                "WHERE r.realization IN (SELECT realization FROM assignment WHERE codebook=? AND feature=?) ORDER BY r.prompt LIMIT 300", (f["codebook"], fid))]
+                                                "WHERE r.realization IN (SELECT unit FROM membership WHERE kind='realization' AND codebook=? AND node=?) ORDER BY r.prompt LIMIT 300", (f["codebook"], fid))]
         fl = [x for x in L.flags(store, f["codebook"]) if x["feature"] == fid or x["other"] == fid]
         lineage = []
         prev = f["prev"]
@@ -174,7 +174,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             if not r:
                 break
             lineage.append(dict(r)); prev = r["prev"]
-        al = store.one("SELECT a.global, a.note, g.name global_name FROM alignment a LEFT JOIN feature g ON g.id=a.global WHERE a.feature=?", (fid,))
+        al = store.one("SELECT m.node global, m.note, g.name global_name FROM membership m LEFT JOIN feature g ON g.id=m.node WHERE m.kind='feature' AND m.unit=?", (fid,))
         return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage, "aligned": dict(al) if al else None}
 
     @app.get("/api/library/preview")

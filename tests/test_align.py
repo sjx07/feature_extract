@@ -36,7 +36,7 @@ def seed_library(store, corpus, feats):
         sid = store.insert("span", {"prompt": pid, "path": "0", "lo": 0, "hi": 1, "kind": "atom", "note": None, "flags": "[]", "start": "", "end": "", "depth": 0})
         store.insert("reading", {"prompt": pid, "span": sid, "verb": wording.split()[0], "object": " ".join(wording.split()[1:]), "qualifier": "", "polarity": polarity, "condition": "always", "domain_terms": "[]", "declaration": wording, "realization": rid})
         fid = store.insert("feature", {"codebook": cb, "level": "feature", "parent": gid, "prev": None, "aspect": None, "name": name, "definition": definition, "polarity": polarity, "examples": [rid], "round": 0})
-        store.insert("assignment", {"realization": rid, "codebook": cb, "feature": fid, "confidence": "high", "at": "now"})
+        store.insert("membership", {"kind": "realization", "unit": rid, "codebook": cb, "node": fid, "confidence": "high", "at": "now"})
         ids[name] = fid
     return ids
 
@@ -59,7 +59,7 @@ def test_cards_vectors_and_cross_corpus_candidates(store):
     c = A.candidates(store, "guidance", tau=0.5)
     names = [sorted(m["name"] for m in cl["members"]) for cl in c["clusters"]]
     assert ["think step by step", "think step by step"] in names and ["return Cypher only", "return SQL only"] in names
-    assert c["domain_specific"] == 2                                                    # aliases, MERGE: no neighbour in the other corpus
+    assert c["specific"] == 2                                                           # aliases, MERGE: no neighbour in the other corpus
     st = A.status(store, "guidance")
     assert st["cards"] == 6 and st["domain_specific"] == 2 and st["globals"] == 0
 
@@ -77,7 +77,7 @@ def test_name_assign_judge_reopen_and_the_loop(store):
                 return reply(json.dumps({"decision": "same", "why": "", "group": {"name": "answer form", "definition": "what the answer contains", "aspect": "format"}, "name": nm, "definition": "one instruction across domains", "polarity": "require", "members": [f"F{i}" for i in ids]}))
             if "# GLOBAL FEATURES" in text:
                 ids = re.findall(r"^F(\d+) ", text, re.M); sids = re.findall(r"^  S(\d+) ", text, re.M)
-                return reply(json.dumps({"alignments": [{"id": f"F{i}", "global": None, "confidence": "high"} for i in ids]}))
+                return reply(json.dumps({"assignments": [{"id": f"F{i}", "feature": None, "confidence": "high"} for i in ids]}))
             if "# GLOBAL\n" in text:
                 return reply(json.dumps({"misfits": []}))
             return reply("{}")
@@ -88,21 +88,25 @@ def test_name_assign_judge_reopen_and_the_loop(store):
         tree = A.globals_(store, "guidance")
         g = next(s for grp in tree for s in grp["features"] if s["name"] == "return the query only")
         assert g["corpora"] == 2 and g["support"] == 6 and {m["corpus"] for m in g["members"]} == {"sql", "cypher"}
-        # the judge flags the sql member: it is reopened with the reason; the assigner puts it back: the flag stands
-        store.insert("flag", {"codebook": st["codebook"], "feature": g["id"], "realization": None, "other": a["return SQL only"], "verdict": "misfit", "note": "different", "standing": 0})
-        assert A.reopen(store, "guidance")["reopened"] == 1
-        row = store.one("SELECT global, note FROM alignment WHERE feature=?", (a["return SQL only"],))
-        assert row["global"] is None and row["note"].startswith(f"reopened:S{g['id']}|different")
+        # a global's founding members are its anchors and are never reopened; a later member is. Put 'use table aliases' on the
+        # global, flag it: it is reopened with the reason; the assigner puts it back: the flag stands
+        late = a["use table aliases"]
+        with store.lock:
+            store.con.execute("UPDATE membership SET node=?, note=NULL WHERE kind='feature' AND unit=?", (g["id"], late)); store.con.commit()
+        store.insert("flag", {"codebook": st["codebook"], "feature": g["id"], "realization": None, "other": late, "verdict": "misfit", "note": "different", "standing": 0})
+        assert A.reopen(store, "guidance")["reopened_misfits"] == 1
+        row = store.one("SELECT node, note FROM membership WHERE kind='feature' AND unit=?", (late,))
+        assert row["node"] is None and row["note"].startswith(f"reopened:{g['id']}|different")
         seen = []
         def router2(body):
             text = body["messages"][-1]["content"]; seen.append(text)
             ids = re.findall(r"^F(\d+) ", text, re.M)
-            return reply(json.dumps({"alignments": [{"id": f"F{i}", "global": f"S{g['id']}", "confidence": "high"} for i in ids]}))
+            return reply(json.dumps({"assignments": [{"id": f"F{i}", "feature": f"S{g['id']}", "confidence": "high"} for i in ids]}))
         srv.router = router2
         s2 = A.assign(store, c, "guidance", model="m", workers=1)
         assert s2["settled"] == 1 and any("the judge removed this from S" in t for t in seen)
-        assert store.one("SELECT global FROM alignment WHERE feature=?", (a["return SQL only"],))["global"] == g["id"]
-        assert store.one("SELECT standing FROM flag WHERE other=?", (a["return SQL only"],))["standing"] == 1
+        assert store.one("SELECT node FROM membership WHERE kind='feature' AND unit=?", (late,))["node"] == g["id"]
+        assert store.one("SELECT standing FROM flag WHERE other=?", (late,))["standing"] == 1
 
 
 def test_site_seed_endpoint_and_cli_status(tmp_path):

@@ -2,6 +2,18 @@
 
 Branch `stage3-align` against `main`. 59 tests (3 new, in `tests/test_align.py`, on two seeded libraries and the scripted server).
 
+## One loop, two levels
+
+Stage 2 and stage 3 ran the same algorithm on two unit types, so the loop is now written once, in `fx/loop/engine.py`,
+against a `Level` (`fx/loop/level.py`) that says what differs: the units (a corpus's wordings, or every corpus's
+features as cards), how they group for support (prompts, or corpora), how a node's vector is formed (its anchors, or
+its members), the prompt texts, and the thresholds. `fx/library` keeps collapse and the cold start and defines the
+wording level; `fx/align` keeps the cards and the seed codebook and defines the feature level; both keep their old
+function signatures as thin wrappers. One `membership` table (unit kind, unit, codebook → node) and one `embedding`
+table replace `assignment`/`alignment` and `vector`/`fvector`, which are copied into them on open and left in place.
+The thirteen step modules of the two packages (1,057 lines) became the engine and two level files (665 lines); the
+59 tests are unchanged in what they check.
+
 ## What it does
 
 The stage 2 loop one level up. The units are the per-corpus features of every library of a kind, each read as a
@@ -31,8 +43,8 @@ v5 never had).
 
 ## Store
 
-`alignment` (feature → global, note: domain-specific / named / reopened:S<id>|why), `fvector`; the seed codebook and
-its globals in `codebook` and `feature`; flags on globals in `flag` with `other` = the member.
+`membership` with kind `feature` (per-corpus feature → global, note: specific / named / reopened:<id>|why), `embedding`
+with kind `feature`; the seed codebook and its globals in `codebook` and `feature`; flags on globals in `flag` with `other` = the member.
 
 ## Site
 

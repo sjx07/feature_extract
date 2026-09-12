@@ -123,7 +123,7 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         assert cands["open"] >= 5 and len(cands["clusters"]) == 1 and cands["specific"] >= 1
         members = {d["declaration"] for d in cands["clusters"][0]["members"]}
         assert {"keep the answer short", "keep the answer brief", "keep your answer short"} <= members
-        assert store.one("SELECT note FROM assignment WHERE realization=?", (ids["cite the source table"],))["note"] == "specific"
+        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (ids["cite the source table"],))["note"] == "specific"
         m = cands["clusters"][0]["members"]
         srv.router = lambda body: reply(json.dumps({"decision": "feature", "why": "", "parent": None, "group": {"name": "answer length", "definition": "how long the answer is", "aspect": "answer"},
                                                    "name": "keep the answer short", "definition": "the answer is brief", "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}))
@@ -131,12 +131,12 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         assert n["features"] == 1 and n["groups"] == 1 and n["assigned"] == len(m)
         tree = L.groups(store, cb)
         assert tree[-1]["name"] == "answer length" and tree[-1]["features"][0]["round"] == 1 and tree[-1]["features"][0]["support"] >= 3
-        assert store.one("SELECT note FROM assignment WHERE realization=?", (m[0]["id"],))["note"] == "named"
+        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
         assert L.candidates(store, cb, "c", "guidance", tau=0.5)["clusters"] == []                                    # nothing left together
         # a variant: the naming call may narrow an existing feature instead
         srv.router = lambda body: reply(json.dumps({"decision": "variant", "why": "", "parent": f"F{f_think['id']}", "group": None, "name": "briefly", "definition": "stepwise but brief", "polarity": "require", "examples": [], "members": [f"R{d['id']}" for d in m]}))
         with store.lock:
-            store.con.execute("UPDATE assignment SET feature=NULL, note=NULL WHERE codebook=? AND note='named'", (cb,)); store.con.commit()
+            store.con.execute("UPDATE membership SET node=NULL, note=NULL WHERE kind='realization' AND codebook=? AND note='named'", (cb,)); store.con.commit()
         n = L.name(store, c, "c", "guidance", cb, [{"members": m, "prompts": 4}], round_=2, model="m", workers=1)
         assert n["variants"] == 1
         tree = L.groups(store, cb)
@@ -163,7 +163,7 @@ def test_round_runs_the_growing_loop(store):
         srv.router = router
         logged = []
         r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, min_yield=1, encoder=fake_encoder, log=lambda n, res: logged.append(n))
-        assert logged[:7] == ["collapse", "embed", "coldstart", "assign", "judge", "reopen", "cluster"] and "name" in logged and "reopen" != logged[-1]        # the loop never ends on a reopen
+        assert logged[:7] == ["collapse", "coldstart", "embed", "assign", "judge", "reopen", "cluster"] and "name" in logged and "reopen" != logged[-1]        # the loop never ends on a reopen
         assert r["stopped_because"].startswith("settled")
         v = r["versions"][0]
         assert v["features"] == 4 and v["rounds"] == 1 and v["specific"] >= 1 and v["assigned"] >= 4
@@ -177,7 +177,7 @@ def test_site_library_endpoints_and_job(tmp_path):
     with FakeServer() as srv:
         import fx.gui.server as srvmod
         srvmod.Client = lambda store, **kw: Client(store, base_url=srv.url)
-        sys.modules["fx.library.embed"].encoder = lambda model=None: fake_encoder      # the package attribute `embed` is the function; the module is in sys.modules
+        sys.modules["fx.library.encoders"].encoder = lambda model=None: fake_encoder      # the package attribute `embed` is the function; the module is in sys.modules
         c = TestClient(make_app(ws, store))
         L.collapse(store, "c", "guidance"); srv.script = [cb_reply(store)]
         r = c.post("/api/library/jobs", json={"corpus": "c", "kind": "guidance", "step": "coldstart", "model": "m"}).json()
@@ -209,8 +209,8 @@ def test_reopen_sends_the_judgement_to_the_assigner_who_adjudicates(store):
         store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": ids["return prose"], "other": None, "verdict": "misfit", "note": "not reasoning", "standing": 0})
         r = L.reopen(store, cb)
         assert r["reopened_misfits"] == 1
-        a = store.one("SELECT feature, note FROM assignment WHERE realization=?", (ids["return prose"],))
-        assert a["feature"] is None and a["note"] == f"reopened:F{f_think['id']}|not reasoning"
+        a = store.one("SELECT node feature, note FROM membership WHERE kind='realization' AND unit=?", (ids["return prose"],))
+        assert a["feature"] is None and a["note"] == f"reopened:{f_think['id']}|not reasoning"
         seen = []
         def router(body):
             text = body["messages"][-1]["content"]; seen.append(text)
@@ -219,7 +219,7 @@ def test_reopen_sends_the_judgement_to_the_assigner_who_adjudicates(store):
         a2 = L.assign(store, c, "c", "guidance", model="m", workers=1, only_open=True, shortlist=False)   # the assigner sees the reason and puts it back: the flag is standing
         assert any("the judge removed this from F" in t and "not reasoning" in t for t in seen)
         assert a2.get("settled") == 1
-        assert store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] == f_think["id"]
+        assert store.one("SELECT node feature FROM membership WHERE kind='realization' AND unit=?", (ids["return prose"],))["feature"] == f_think["id"]
         assert store.one("SELECT standing FROM flag WHERE realization=?", (ids["return prose"],))["standing"] == 1
         assert L.reopen(store, cb)["reopened_misfits"] == 0
 
@@ -240,9 +240,9 @@ def test_a_repeated_flag_is_standing_and_not_reopened(store):
         assert j1["new"] == 1 and j1["standing"] == 0
         assert L.reopen(store, cb)["reopened_misfits"] == 1                              # first time: acted on
         with store.lock:                                                                  # nothing else fits: it goes back where it was
-            store.con.execute("UPDATE assignment SET feature=?, note=NULL WHERE realization=?", (f_think["id"], ids["return prose"])); store.con.commit()
+            store.con.execute("UPDATE membership SET node=?, note=NULL WHERE kind='realization' AND unit=?", (f_think["id"], ids["return prose"])); store.con.commit()
         j2 = L.judge(store, c, "c", "guidance", model="m", workers=1)
         assert j2["new"] == 0 and j2["standing"] == 1
         assert L.reopen(store, cb)["reopened_misfits"] == 0                              # second time: standing, the member stays
-        assert store.one("SELECT feature FROM assignment WHERE realization=?", (ids["return prose"],))["feature"] == f_think["id"]
+        assert store.one("SELECT node feature FROM membership WHERE kind='realization' AND unit=?", (ids["return prose"],))["feature"] == f_think["id"]
         assert L.status(store, "c", "guidance")["versions"][0]["standing"] == 1
