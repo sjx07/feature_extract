@@ -80,7 +80,8 @@ def reopen(store: Store, lv: Level) -> dict:
             todo.append((int(r["feature"]), int(r["m"]), (r["note"] or "")[:200], "misfit"))
     for r in store.rows("SELECT feature, note FROM flag WHERE codebook=? AND verdict='split' AND standing=0", (lv.codebook,)):
         n = json.loads(r["note"] or "{}")
-        for part in n.get("parts", []):
+        parts = sorted(n.get("parts", []), key=lambda pt: -len(pt.get("members", [])))
+        for part in parts[1:]:                                    # the largest part keeps the node; the others go open to be named
             for m in part.get("members", []):
                 if (int(r["feature"]), int(m)) not in anchor_set:
                     todo.append((int(r["feature"]), int(m), f"the judge sees a distinct sub-feature here ({part.get('name', '')}): {n.get('why', '')}"[:200], "split"))
