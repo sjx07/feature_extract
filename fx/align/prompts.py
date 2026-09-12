@@ -49,8 +49,11 @@ of them, from at least two different domains, give one instruction that the seed
 {what}
 
 # HOW TO ANSWER "same"
-- name: a short imperative phrase without domain words ("generate a valid query", not "generate a valid SQL query").
-- definition: one sentence a reader could test any domain's feature against.
+- name: a short imperative phrase without domain words ("generate a valid query", not "generate a valid SQL query"),
+  as narrow as the members allow: the verb and the object they all give. If they share only a topic (queries, format,
+  reasoning) and not one instruction, the answer is "reject", however close retrieval put them. A global that could
+  cover half a domain's features is a topic, not an instruction.
+- definition: one sentence a reader could test any domain's feature against, stating the instruction and nothing wider.
 - polarity: require or forbid.
 - members: the ids of the features that give this exact instruction. Leave out a feature that adds a rule, drops one, or
   says something else, even the one under study. Members must come from at least two domains; the same domain saying
@@ -78,7 +81,9 @@ feature without seeing the others. You see them all, beside the SEED LIBRARY. De
 {what}
 
 # FOR EACH PROPOSAL, one verdict
-- "new": neither the seed nor another proposal gives this instruction; it becomes a global as proposed.
+- "new": neither the seed nor another proposal gives this instruction; it becomes a global as proposed. A proposal
+  whose definition is a topic rather than one instruction (it could cover half a domain's features) gets the verdict
+  "topic" and is dropped; its members stay open.
 - "existing": it gives the same instruction as seed global S (domain words aside; same polarity). Give "feature": its
   members go onto S and no global is made. A narrower instruction (S plus a rule) is not the same: it stays new.
 - "duplicate": it gives the same instruction as another proposal P. Give "of": that proposal must be "new"; the two
@@ -89,7 +94,7 @@ folds into the older) or "two" (two instructions; the report is dismissed).
 Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"S12","of":"P3"}}],"pairs":[{{"id":"Q1","verdict":"same|two"}}]}}
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate|topic","feature":"S12","of":"P3"}}],"pairs":[{{"id":"Q1","verdict":"same|two"}}]}}
 
 # SEED LIBRARY
 {globals}
@@ -104,6 +109,29 @@ Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 def join_prompt(groups: list[dict], proposals_text: str, pairs_text: str = "(none)") -> str:
     return JOIN.format(what=_WHAT, globals=render_globals(groups), proposals=proposals_text, pairs=pairs_text)
+
+
+JUDGE_SIBLINGS = """# TASK
+The GLOBAL features of one seed group, one polarity, each with its definition and a sample of its members (per-corpus
+features with a wording each). Say which pairs cannot be told apart by their definitions and members: a reader could not
+decide which of the two a new feature is an instance of. A broad global beside a narrow one that it covers counts as such
+a pair. Report only; nothing is changed by your reply.
+
+# OUTPUT
+{{"indistinct":[{{"a":"S3","b":"S7","why":"…"}}]}}
+
+# GROUP
+{group}
+"""
+
+
+def judge_siblings(group: dict, samples: dict[int, list[dict]]) -> str:
+    lines = [f"G{group['id']} {group['name']}: {group.get('definition') or ''}"]
+    for s in group["features"]:
+        lines.append(f"  S{s['id']} ({s['polarity']}) {s['name']}: {s.get('definition') or ''}")
+        for m in samples.get(s["id"], []):
+            lines.append(f"      F{m['id']} [{m['corpus']}] {m['name']}: {(m.get('anchors') or [''])[0][:80]}")
+    return JUDGE_SIBLINGS.format(group="\n".join(lines))
 
 
 JUDGE = """# TASK

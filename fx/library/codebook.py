@@ -76,7 +76,7 @@ def write_codebook(store: Store, cb: int, obj: dict, kind: str, realization_ids:
 def _codebook_schema() -> dict:
     """The COLDSTART reply shape, closed objects."""
     feat = {"name": {"type": "string"}, "definition": {"type": "string"}, "polarity": {"type": "string", "enum": ["require", "forbid"]},
-            "examples": {"type": "array", "items": {"type": "string"}}}
+            "examples": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 5}}     # a feature without a cited wording has no anchor; a fresh text2cypher listing came back with none
     grp = {"name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"}}
     fschema = {"type": "object", "properties": feat, "required": list(feat), "additionalProperties": False}
     gschema = {"type": "object", "properties": {**grp, "features": {"type": "array", "items": fschema}}, "required": list(grp) + ["features"], "additionalProperties": False}

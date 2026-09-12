@@ -8,6 +8,8 @@ terminal shows on the site's job page, and a run started on the site has the sam
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
+import os
 import logging
 import threading
 import traceback
@@ -20,7 +22,37 @@ from .store import Store, now
 log = logging.getLogger("fx.jobs")
 
 
+def alive(pid: Optional[int]) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def reap(store: Store) -> int:
+    """Rows still 'running' whose process is gone become 'lost' (a job killed from outside never closes its row); rows from
+    before pids were recorded are lost after twelve hours."""
+    n = 0
+    with store.lock:
+        for r in store.con.execute("SELECT id, params, started FROM job WHERE status='running'").fetchall():
+            params = json.loads(r["params"] or "{}")
+            pid = params.get("pid")
+            stale = alive(pid) is False if pid else (r["started"] or "") < (datetime.now() - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+            if stale:
+                n += store.con.execute("UPDATE job SET status='lost', error=?, finished=? WHERE id=? AND status='running'",
+                                       (f"process {pid} is gone; the row never closed" if pid else "no process recorded; the row never closed", now(), r["id"])).rowcount
+        store.con.commit()
+    return n
+
+
 def start(store: Store, ws: Workspace, kind: str, corpus: Optional[str], model: str, params: dict, total: int) -> int:
+    reap(store)
+    params = params | {"pid": os.getpid()}
     jid = store.insert("job", {"kind": kind, "corpus": corpus, "model": model, "params": params, "status": "running", "total": total, "started": now(), "recent": []})
     with open(ws.job_log(jid), "a") as fh:
         fh.write(f"{now()} job {jid} {kind} corpus={corpus} model={model} total={total} params={json.dumps(params)}\n")

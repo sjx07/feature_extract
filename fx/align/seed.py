@@ -107,5 +107,14 @@ def status(store: Store, kind: str) -> dict:
             d["aligned"] += 1; d["aligned_support"] += c["support"]
         elif c in ds:
             d["domain_specific"] += 1
+    # concentration: the share of a corpus's features one global holds; job 39's buckets held a fifth of text2sql's. A read, not a rule
+    by_global: dict = {}
+    for c in aligned:
+        by_global.setdefault(int(have[c["id"]]["node"]), {}).setdefault(c["corpus"], 0)
+        by_global[int(have[c["id"]]["node"])][c["corpus"]] += 1
+    names = {int(r["id"]): r["name"] for r in store.rows("SELECT id, name FROM feature WHERE codebook=? AND level='feature'", (cb,))}
+    conc = sorted(({"global": names.get(gid, str(gid)), "corpus": corpus, "members": n, "share": round(n / max(per_corpus[corpus]["features"], 1), 3)}
+                   for gid, per in by_global.items() for corpus, n in per.items()), key=lambda x: -x["share"])[:10]
     return {"kind": kind, "codebook": cb, "cards": len(cs), "aligned": len(aligned), "domain_specific": len(ds), "open": len(cs) - len(aligned) - len(ds),
-            "globals": int(g["f"] or 0), "groups": int(g["g"] or 0), "rounds": int(g["r"] or 0), "flags": int(fl["k"]), "standing": int(fl["s"]), "per_corpus": per_corpus}
+            "globals": int(g["f"] or 0), "groups": int(g["g"] or 0), "rounds": int(g["r"] or 0), "flags": int(fl["k"]), "standing": int(fl["s"]), "per_corpus": per_corpus,
+            "concentration": conc}
