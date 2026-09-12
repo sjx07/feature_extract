@@ -172,7 +172,7 @@ async function viewFeature(main, fid) {
 /* ---------- Ingest: corpora, import, profiles, jobs ---------- */
 const STAGE = { done: 'done', partial: 'part', none: '', running: 'run' };
 const strip = st => `<span class="strip">${st.map(x => `<i class="${STAGE[x] || ''}" title="${x}"></i>`).join('')}</span>`;
-const jstatus = s => `<span class="status ${s === 'running' ? 'run' : s === 'done' ? 'done' : s === 'failed' ? 'fail' : 'look'}">${esc(s)}</span>`;
+const jstatus = s => `<span class="status ${s === 'running' ? 'run' : s === 'done' ? 'done' : s === 'failed' || s === 'stale' ? 'fail' : 'look'}">${esc(s)}</span>`;
 async function viewIngest(main, sub, q) {
   const d = await api('/api/ingest');
   const tabs = ['corpora', 'import', 'profiles', 'jobs'].map(t => `<a href="#/ingest/${t}" class="${t === sub ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</a>`).join('');
@@ -210,7 +210,8 @@ async function viewIngest(main, sub, q) {
       <div style="margin-top:12px"><button class="btn quiet" type="submit">save</button> ${cur.name !== 'default' && q.profile !== '__new' ? `<a href="#" id="pdel" class="muted" style="margin-left:14px;font-size:12px">delete</a>` : ''} <span id="pstat" class="muted" style="font-size:12px"></span></div></form></div>`;
   } else {
     body = `<h1>Jobs</h1><table class="list" style="max-width:860px"><tr><th>job</th><th>corpus</th><th>stage</th><th class="n">progress</th><th class="n">status</th><th class="n">spent</th></tr>
-      ${d.jobs.map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind)}</td><td>${esc(j.corpus || '')}</td><td class="muted">${esc(j.params.stage || j.params.kind || '')}</td><td class="n">${j.total ? `${fmt(j.done)} / ${fmt(j.total)}` : ''}</td><td class="n">${jstatus(j.status)}</td><td class="n">$${(j.spent || 0).toFixed(2)}</td></tr>`).join('') || '<tr><td class="muted">none yet</td></tr>'}</table>`;
+      ${d.jobs.map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind)}</td><td>${esc(j.corpus || '')}</td><td class="muted">${esc(j.params.stage || j.params.kind || '')}</td><td class="n">${j.total ? `${fmt(j.done)} / ${fmt(j.total)}` : ''}</td><td class="n">${jstatus(j.status)}${j.status === 'stale' ? ` <a href="#" class="muted close" data-id="${j.id}" title="the process that ran it is gone; mark it stopped">close</a>` : ''}</td><td class="n">$${(j.spent || 0).toFixed(2)}</td></tr>`).join('') || '<tr><td class="muted">none yet</td></tr>'}</table>
+      <p class="muted" style="font-size:12.5px">stale: marked running, but its log has not been written for ${20} minutes, so the process that ran it is gone.</p>`;
   }
   main.innerHTML = `<div class="sub">${tabs}</div>${body}`;
   if (sub === 'corpora') {
@@ -221,6 +222,8 @@ async function viewIngest(main, sub, q) {
     main.querySelectorAll('form.cedit').forEach(f => { const name = f.closest('tr').previousElementSibling.dataset.c, st = f.querySelector('.cstat');
       f.onsubmit = async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(f)); try { await post(`/api/corpus/${encodeURIComponent(name)}/retag`, { domain: v.domain }); if (v.name !== name) await post(`/api/corpus/${encodeURIComponent(name)}/rename`, { name: v.name }); route(); } catch (err) { st.textContent = err.message; } };
       f.querySelector('.del').onclick = async e => { e.preventDefault(); const a = e.target; if (a.textContent !== 'sure? this removes its prompts, codebook and alignment') { a.textContent = 'sure? this removes its prompts, codebook and alignment'; return; } try { await api(`/api/corpus/${encodeURIComponent(name)}`, { method: 'DELETE' }); route(); } catch (err) { st.textContent = err.message; } }; });
+  } else if (sub === 'jobs') {
+    main.querySelectorAll('a.close').forEach(a => a.onclick = async e => { e.preventDefault(); await post(`/api/jobs/${a.dataset.id}/close`, {}); route(); });
   } else if (sub === 'import') {
     const drop = $('#drop'), file = $('#file'), nameIn = $('#iform input[name=name]');
     drop.onclick = () => file.click();

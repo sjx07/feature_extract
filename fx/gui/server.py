@@ -242,7 +242,18 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
     @app.get("/api/ingest")
     def api_ingest(kind: str = "guidance"):
         js = [dict(r) | {"params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT id, kind, corpus, model, status, done, total, spent, started, finished, params FROM job ORDER BY id DESC LIMIT 40")]
-        return {"corpora": I.corpora(store, kind), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+        live = {j["id"]: j["live"] for j in I.running_jobs(store, ws)}
+        for j in js:
+            if j["status"] == "running" and not live.get(j["id"], True):
+                j["status"] = "stale"
+        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+
+    @app.post("/api/jobs/{jid}/close")
+    def api_job_close(jid: int):
+        """A row left running by a process that died: closed by hand from the jobs page."""
+        if jid in running:
+            raise HTTPException(409, "this job is running in this server; stop it instead")
+        return I.close_job(store, jid)
 
     @app.post("/api/corpus/{name}/rename")
     def api_corpus_rename(name: str, body: dict):
@@ -301,7 +312,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             raise HTTPException(404, "no such profile")
         names = body.get("corpora") or []
         if names == "pending" or body.get("pending"):
-            names = [c["name"] for c in I.corpora(store, kind) if c["pending"] and not c["running"]]
+            names = [c["name"] for c in I.corpora(store, kind, ws) if c["pending"] and not c["running"]]
         names = [n for n in names if n not in running_corpora()]
         if not names:
             raise HTTPException(400, "nothing to run")

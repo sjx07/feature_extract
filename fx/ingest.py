@@ -53,9 +53,38 @@ def delete_profile(store: Store, name: str) -> None:
         store.con.execute("DELETE FROM profile WHERE name=?", (name,)); store.con.commit()
 
 
+# ---- jobs that are alive, and rows left 'running' by a process that died
+STALE_MINUTES = 20
+
+
+def running_jobs(store: Store, ws=None, stale_minutes: int = STALE_MINUTES) -> list[dict]:
+    """Every job row marked running, with `live`: its log was written within the last stale_minutes (a step in flight writes
+    a line per prompt or batch; a single long call can go quiet for a few minutes, a dead process for good)."""
+    import os
+    import time
+    out = []
+    for r in store.rows("SELECT id, kind, corpus, started FROM job WHERE status='running'"):
+        d = dict(r); age = None
+        if ws is not None:
+            p = ws.job_log(int(r["id"]))
+            if p.exists():
+                age = (time.time() - os.path.getmtime(p)) / 60
+        d["idle_minutes"] = round(age, 1) if age is not None else None
+        d["live"] = age is not None and age < stale_minutes if ws is not None else True
+        out.append(d)
+    return out
+
+
+def close_job(store: Store, jid: int, why: str = "closed by hand: no progress, the process that ran it is gone") -> dict:
+    with store.lock:
+        n = store.con.execute("UPDATE job SET status='stopped', error=?, finished=? WHERE id=? AND status='running'", (why, now(), jid)).rowcount
+        store.con.commit()
+    return {"id": jid, "closed": bool(n)}
+
+
 # ---- corpora with their stage strip
-def corpora(store: Store, kind: str = "guidance") -> list[dict]:
-    running = {r["corpus"]: r["kind"] for r in store.rows("SELECT corpus, kind FROM job WHERE status='running'")}
+def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
+    running = {j["corpus"]: j["kind"] for j in running_jobs(store, ws) if j["live"]}
     seed = store.one("SELECT c.id FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE k.name=? AND c.kind=?", (SEED, kind))
     out = []
     for c in store.rows("SELECT id, name, source, at FROM corpus WHERE name != ? ORDER BY name", (SEED,)):

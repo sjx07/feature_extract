@@ -125,3 +125,17 @@ def test_site_ingest_endpoints(tmp_path, monkeypatch):
     assert c.post("/api/ingest/run", json={"corpora": [], "profile": "cheap"}).status_code == 400
     assert c.delete("/api/corpus/sql").json()["prompts"] == 1 and c.delete("/api/corpus/sql").status_code == 404
     assert c.post("/api/prompts/delete", json={"ids": [store.one("SELECT id FROM prompt")["id"]]}).json()["deleted"] == 1
+
+
+def test_a_running_row_whose_log_went_quiet_is_stale_not_running(tmp_path):
+    import os
+    import time
+    ws = Workspace(tmp_path / "ws"); store = Store(ws.store_path)
+    import_text(store, "a prompt", name="c1")
+    jid = jobs.start(store, ws, "decompose", "c1", "m", {}, 1)
+    assert I.running_jobs(store, ws)[0]["live"] and I.corpora(store, ws=ws)[0]["running"] == "decompose"
+    old = time.time() - 3600
+    os.utime(ws.job_log(jid), (old, old))
+    j = I.running_jobs(store, ws)[0]
+    assert not j["live"] and j["idle_minutes"] > 50 and I.corpora(store, ws=ws)[0]["running"] is None
+    assert I.close_job(store, jid)["closed"] and store.one("SELECT status FROM job WHERE id=?", (jid,))["status"] == "stopped" and not I.close_job(store, jid)["closed"]
