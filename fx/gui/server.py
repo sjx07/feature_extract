@@ -23,6 +23,7 @@ from .. import library as L
 from .. import align as A
 from .. import cube as C
 from .. import settings as S
+from .. import ingest as I
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -233,8 +234,102 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     # ---- the cube: the Library side, readings × prompt fields × the seed's hierarchy
     @app.get("/api/cube")
-    def api_cube(request: Request, kind: str = "guidance"):
-        return C.slice(store, kind, C.parse_filters(dict(request.query_params)))
+    def api_cube(request: Request, kind: str = "guidance", view: str = "features", limit: int = 300):
+        f = C.parse_filters(dict(request.query_params))
+        return C.prompts(store, kind, f, limit) if view == "prompts" else C.slice(store, kind, f)
+
+    # ---- ingest: corpora kept, profiles, one run through the stages
+    @app.get("/api/ingest")
+    def api_ingest(kind: str = "guidance"):
+        js = [dict(r) | {"params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT id, kind, corpus, model, status, done, total, spent, started, finished, params FROM job ORDER BY id DESC LIMIT 40")]
+        return {"corpora": I.corpora(store, kind), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+
+    @app.post("/api/corpus/{name}/rename")
+    def api_corpus_rename(name: str, body: dict):
+        try:
+            return I.rename(store, name, str(body.get("name") or ""))
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/corpus/{name}/retag")
+    def api_corpus_retag(name: str, body: dict):
+        try:
+            return I.retag(store, name, body.get("domain"), body.get("tags") or None)
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    @app.delete("/api/corpus/{name}")
+    def api_corpus_delete(name: str):
+        if name in {j for j in running_corpora()}:
+            raise HTTPException(409, "a job is running on this corpus; stop it first")
+        try:
+            return I.delete(store, name)
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    def running_corpora():
+        return [r["corpus"] for r in store.rows("SELECT corpus FROM job WHERE status='running'")]
+
+    @app.post("/api/prompts/delete")
+    def api_prompts_delete(body: dict):
+        return I.delete_prompts(store, [str(x) for x in (body.get("ids") or [])])
+
+    @app.get("/api/profiles")
+    def api_profiles():
+        return I.profiles(store)
+
+    @app.post("/api/profiles")
+    def api_profile_save(body: dict):
+        try:
+            return I.save_profile(store, str(body.get("name") or ""), body.get("params") or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/profiles/{name}")
+    def api_profile_delete(name: str):
+        I.delete_profile(store, name); return {"ok": True}
+
+    @app.post("/api/ingest/run")
+    def api_ingest_run(body: dict):
+        """One job per corpus, run one after another in one thread under one profile; 'pending' means every corpus with a stage to do."""
+        kind = body.get("kind") or "guidance"
+        try:
+            prof = I.profile(store, body.get("profile") or "default")
+        except KeyError:
+            raise HTTPException(404, "no such profile")
+        names = body.get("corpora") or []
+        if names == "pending" or body.get("pending"):
+            names = [c["name"] for c in I.corpora(store, kind) if c["pending"] and not c["running"]]
+        names = [n for n in names if n not in running_corpora()]
+        if not names:
+            raise HTTPException(400, "nothing to run")
+        budget = float(prof.get("budget") or 0) or float("inf")
+        jids = []
+        for n in names:
+            jids.append(jobs.start(store, ws, "profile", n, prof.get("batch_model") or DEFAULT_MODEL, {"profile": body.get("profile") or "default", "kind": kind, "stage": "queued", "from": "gui"} | {k: prof[k] for k in ("decompose_model", "codebook_model", "batch_model", "workers", "effort")}, 0))
+        stop = threading.Event()
+        for jid in jids:
+            running[jid] = stop
+
+        def work():
+            for n, jid in zip(names, jids):
+                if stop.is_set():
+                    jobs.finish(store, ws, jid, "stopped"); running.pop(jid, None); continue
+                client = Client(store, budget=budget, base_url=prof.get("base_url") or None, max_connections=int(prof.get("workers") or 128) + 64)
+                jobs.run_profile(store, ws, client, jid, n, prof, kind=kind, stop=stop)
+                running.pop(jid, None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"ids": jids, "corpora": names}
+
+    @app.get("/api/jobs/{jid}/stages")
+    def api_job_stages(jid: int):
+        r = store.one("SELECT corpus, params FROM job WHERE id=?", (jid,))
+        if not r:
+            raise HTTPException(404, "no such job")
+        return I.stages(store, r["corpus"], json.loads(r["params"] or "{}").get("kind") or "guidance")
 
     @app.get("/api/cube/node/{fid}")
     def api_cube_node(request: Request, fid: int, kind: str = "guidance"):

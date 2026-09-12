@@ -16,7 +16,7 @@ select,input[type=text],input[type=number],textarea{background:var(--panel);colo
 .top .brand{font-family:var(--serif);font-size:17px;font-weight:600;color:var(--ink);padding-bottom:12px}
 .top nav{display:flex;gap:4px}.top nav a{padding:6px 12px 12px;color:var(--muted);font-size:15px;border-bottom:3px solid transparent;margin-bottom:-1px}
 .top nav a.on{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}.top nav a:hover{text-decoration:none;color:var(--ink)}
-.top .right{margin-left:auto;font-size:12.5px;color:var(--muted);padding-bottom:12px}
+.top .right{margin-left:auto;display:flex;gap:16px;align-items:center;font-size:12.5px;color:var(--muted);padding-bottom:12px}.top .right a{color:var(--muted)}.top .right a.on,.top .right a:hover{color:var(--ink)}
 main{padding:26px 32px 60px}
 h1{font-family:var(--serif);font-size:28px;font-weight:500;margin:0 0 6px;line-height:1.15}
 .lede{font-family:var(--serif);font-size:16px;font-style:italic;color:var(--ink2);max-width:80ch;margin:0 0 18px}
@@ -90,3 +90,19 @@ table.list td.n{text-align:right;white-space:nowrap;color:var(--muted)}
 .crumb{font-size:12.5px;color:var(--muted);margin-bottom:8px}.crumb a{margin-right:4px}
 .kv{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 16px;font-size:13px;align-items:baseline;max-width:760px}.kv .k{color:var(--muted)}
 .ok{color:#2E7D4F}:root[data-theme="dark"] .ok{color:#7BCF9A}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .ok{color:#7BCF9A}}
+
+/* the two views */
+.sub{display:flex;gap:4px;margin:-26px -32px 22px;padding:0 32px;background:var(--panel);border-bottom:1px solid var(--rule)}.sub a{padding:9px 12px;font-size:13.5px;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}.sub a.on{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}.sub a:hover{text-decoration:none;color:var(--ink)}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:3px;overflow:hidden;font-size:13px}.seg a{padding:5px 14px;color:var(--muted);background:var(--panel)}.seg a.on{background:var(--ink);color:var(--ground)}.seg a:hover{text-decoration:none}
+.search input{width:100%;font-size:13px;padding:7px 10px;margin-bottom:12px}
+.tnode.leaf.plain{grid-template-columns:minmax(0,1fr) 70px;border-left:1px solid var(--rule);padding:6px 10px;font-size:13.5px}.tnode.leaf.plain .read{font-family:var(--sans)}
+.tnode.leaf.plain .cnt{font-size:12.5px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}.tnode.leaf.plain .def{color:var(--muted);font-size:12.5px}.tnode.leaf.plain .mem{margin-top:4px;font-size:12.5px}
+.tree .tnode.section>summary .muted{font-size:12px}
+.strip{display:inline-flex;gap:3px;vertical-align:middle}.strip i{display:inline-block;width:30px;height:9px;border-radius:2px;background:var(--rule)}.strip i.done{background:#2E7D4F}.strip i.part{background:var(--gap)}.strip i.run{background:var(--accent)}
+.status{display:inline-block;font:600 10.5px/1.6 var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:0 6px;border-radius:3px;background:var(--rule2);color:var(--muted)}
+.status.run{background:var(--accent-soft);color:var(--accent)}.status.done{background:#DFF0E5;color:#2E7D4F}.status.look{background:var(--gap-soft);color:var(--gap)}.status.fail{background:var(--err-soft);color:var(--err)}
+:root[data-theme="dark"] .status.done,:root[data-theme="dark"] .strip i.done{background:#1F3A2A;color:#7BCF9A}@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .status.done{background:#1F3A2A;color:#7BCF9A}:root:not([data-theme="light"]) .strip i.done{background:#3E8A5C}}
+.stage{border-top:1px solid var(--rule);padding:18px 0}.stage .h{display:flex;gap:14px;align-items:baseline;margin-bottom:8px;flex-wrap:wrap}.stage .h b{font-size:15px;font-weight:600}
+.log{font:12px/1.7 var(--mono);color:var(--ink2);background:var(--panel);border:1px solid var(--rule);padding:10px 14px;white-space:pre-wrap;max-height:50vh;overflow:auto;margin:0}
+.fchips{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}.fchips .corp{margin:0}
+tr.editor td{background:var(--panel)}

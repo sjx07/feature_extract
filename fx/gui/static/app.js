@@ -1,4 +1,4 @@
-/* feature_extract GUI: corpora (import, run), prompts, one prompt, queues. Everything reads the store through /api. */
+/* feature_extract GUI: two views, Library (the slice: prompts | features) and Ingest (corpora, import, profiles, jobs), plus settings. Everything reads the store through /api. */
 'use strict';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -11,109 +11,94 @@ const unknown = (v, what = 'unknown') => (v == null || v === '' ? `<span class="
 let ES = null;
 const pol = p => `<span class="pol ${p === 'forbid' ? 'forbid' : ''}">${p === 'forbid' ? 'must not' : 'must'}</span>`;
 
-function parseHash() { const h = location.hash.slice(1) || '/corpora'; const [path, qs] = h.split('?'); return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) }; }
+function parseHash() { const h = location.hash.slice(1) || '/library'; const [path, qs] = h.split('?'); return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) }; }
+const GEAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg>';
 async function route() {
-  const { parts, q } = parseHash(); const view = parts[0] || 'corpora';
-  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library'], ['seed', 'Seed'], ['cube', 'Cube'], ['settings', 'Settings']].map(([k, l]) => `<a href="${href('/' + k, k === 'cube' || k === 'settings' ? {} : { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') || (k === 'cube' && view === 'node') ? 'on' : ''}" ${k === 'cube' ? 'style="margin-left:18px"' : ''}>${l}</a>`).join('');
+  const { parts, q } = parseHash(); const view = parts[0] || 'library';
+  const lib = ['library', 'node', 'prompt', 'feature'].includes(view), ing = ['ingest', 'job'].includes(view);
+  $('#nav').innerHTML = `<a href="#/library" class="${lib ? 'on' : ''}">Library</a><a href="#/ingest" class="${ing ? 'on' : ''}">Ingest</a>`;
+  $('#gear').innerHTML = `<a href="#/settings" class="${view === 'settings' ? 'on' : ''}" title="settings">${GEAR}</a>`;
   if (ES) { ES.close(); ES = null; }
   const main = $('#main'); main.innerHTML = '<div class="loading">loading</div>'; window.scrollTo(0, 0);
   try {
     api('/api/spend').then(s => { $('#spend').textContent = `spent $${s.total.toFixed(2)}`; }).catch(() => {});
-    if (view === 'corpora') await viewCorpora(main, q);
-    else if (view === 'prompts') await viewPrompts(main, q);
-    else if (view === 'prompt') await viewPrompt(main, decodeURIComponent(parts.slice(1).join('/')));
-    else if (view === 'queues') await viewQueues(main, q);
-    else if (view === 'job') await viewJob(main, +parts[1]);
-    else if (view === 'library') await viewLibrary(main, q);
-    else if (view === 'seed') await viewSeed(main, q);
-    else if (view === 'feature') await viewFeature(main, +parts[1]);
-    else if (view === 'cube') await viewCube(main, q);
+    if (view === 'library') await viewLibrary(main, q);
     else if (view === 'node') await viewNode(main, +parts[1], q);
+    else if (view === 'prompt') await viewPrompt(main, decodeURIComponent(parts.slice(1).join('/')));
+    else if (view === 'feature') await viewFeature(main, +parts[1]);
+    else if (view === 'ingest') await viewIngest(main, parts[1] || 'corpora', q);
+    else if (view === 'job') await viewJob(main, +parts[1]);
     else if (view === 'settings') await viewSettings(main, q);
     else main.innerHTML = '<p>No such page.</p>';
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; console.error(e); }
 }
+window.addEventListener('hashchange', route);
+route();
 
-/* ---------- corpora: import and run ---------- */
-async function viewCorpora(main, q) {
-  const [cs, jobs, ms] = await Promise.all([api('/api/corpora'), api('/api/jobs'), api('/api/models')]);
-  const sel = q.corpus || (cs[0] && cs[0].name) || '';
-  main.innerHTML = `<div class="split"><div>
-    <h1>Corpora</h1>
-    <p class="lede">Drop a FACET prompts file, a folder zipped, or a text file; or name a path on this machine; or paste one prompt. Then decompose.</p>
-    <div class="drop" id="drop">drop a file here, or click to choose<input type="file" id="file" hidden></div>
-    <form id="iform" class="form" style="margin-top:14px">
-      <label>or a path here</label><input type="text" name="path" placeholder="e.g. data/corpora/facet/text2sql.jsonl, a folder, or a zip" list="paths"><datalist id="paths"><option value="data/corpora/facet/text2sql.jsonl"><option value="data/corpora/facet/math.jsonl"><option value="data/corpora/facet/table-qa.jsonl"><option value="data/corpora/facet/science-quantitative.jsonl"><option value="data/corpora/facet/text2cypher.jsonl"><option value="data/corpora/facet/code-generation.jsonl"><option value="data/corpora/plain"></datalist>
-      <label>corpus name</label><input type="text" name="name" placeholder="e.g. text2sql" required>
-      <label>domain filter</label><input type="text" name="domain" placeholder="for a FACET jsonl: keep only this domain">
-      <label>or paste a prompt</label><textarea name="text"></textarea>
-      <span></span><span><button class="btn" type="submit">import</button> <span id="istatus" class="muted"></span></span></form>
-    <div class="block" style="margin-top:28px"><div class="t">corpora in the store</div>
-      <table class="list"><tr><th>corpus</th><th class="n">prompts</th><th class="n">characters</th><th class="n">decomposed</th><th class="n">mean coverage</th></tr>
-      ${cs.map(c => `<tr><td><a href="${href('/prompts', { corpus: c.name })}">${esc(c.name)}</a> <span class="muted" style="font-size:12px">${esc(c.source || '')}</span></td><td class="n">${fmt(c.n_prompts)}</td><td class="n">${fmt(c.chars)}</td><td class="n">${fmt(c.decomposed)}</td><td class="n">${pct(c.coverage)}</td></tr>`).join('')}</table></div>
-  </div><div>
-    <h1 style="font-size:22px">Decompose</h1>
-    <form id="rform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
-      <label>corpus</label><select name="corpus">${cs.map(c => `<option value="${esc(c.name)}" ${c.name === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-      <label>model</label><span><input type="text" name="model" value="${esc(ms.default)}" list="models" style="width:100%"><datalist id="models">${ms.models.map(m => `<option value="${esc(m.model)}">${esc(m.endpoint)} · $${m.price_in}/M in, $${m.price_out}/M out</option>`).join('')}</datalist><span class="muted" style="font-size:12px">any model name works: gpt-* goes to OpenAI, vendor/model to OpenRouter, anything else to the local server at ${esc(ms.local_url)}; FX_MODEL sets the default, FX_MODELS adds models with prices</span></span>
-      <label>workers</label><input type="number" name="workers" value="512" min="1" max="4096"> <span class="muted" style="font-size:12px">calls in flight</span>
-      <label>first N only</label><input type="number" name="limit" value="30" min="0" placeholder="0 for all">
-      <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="0.5">
-      <label>options</label><span><label><input type="checkbox" name="redo"> redo finished prompts</label></span>
-      <span></span><span><button class="btn quiet" type="button" id="prevbtn">preview</button> <button class="btn" type="button" id="runbtn">run first N</button> <button class="btn quiet" type="button" id="allbtn">run all</button></span></form>
-    <div id="preview" class="block" style="margin-top:16px"></div>
-    <div class="block"><div class="t">jobs</div>${jobs.length ? `<table class="list">${jobs.slice(0, 8).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.corpus || 'all')} · ${esc(j.model)}</td><td class="n">${j.done}/${j.total}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
-  </div></div>`;
-  const drop = $('#drop'), file = $('#file');
-  drop.onclick = () => file.click();
-  drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
-  drop.ondragleave = () => drop.classList.remove('over');
-  drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) file.files = e.dataTransfer.files; drop.textContent = e.dataTransfer.files[0] ? e.dataTransfer.files[0].name : drop.textContent; if (!$('#iform input[name=name]').value) $('#iform input[name=name]').value = (e.dataTransfer.files[0]?.name || '').replace(/\.[^.]+$/, ''); };
-  $('#iform input[name=path]').onchange = e => { const v = e.target.value.trim(); if (v && !$('#iform input[name=name]').value) $('#iform input[name=name]').value = v.replace(/\/+$/, '').split('/').pop().replace(/\.[^.]+$/, ''); };
-  file.onchange = () => { drop.textContent = file.files[0] ? file.files[0].name : 'drop a file here, or click to choose'; if (!$('#iform input[name=name]').value && file.files[0]) $('#iform input[name=name]').value = file.files[0].name.replace(/\.[^.]+$/, ''); };
-  $('#iform').onsubmit = async e => { e.preventDefault(); const fd = new FormData($('#iform')); if (file.files[0]) fd.append('file', file.files[0]); $('#istatus').textContent = 'importing';
-    try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}, ${r.duplicates_elsewhere} also in another corpus${r.unwrapped ? `, ${r.unwrapped} unwrapped from harvest residue` : ''}`; location.hash = href('/corpora', { corpus: r.corpus }); route(); } catch (err) { $('#istatus').textContent = err.message; } };
-  const rf = $('#rform');
-  const params = () => { const d = Object.fromEntries(new FormData(rf)); return { corpus: d.corpus, model: d.model, workers: +d.workers, limit: +d.limit || 0, budget: d.budget || null, redo: !!d.redo }; };
-  const showPreview = async () => { const p = params(); $('#preview').innerHTML = '<span class="muted">estimating</span>';
-    const r = await api(`/api/preview?corpus=${encodeURIComponent(p.corpus)}&model=${encodeURIComponent(p.model)}&workers=${p.workers}&redo=${p.redo}&limit=${p.limit}`);
-    if (!r.prompts) { $('#preview').innerHTML = '<span class="muted">nothing to do: every prompt is decomposed</span>'; return; }
-    $('#preview').innerHTML = `<div class="prev"><span><b>${fmt(r.prompts)}</b>prompts</span><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(Math.round(r.tokens_in / 1000))}k</b>tokens in</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.endpoint)}</span><span><b>${r.seconds == null ? '?' : fmtSec(r.seconds)}</b>at ${r.workers} workers</span></div>
-      <div class="muted" style="font-size:12px;margin-top:6px">${esc(r.basis)}${r.note ? ' · ' + esc(r.note) : ''}</div>`; };
-  $('#prevbtn').onclick = showPreview;
-  rf.querySelectorAll('select,input').forEach(el => el.onchange = showPreview);
-  const start = async limit => { const p = params(); const r = await post('/api/jobs', { ...p, limit }); location.hash = href('/job/' + r.id); };
-  $('#runbtn').onclick = () => start(params().limit);
-  $('#allbtn').onclick = () => start(0);
-  showPreview();
+const FIELDS = ['corpus', 'domain', 'system', 'task', 'collection', 'bank_source', 'role', 'family', 'stage', 'subtask', 'polarity'];
+const fieldQuery = q => Object.fromEntries(FIELDS.filter(f => q[f]).map(f => [f, q[f]]));
+const filterChips = (q, kind, view) => FIELDS.filter(f => q[f]).flatMap(f => q[f].split(',').filter(Boolean).map(v => `<a class="chip on" href="${href('/library', { ...q, kind, view, [f]: q[f].split(',').filter(x => x !== v).join(',') })}" title="remove"><span>${esc(f)} ${esc(v)}</span><span class="n">×</span></a>`)).join(' ');
+
+/* ---------- Library: one slice, two projections ---------- */
+async function viewLibrary(main, q) {
+  const kind = q.kind || 'guidance', view = q.view === 'prompts' ? 'prompts' : 'features';
+  const s = await api('/api/cube?' + new URLSearchParams({ kind, view, ...fieldQuery(q) }));
+  const nodeHref = id => href('/node/' + id, { kind, ...fieldQuery(q) });
+  const toggle = (field, value, on) => { const cur = (q[field] || '').split(',').filter(Boolean); return href('/library', { ...q, kind, view, [field]: (on ? cur.filter(v => v !== value) : [...cur, value]).join(',') }); };
+  const chip = (f, v) => `<a class="chip ${v.on ? 'on' : ''}" href="${toggle(f.field, v.value, v.on)}" data-v="${esc(v.value.toLowerCase())}"><span>${esc(v.value)}</span>${v.prompts == null ? '' : `<span class="n">${fmt(v.prompts)}</span>`}</a>`;
+  const SHOW = 12;
+  const fieldHtml = f => { const big = f.values.length > SHOW; return `<div class="field" data-field="${f.field}"><div class="t"><span>${esc(f.field)}${big ? ` <span class="muted">${f.values.length}</span>` : ''}</span>${big ? `<a href="#" class="more">all</a>` : ''}</div>${big ? `<input class="find" placeholder="find">` : ''}<div class="chips">${f.values.map((v, i) => `<span ${i >= SHOW && !v.on ? 'hidden' : ''} class="cw">${chip(f, v)}</span>`).join('')}</div></div>`; };
+  const facets = view === 'features' ? s.facets : (window._facets || []);
+  if (view === 'features') window._facets = s.facets;
+  const polar = { field: 'polarity', values: ['require', 'forbid'].map(v => ({ value: v, prompts: null, on: (q.polarity || '').split(',').includes(v) })) };
+  const left = `<div class="fields">
+      <div class="search"><input type="search" id="lsearch" placeholder="search prompts and wordings" value="${esc(q.text || '')}" disabled title="search is a placeholder for now"></div>
+      <div class="field"><div class="t"><span>kind</span></div><div class="chips">${['guidance', 'material'].map(k => `<a class="chip ${k === kind ? 'on' : ''}" href="${href('/library', { ...q, kind: k })}"><span>${k}</span></a>`).join('')}</div></div>
+      ${facets.map(fieldHtml).join('')}${fieldHtml(polar)}</div>`;
+  const seg = `<span class="seg"><a href="${href('/library', { ...q, kind, view: 'prompts' })}" class="${view === 'prompts' ? 'on' : ''}">prompts</a><a href="${href('/library', { ...q, kind, view: 'features' })}" class="${view === 'features' ? 'on' : ''}">features</a></span>`;
+  let right;
+  if (view === 'features') {
+    const leaf = f => `<div class="tnode leaf plain"><span class="read"><a href="${nodeHref(f.id)}">${esc(f.name)}</a><div class="def">${esc(f.definition)}</div>${f.members ? `<div class="mem">${f.members.slice(0, 6).map(m => `<div><span class="muted mono" style="display:inline-block;width:150px;font-size:11.5px">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span></div>`).join('')}${f.members.length > 6 ? `<details><summary class="muted" style="cursor:pointer">${f.members.length - 6} more</summary>${f.members.slice(6).map(m => `<div><span class="muted mono" style="display:inline-block;width:150px;font-size:11.5px">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span></div>`).join('')}</details>` : ''}</div>` : ''}</span><span class="cnt">${fmt(f.prompts)}</span></div>`;
+    const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="muted">${g.features.length}</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('');
+    const local = s.unaligned.map(u => `<details class="tnode section"><summary><b>${esc(u.corpus)}</b> <span class="muted">${u.features} features</span></summary><div class="kids">${u.groups.map(g => `<details class="tnode section" open><summary>${esc(g.name)} <span class="muted">${g.features.length}</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('')}</div></details>`).join('');
+    right = `<div class="muted" style="margin-bottom:14px">${fmt(s.prompts)} prompts, ${fmt(s.globals)} global features${s.seed ? '' : ' (no seed yet: each corpus stands for itself)'}</div>
+      <div class="block"><div class="t">global features, with prompts</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none</span>'}</div></div>
+      <div class="block"><div class="t">features of one corpus only</div><div class="tree" style="max-height:none">${local || '<span class="muted">none</span>'}</div></div>`;
+  } else {
+    right = `<div class="muted" style="margin-bottom:14px">${fmt(s.prompts)} prompts${s.listed < s.prompts ? `, first ${fmt(s.listed)} listed` : ''}</div>
+      <table class="list"><tr><th>prompt</th><th class="n">chars</th><th class="n">readings</th><th class="n"></th></tr>
+      ${s.list.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:11.5px">${esc(p.id)}</a> <span class="corp">${esc(p.corpus)}</span>${['role', 'family', 'stage'].filter(k => p.fields[k]).map(k => `<span class="tag">${esc(p.fields[k])}</span>`).join('')}<div style="font-size:12.5px;color:var(--ink2)">${esc(p.head)}…</div><div class="fchips">${p.features.map(f => `<a href="${nodeHref(f.id)}" class="corp">${esc(f.name)}</a>`).join('')}</div></td><td class="n">${fmt(p.chars)}</td><td class="n">${p.readings}</td><td class="n"><a href="#" class="muted rm" data-id="${esc(p.id)}">remove</a></td></tr>`).join('')}</table>`;
+  }
+  main.innerHTML = `<div class="cube">${left}<div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h1>Library</h1>${seg}</div>
+    <div style="margin-bottom:10px">${filterChips(q, kind, view)}</div>${right}</div></div>`;
+  for (const el of main.querySelectorAll('.field')) {
+    const more = el.querySelector('.more'), find = el.querySelector('.find');
+    if (more) more.onclick = e => { e.preventDefault(); const all = more.textContent === 'all'; el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = !all && i >= SHOW && !w.querySelector('.on'); }); more.textContent = all ? 'fewer' : 'all'; };
+    if (find) find.oninput = () => { const t = find.value.trim().toLowerCase(); el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = t ? !w.querySelector('.chip').dataset.v.includes(t) : (i >= SHOW && !w.querySelector('.on')); }); };
+  }
+  for (const a of main.querySelectorAll('a.rm')) a.onclick = async e => { e.preventDefault(); if (a.textContent !== 'sure?') { a.textContent = 'sure?'; return; } await post('/api/prompts/delete', { ids: [a.dataset.id] }); route(); };
 }
+
+async function viewNode(main, id, q) {
+  const kind = q.kind || 'guidance';
+  const d = await api(`/api/cube/node/${id}?` + new URLSearchParams({ kind, ...fieldQuery(q) }));
+  const nodeHref = i => href('/node/' + i, { kind, ...fieldQuery(q) });
+  const wrow = w => `<tr><td class="serif">${esc(w.declaration)}</td><td class="n">${fmt(w.prompts)}</td><td class="n muted">${fmt(w.corpus_prompts)}</td><td style="font-size:11.5px">${w.sample.map(p => `<a href="${href('/prompt/' + encodeURIComponent(p))}" class="mono">${esc(p)}</a>`).join(' ')}</td></tr>`;
+  const member = m => `<div class="block"><div class="t">${d.global ? `<span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> · <a href="${href('/feature/' + m.id)}" class="muted">its library page</a> · ` : ''}${fmt(m.prompts)} prompts in the slice · ${m.wordings.length} wordings${m.group ? ` · <span class="muted">${esc(m.group)}</span>` : ''}</div>
+    <table class="list"><tr><th>wording</th><th class="n">prompts here</th><th class="n">in its corpus</th><th>e.g.</th></tr>${m.wordings.slice(0, 60).map(wrow).join('')}</table>${m.wordings.length > 60 ? `<details><summary class="muted" style="cursor:pointer">and ${m.wordings.length - 60} more wordings</summary><table class="list">${m.wordings.slice(60).map(wrow).join('')}</table></details>` : ''}</div>`;
+  main.innerHTML = `<div class="crumb"><a href="${href('/library', { ...q, kind })}">Library</a> › ${d.group ? esc(d.group.name) + ' › ' : ''}${d.global ? 'global feature' : `<span class="corp">${esc(d.corpus)}</span> feature`}</div>
+    <h1>${esc(d.name)}</h1><p class="lede">${esc(d.definition)}</p>
+    <div class="facts" style="margin-bottom:16px">
+      <span class="k">${d.global ? 'seed group' : 'library group'}</span><span>${d.group ? esc(d.group.name) + ' <span class="muted">· ' + esc(d.group.aspect || '') + ' · ' + esc(d.group.definition) + '</span>' : ''}</span>
+      ${d.global ? `<span class="k">members</span><span>${d.members.length} per-corpus features from ${[...new Set(d.members.map(m => m.corpus))].length} corpora</span>` : `<span class="k">global feature</span><span>${d.global_of ? `aligned to <a href="${nodeHref(d.global_of)}">${esc(d.global_name)}</a>` : '<span class="muted">none yet: open or domain-specific at the seed</span>'} · <a href="${href('/feature/' + d.id)}" class="muted">its library page</a></span>`}
+      <span class="k">in the slice</span><span>${fmt(d.prompts)} of ${fmt(d.selected)} selected prompts · ${fmt(d.readings)} readings</span>
+      <span class="k">slice</span><span>${filterChips(q, kind) || '<span class="muted">the whole corpus</span>'}</span></div>
+    <div class="cols2"><div>${d.members.map(member).join('') || '<span class="muted">no readings in this slice</span>'}</div>
+    <div><div class="block"><div class="t">prompts in the slice carrying it, by readings${d.prompt_list.length < d.prompts ? ` (first ${d.prompt_list.length})` : ''}</div>
+      <table class="list">${d.prompt_list.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:11.5px">${esc(p.id)}</a> <span class="corp">${esc(p.corpus)}</span> ${['role', 'family', 'stage'].filter(k => p.fields[k]).map(k => `<span class="tag">${esc(p.fields[k])}</span>`).join('')}<div class="serif" style="font-size:12.5px;color:var(--ink2)">${esc(p.head)}…</div></td><td class="n">${p.readings}</td></tr>`).join('')}</table></div></div></div>`;
+}
+
 const fmtSec = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
-
-/* ---------- a job: progress over SSE ---------- */
-async function viewJob(main, jid) {
-  const j = await api('/api/jobs/' + jid);
-  main.innerHTML = `<h1>Job #${jid} · ${esc(j.corpus || 'all corpora')}</h1><p class="lede">${esc(j.model)} · ${j.params.workers} workers${j.params.limit ? ` · pilot of ${j.params.limit}` : ''}</p>
-    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> ${j.kind.startsWith('align') ? `<a href="${href('/seed', { kind: j.params.kind })}" style="margin-left:14px">seed →</a>` : j.kind.startsWith('library') ? `<a href="${href('/library', { corpus: j.corpus, kind: j.params.kind })}" style="margin-left:14px">library →</a>` : `<a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a>`} <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
-  const render = d => { const share = d.total ? d.done / d.total : 0; const rate = d.elapsed && d.done ? d.elapsed / d.done : null;
-    $('#jbody').innerHTML = `<div class="bar" style="max-width:720px"><i style="width:${(100 * share).toFixed(1)}%"></i></div>
-      <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)}${d.total ? ' / ' + fmt(d.total) : ''}</b>${j.kind.startsWith('library') || j.kind.startsWith('align') ? 'batches' : 'prompts'}</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${d.status !== 'running' ? d.status : (rate && d.total > d.done ? fmtSec(rate * (d.total - d.done)) : 'running')}</b>${d.status === 'running' && rate && d.total > d.done ? 'remaining, projected' : 'status'}</span></div>
-      <div class="recent" style="margin-top:12px">${(d.recent || []).map(r => `<div>${r.id != null && !('batch' in r || 'cluster' in r || 'what' in r) ? `<a href="${href('/prompt/' + encodeURIComponent(r.id))}">${esc(r.id)}</a> · coverage ${pct(r.coverage)} · ${r.n_atoms} atoms · ${r.calls} calls` : Object.entries(r).filter(([k, v]) => k !== 'error' && v != null).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(' · ')}${r.error ? ` · <span class="err">${esc(r.error)}</span>` : ''}</div>`).join('')}</div>${d.error ? `<p class="err">${esc(d.error)}</p>` : ''}`; };
-  render(j);
-  document.querySelector('details').addEventListener('toggle', async e => { if (e.target.open) { const l = await api(`/api/jobs/${jid}/log`); $('#jlog').textContent = l.lines.join('\n'); } });
-  $('#stop').onclick = () => post(`/api/jobs/${jid}/stop`, {});
-  if (j.status === 'running') { ES = new EventSource(`/api/jobs/${jid}/events`); ES.onmessage = e => render(JSON.parse(e.data)); ES.addEventListener('end', () => { ES.close(); ES = null; api('/api/jobs/' + jid).then(render); }); }
-}
-
-/* ---------- prompts ---------- */
-async function viewPrompts(main, q) {
-  const r = await api(`/api/prompts?corpus=${encodeURIComponent(q.corpus || '')}&status=${q.status || ''}`);
-  main.innerHTML = `<h1>Prompts${q.corpus ? ' · ' + esc(q.corpus) : ''}</h1>
-    <p class="lede">${fmt(r.total)} in ${q.corpus ? 'the corpus' : 'the store'}. <a href="${href('/prompts', { corpus: q.corpus, status: 'done' })}">decomposed</a> · <a href="${href('/prompts', { corpus: q.corpus, status: 'todo' })}">not yet</a> · <a href="${href('/prompts', { corpus: q.corpus })}">all</a></p>
-    <table class="list"><tr><th>prompt</th><th>starts with</th><th class="n">chars</th><th class="n">coverage</th><th class="n">material</th><th class="n">atoms</th><th class="n">calls</th></tr>
-    ${r.prompts.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:12px">${esc(p.system || p.id)}</a><div class="muted" style="font-size:11.5px">${esc(p.domain || '')} ${esc(p.task || '')}</div></td><td class="serif" style="max-width:520px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(p.head)}</td><td class="n">${fmt(p.chars)}</td><td class="n">${p.status === 'done' ? pct(p.coverage) : p.status ? esc(p.status) : ''}</td><td class="n">${p.status === 'done' ? pct(p.material_share) : ''}</td><td class="n">${p.status === 'done' ? p.n_atoms : ''}</td><td class="n">${p.calls ?? ''}</td></tr>`).join('')}</table>
-    ${r.total > r.prompts.length ? `<p class="muted">${fmt(r.total - r.prompts.length)} more not listed.</p>` : ''}`;
-}
-
 /* ---------- one prompt ---------- */
 function paint(text, spans) {
   const items = [];
@@ -165,68 +150,11 @@ async function viewPrompt(main, pid) {
   document.querySelectorAll('#tree .leaf').forEach(el => el.onclick = () => { const m = document.querySelector(`#raw mark[data-path="${CSS.escape(el.dataset.path)}"]`); if (m) m.scrollIntoView({ behavior: 'smooth', block: 'center' }); });
 }
 
-/* ---------- queues ---------- */
-async function viewQueues(main, q) {
-  const r = await api(`/api/queues?corpus=${encodeURIComponent(q.corpus || '')}`);
-  const row = (x, extra) => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(x.id))}" class="mono" style="font-size:12px">${esc(x.id)}</a></td><td class="serif">${esc(x.text || x.head || '')}</td>${extra || ''}</tr>`;
-  main.innerHTML = `<h1>Queues${q.corpus ? ' · ' + esc(q.corpus) : ''}</h1><p class="lede">What to read: prompts the model covered poorly, stretches it declined twice, leaves it could not refine, and failures.</p>
-    <div class="block"><div class="t">low coverage, under 90%</div>${r.low_coverage.length ? `<table class="list">${r.low_coverage.map(x => row(x, `<td class="n">${pct(x.coverage)}</td><td class="n">${x.n_atoms} atoms</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
-    <div class="block"><div class="t">gaps the model declined</div>${r.gaps.length ? `<table class="list">${r.gaps.map(x => row(x, `<td class="n">${esc(x.note || '')}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
-    <div class="block"><div class="t">unrefined leaves</div>${r.unrefined.length ? `<table class="list">${r.unrefined.map(x => row(x)).join('')}</table>` : '<span class="muted">none</span>'}</div>
-    <div class="block"><div class="t">unwrapped at import (read that the prompt is the whole prompt)</div>${r.unwrapped.length ? `<table class="list">${r.unwrapped.map(x => row(x, `<td class="n">${esc(x.note || '')}</td>`)).join('')}</table>` : '<span class="muted">none</span>'}</div>
-    <div class="block"><div class="t">failed</div>${r.failed.length ? `<table class="list">${r.failed.map(x => row({ id: x.id, text: x.error })).join('')}</table>` : '<span class="muted">none</span>'}</div>`;
-}
-
-window.addEventListener('hashchange', route);
-route();
-
-/* ---------- library: the codebook of a corpus, one per kind ---------- */
-async function viewLibrary(main, q) {
-  const cs = await api('/api/corpora');
-  const corpus = q.corpus || (cs[0] && cs[0].name) || '', kind = q.kind || 'guidance';
-  if (!corpus) { main.innerHTML = '<p class="muted">import a corpus first</p>'; return; }
-  const [lib, jobs] = await Promise.all([api(`/api/library?corpus=${encodeURIComponent(corpus)}&kind=${kind}${q.version ? '&version=' + q.version : ''}`), api('/api/jobs')]);
-  const cb = lib.codebook, vs = lib.versions;
-  const sel = `<select id="lcorpus">${cs.map(c => `<option ${c.name === corpus ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
-    <span style="margin-left:14px">${['guidance', 'material'].map(k => `<a href="${href('/library', { corpus, kind: k })}" class="${k === kind ? 'on' : ''}" style="margin-right:10px;${k === kind ? 'font-weight:600;color:var(--ink)' : ''}">${k}</a>`).join('')}</span>`;
-  const vtable = vs.length ? `<table class="list"><tr><th>version</th><th>round</th><th>model</th><th class="n">groups</th><th class="n">features</th><th class="n">variants</th><th class="n">rounds</th><th class="n">assigned</th><th class="n">open</th><th class="n">of which specific</th><th class="n">reading coverage</th><th class="n">anchors</th><th class="n">flags</th><th class="n">standing</th></tr>
-    ${vs.map(v => `<tr><td><a href="${href('/library', { corpus, kind, version: v.version })}">v${v.version}</a>${cb && v.id === cb.id ? ' <span class="muted">shown</span>' : ''}</td><td class="n">${v.round}</td><td>${esc(v.model)}</td><td class="n">${v.groups}</td><td class="n">${v.features}</td><td class="n">${v.variants}</td><td class="n">${v.rounds}</td><td class="n">${fmt(v.assigned)}${v.unassigned ? ` <span class="muted">(+${fmt(v.unassigned)} to do)</span>` : ''}</td><td class="n">${fmt(v.leftover)}</td><td class="n">${fmt(v.specific)}</td><td class="n">${pct(v.reading_coverage)}</td><td class="n">${v.anchor_agreement == null ? '' : pct(v.anchor_agreement)}</td><td class="n">${v.flags}</td><td class="n">${v.standing ?? ''}</td></tr>`).join('')}</table>` : '<span class="muted">no codebook yet: run cold start</span>';
-  const flagsBy = {}; for (const f of lib.flags) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
-  const tree = lib.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect)} · ${fmt(g.support)} prompts · ${g.features.length} features</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">
-      ${g.features.map(f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${fmt(f.support)}</span><span class="read"><a href="${href('/feature/' + f.id)}">${pol(f.polarity)} ${esc(f.name)}</a><span class="tag">${f.realizations} wordings${f.round ? ' · round ' + f.round : ''}${(flagsBy[f.id] || []).length ? ` · <span class="err">${(flagsBy[f.id] || []).length} flags</span>` : ''}</span><br><span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>${(f.variants || []).map(v => `<div style="margin:4px 0 0 14px;padding-left:10px;border-left:2px solid var(--rule)"><a href="${href('/feature/' + v.id)}">${esc(v.name)}</a> <span class="tag">variant · ${fmt(v.support)} prompts · round ${v.round}</span><br><span class="muted" style="font-size:12px">${esc(v.definition)}</span></div>`).join('')}</span></div>`).join('')}</div></details>`).join('');
-  main.innerHTML = `<div class="split"><div>
-    <h1>Library</h1><p class="lede">${sel}</p>
-    <div class="block"><div class="t">versions · ${fmt(lib.realizations)} distinct wordings over ${fmt(lib.readings)} readings</div>${vtable}</div>
-    <div class="block"><div class="t">codebook${cb ? ' v' + cb.version : ''}${cb && cb.notes ? ` · <span class="muted">${esc(cb.notes.slice(0, 300))}</span>` : ''}</div><div class="tree" style="max-height:none">${tree || '<span class="muted">empty</span>'}</div></div>
-    ${cb ? `<div class="block"><div class="t">open wordings (on no node yet; "specific" ones were read beside their nearest neighbours and named nothing)</div>${lib.leftover.length ? `<table class="list">${lib.leftover.slice(0, 80).map(r => `<tr><td class="serif">${r.polarity === 'forbid' ? pol('forbid') + ' ' : ''}${esc(r.declaration)}</td><td class="n">${r.prompts} prompts</td><td class="n">${esc(r.note || r.confidence || '')}</td></tr>`).join('')}</table>${lib.leftover.length > 80 ? `<div class="muted">and ${lib.leftover.length - 80} more</div>` : ''}` : '<span class="muted">none</span>'}</div>` : ''}
-  </div><div>
-    <h1 style="font-size:22px">Run</h1>
-    <form id="lform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
-      <label>step</label><select name="step"><option value="round" selected>round loop: cold start if needed, assign, judge, then cluster → name → assign until no candidates</option><option value="coldstart">cold start</option><option value="assign">assign (new and open wordings)</option><option value="judge">judge (read-only)</option><option value="reopen">reopen the flagged members (no calls)</option><option value="cluster">cluster the open wordings (no calls)</option><option value="name">name the candidate clusters</option></select>
-      <label>batch model</label><input type="text" name="model" placeholder="assign and judge; default: the decomposition model" style="width:100%">
-      <label>codebook model</label><input type="text" name="codebook_model" placeholder="cold start and naming; default gpt-5.6-sol" style="width:100%">
-      <label>rounds</label><input type="number" name="rounds" value="5" min="1" max="20">
-      <label>base url</label><input type="text" name="base_url" placeholder="optional: another OpenAI-compatible server, e.g. http://localhost:8002/v1" style="width:100%">
-      <label>workers</label><input type="number" name="workers" value="128" min="1" max="512">
-      <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="1">
-      <label>effort</label><select name="effort"><option value="low" selected>low reasoning effort for assign and judge</option><option value="default">provider default</option></select>
-      <span></span><span><button class="btn quiet" type="button" id="lprev">preview</button> <button class="btn" type="button" id="lrun">run</button> <span id="lstatus" class="muted"></span></span></form>
-    <div id="lpreview" class="block" style="margin-top:16px"></div>
-    <p class="muted" style="font-size:12.5px">The tree only grows. A round gives every open wording not yet looked at its neighbourhood (itself and its nearest open wordings from other prompts; no threshold), names each (a variant under a feature, a new feature, or a rejection), and assigns the open wordings against the tree again; a flag raised for the first time sends its member back to open, barred from the node it left; a flag raised again after that is standing (the member stays, the flag is the report). It ends when every flag is standing and every open wording has had its look. A wording whose neighbourhood named nothing is marked specific and stays in the pool as a neighbour. Each step is one line in the job log; a re-run resumes.</p>
-    <div class="block"><div class="t">library jobs</div>${jobs.filter(j => j.kind.startsWith('library')).length ? `<table class="list">${jobs.filter(j => j.kind.startsWith('library')).slice(0, 10).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind.slice(8))} ${esc(j.params.kind)} · ${esc(j.corpus)}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
-  </div></div>`;
-  $('#lcorpus').onchange = e => { location.hash = href('/library', { corpus: e.target.value, kind }); };
-  const params = () => { const d = Object.fromEntries(new FormData($('#lform'))); return { corpus, kind, step: d.step, model: d.model, codebook_model: d.codebook_model, rounds: +d.rounds, base_url: d.base_url, workers: +d.workers, effort: d.effort, budget: d.budget || null }; };
-  $('#lprev').onclick = async () => { const p = params(); const r = await api(`/api/library/preview?corpus=${encodeURIComponent(corpus)}&kind=${kind}&step=${p.step}&model=${encodeURIComponent(p.model)}`);
-    $('#lpreview').innerHTML = `<div class="prev"><span><b>${fmt(r.calls)}</b>calls</span><span><b>${fmt(r.tokens_in)}</b>tokens in</span><span><b>${fmt(r.tokens_out)}</b>tokens out</span><span><b>$${r.dollars.toFixed(2)}</b>${esc(r.model)} · ${esc(r.endpoint)}</span></div>`; };
-  $('#lrun').onclick = async () => { const p = params(); $('#lstatus').textContent = 'starting'; try { const r = await post('/api/library/jobs', p); location.hash = href('/job/' + r.id); } catch (e) { $('#lstatus').textContent = e.message; } };
-}
-
 async function viewFeature(main, fid) {
   const r = await api('/api/feature/' + fid); const f = r.feature, cb = r.codebook;
   const byR = {}; for (const m of r.members) byR[m.id] = m;
   const quotes = {}; for (const x of r.readings) (quotes[x.realization] = quotes[x.realization] || []).push(x);
-  main.innerHTML = `<h1>${pol(f.polarity)} ${esc(f.name)}</h1>
+  main.innerHTML = `<h1>${esc(f.name)}</h1>
     <p class="lede">${esc(f.definition)}</p>
     <div class="facts" style="margin-bottom:16px"><span class="k">library</span><span><a href="${href('/library', { corpus: cb.corpus_name, kind: cb.kind, version: cb.version })}">${esc(cb.corpus_name)} · ${esc(cb.kind)}</a>${f.level === 'variant' ? ' · <span class="muted">a variant</span>' : ''}${f.round ? ` · <span class="muted">added in round ${f.round}</span>` : ''}</span>
       <span class="k">${f.level === 'variant' ? 'feature' : 'group'}</span><span>${r.group ? (f.level === 'variant' ? `<a href="${href('/feature/' + r.group.id)}">${esc(r.group.name)}</a>` : esc(r.group.name)) + ' <span class="muted">· ' + esc(r.group.aspect || r.group.polarity || '') + ' · ' + esc(r.group.definition) + '</span>' : ''}</span>
@@ -241,93 +169,111 @@ async function viewFeature(main, fid) {
         <div class="quotes">${(quotes[m.id] || []).map(x => `<div class="quote"><a href="${href('/prompt/' + encodeURIComponent(x.prompt))}" class="mono" style="font-size:11.5px">${esc(x.prompt)}</a><div class="serif">${esc(x.text)}</div></div>`).join('') || '<span class="muted" style="font-size:12.5px">quotes beyond the first 300 readings are on the prompt pages</span>'}</div></details>`).join('')}</div></div>`;
 }
 
-/* ---------- seed: the per-corpus libraries aligned into global features ---------- */
-async function viewSeed(main, q) {
-  const kind = q.kind || 'guidance';
-  const [s, jobs] = await Promise.all([api(`/api/seed?kind=${kind}`), api('/api/jobs')]);
-  const st = s.status, corpora = Object.entries(st.per_corpus);
-  const flagsBy = {}; for (const f of s.flags) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
-  const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect)} · ${g.features.length} global features · ${fmt(g.support)} prompts</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">
-      ${g.features.map(f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${f.corpora}</span><span class="read"><span class="verb">${esc(f.polarity)}</span> ${esc(f.name)}<span class="tag">${f.corpora} corpora · ${fmt(f.support)} prompts · round ${f.round}${(flagsBy[f.id] || []).length ? ` · <span class="err">${(flagsBy[f.id] || []).length} flags</span>` : ''}</span><br><span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>
-        <div style="margin-top:4px;font-size:12.5px">${f.members.map(m => `<div><span class="mono" style="font-size:11px;color:var(--muted)">${esc(m.corpus)}</span> <a href="${href('/feature/' + m.id)}">${esc(m.name)}</a> <span class="muted">· ${m.support} prompts${m.note === 'named' ? '' : ' · ' + esc(m.confidence || '')}</span>${(flagsBy[f.id] || []).some(x => x.other === m.id) ? ' <span class="err">flagged</span>' : ''}</div>`).join('')}</div></span></div>`).join('')}</div></details>`).join('');
-  main.innerHTML = `<div class="split"><div>
-    <h1>Seed library</h1>
-    <p class="lede">${['guidance', 'material'].map(k => `<a href="${href('/seed', { kind: k })}" style="margin-right:10px;${k === kind ? 'font-weight:600;color:var(--ink)' : ''}">${k}</a>`).join('')}</p>
-    <div class="block"><div class="t">${st.globals} global features in ${st.groups} groups · ${st.aligned} of ${st.cards} per-corpus features aligned · ${st.domain_specific} domain-specific · ${st.open} open · ${st.flags} flags (${st.standing} standing) · ${st.rounds} rounds</div>
-      <table class="list"><tr><th>corpus</th><th class="n">features</th><th class="n">aligned</th><th class="n">domain-specific</th><th class="n">prompts under aligned features</th></tr>
-      ${corpora.map(([c, d]) => `<tr><td><a href="${href('/library', { corpus: c, kind })}">${esc(c)}</a></td><td class="n">${d.features}</td><td class="n">${d.aligned} <span class="muted">(${pct(d.aligned / Math.max(d.features, 1))})</span></td><td class="n">${d.domain_specific}</td><td class="n">${pct(d.aligned_support / Math.max(d.support, 1))}</td></tr>`).join('')}</table></div>
-    <div class="block"><div class="t">global features, with their members per corpus</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none yet: run a round</span>'}</div></div>
-    <div class="block"><div class="t">open and domain-specific features</div>${s.open_cards_note || ''}${s.open.length ? `<table class="list">${s.open.slice(0, 120).map(c => `<tr><td><span class="mono" style="font-size:11px;color:var(--muted)">${esc(c.corpus)}</span> <a href="${href('/feature/' + c.id)}">${esc(c.name)}</a></td><td class="muted" style="font-size:12.5px">${esc(c.definition.slice(0, 120))}</td><td class="n">${c.support}</td><td class="n">${esc(c.note || '')}</td></tr>`).join('')}</table>${s.open.length > 120 ? `<div class="muted">and ${s.open.length - 120} more</div>` : ''}` : '<span class="muted">none</span>'}</div>
-  </div><div>
-    <h1 style="font-size:22px">Run</h1>
-    <form id="aform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
-      <label>step</label><select name="step"><option value="round" selected>round loop: embed, assign, judge, then reopen → cluster → name → assign until settled</option><option value="embed">embed the cards (no calls)</option><option value="assign">assign (open cards onto the globals)</option><option value="judge">judge (read-only)</option><option value="reopen">reopen the flagged members (no calls)</option><option value="cluster">cluster the open cards (no calls)</option><option value="name">name the candidate clusters</option></select>
-      <label>batch model</label><input type="text" name="model" placeholder="assign and judge; default: the decomposition model" style="width:100%">
-      <label>naming model</label><input type="text" name="codebook_model" placeholder="default gpt-5.6-sol" style="width:100%">
-      <label>rounds</label><input type="number" name="rounds" value="5" min="1" max="20">
-      <label>workers</label><input type="number" name="workers" value="64" min="1" max="512">
-      <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="1">
-      <span></span><span><button class="btn" type="button" id="arun">run</button> <span id="astatus" class="muted"></span></span></form>
-    <p class="muted" style="font-size:12.5px">Units are the per-corpus features of every library of this kind. A global feature is one instruction several corpora give under their own domain nouns; a feature whose neighbourhood across the other corpora names no global is domain-specific until a corpus arrives that changes that. Variants stay under their feature, so the hierarchy is global → per-corpus feature → variant.</p>
-    <div class="block"><div class="t">align jobs</div>${jobs.filter(j => j.kind.startsWith('align')).length ? `<table class="list">${jobs.filter(j => j.kind.startsWith('align')).slice(0, 10).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind.slice(6))} ${esc(j.params.kind)}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
-  </div></div>`;
-  $('#arun').onclick = async () => { const d = Object.fromEntries(new FormData($('#aform'))); $('#astatus').textContent = 'starting';
-    try { const r = await post('/api/align/jobs', { kind, step: d.step, model: d.model, codebook_model: d.codebook_model, rounds: +d.rounds, workers: +d.workers, budget: d.budget || null }); location.hash = href('/job/' + r.id); } catch (e) { $('#astatus').textContent = e.message; } };
-}
-
-/* ---------- the cube: the Library side. Fields on the left; the seed's hierarchy present in the slice on the right ---------- */
-const FIELDS = ['corpus', 'domain', 'system', 'task', 'collection', 'bank_source', 'role', 'family', 'stage', 'subtask', 'polarity'];
-const fieldQuery = q => Object.fromEntries(FIELDS.filter(f => q[f]).map(f => [f, q[f]]));
-const filterChips = (q, kind) => FIELDS.filter(f => q[f]).flatMap(f => q[f].split(',').filter(Boolean).map(v => `<a class="chip on" href="${href('/cube', { ...q, kind, [f]: q[f].split(',').filter(x => x !== v).join(',') })}" title="remove"><span>${esc(f)} = ${esc(v)}</span><span class="n">×</span></a>`)).join(' ');
-
-async function viewCube(main, q) {
-  const kind = q.kind || 'guidance';
-  const s = await api('/api/cube?' + new URLSearchParams({ kind, ...fieldQuery(q) }));
-  const nodeHref = id => href('/node/' + id, { kind, ...fieldQuery(q) });
-  const toggle = (field, value, on) => { const cur = (q[field] || '').split(',').filter(Boolean); return href('/cube', { ...q, kind, [field]: (on ? cur.filter(v => v !== value) : [...cur, value]).join(',') }); };
-  const chip = (f, v) => `<a class="chip ${v.on ? 'on' : ''}" href="${toggle(f.field, v.value, v.on)}" data-v="${esc(v.value.toLowerCase())}"><span>${esc(v.value)}</span><span class="n">${fmt(v.prompts)}</span></a>`;
-  const SHOW = 14;
-  const fieldHtml = f => { const big = f.values.length > SHOW; return `<div class="field" data-field="${f.field}"><div class="t"><span>${esc(f.field)} <span class="muted">· ${f.values.length}</span></span>${big ? `<a href="#" class="more" data-n="${f.values.length}">all</a>` : ''}</div>${big ? `<input class="find" placeholder="find a value">` : ''}<div class="chips">${f.values.map((v, i) => `<span ${i >= SHOW && !v.on ? 'hidden' : ''} class="cw">${chip(f, v)}</span>`).join('')}</div></div>`; };
-  const polar = { field: 'polarity', values: ['require', 'forbid'].map(v => ({ value: v, prompts: null, on: (q.polarity || '').split(',').includes(v) })) };
-  const bar = (share, pol) => `<div class="gbar"><i class="${pol === 'forbid' ? 'forbid' : ''}" style="width:${Math.max(1, Math.round(100 * share))}%"></i></div>`;
-  const leaf = f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${fmt(f.prompts)}<small>${pct(f.share)}</small></span><span class="read"><a href="${nodeHref(f.id)}">${pol(f.polarity)} ${esc(f.name)}</a><span class="tag">${f.corpora ? f.corpora.map(c => `<span class="corp">${esc(c)}</span>`).join('') : ''}${f.readings} readings${f.corpus && !f.corpora ? '' : ''}</span>${bar(f.share, f.polarity)}<span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>${f.members ? `<div style="margin-top:4px;font-size:12.5px">${f.members.slice(0, 4).map(m => `<span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span>&nbsp;&nbsp; `).join('')}${f.members.length > 4 ? `<details style="display:inline"><summary class="muted" style="cursor:pointer;display:inline">+${f.members.length - 4} more</summary>${f.members.slice(4).map(m => `<div><span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span></div>`).join('')}</details>` : ''}</div>` : ''}</span></div>`;
-  const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect || '')} · ${g.features.length} global feature${g.features.length === 1 ? '' : 's'} · ${fmt(g.prompts)} prompts</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('');
-  const local = s.unaligned.map(u => `<details class="tnode section" ${s.seed ? '' : 'open'}><summary><b>${esc(u.corpus)}</b> <span class="tag">${u.features} features of its own · ${fmt(u.prompts)} prompts</span></summary><div class="kids">${u.groups.map(g => `<details class="tnode section" open><summary>${esc(g.name)} <span class="tag">${esc(g.aspect || '')} · ${g.features.length} · ${fmt(g.prompts)} prompts</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('')}</div></details>`).join('');
-  main.innerHTML = `<div class="cube"><div class="fields">
-      <div class="field"><div class="t"><span>kind</span></div><div class="chips">${['guidance', 'material'].map(k => `<a class="chip ${k === kind ? 'on' : ''}" href="${href('/cube', { ...q, kind: k })}"><span>${k}</span></a>`).join('')}</div></div>
-      ${s.facets.map(fieldHtml).join('')}${fieldHtml(polar)}
-    </div><div>
-    <h1>Cube</h1>
-    <p class="lede">Pick values on the left; the slice is every prompt matching them. The right side is what those prompts ask for: the seed's global features with their support in the slice, then each library's own features the seed has not absorbed.${s.seed ? '' : ' There is no seed yet, so each library stands for itself.'}</p>
-    <div style="margin-bottom:10px">${filterChips(q, kind) || '<span class="muted" style="font-size:12.5px">the whole corpus</span>'}</div>
-    <div class="measures"><span><b>${fmt(s.prompts)}</b><span class="k">prompts in the slice</span></span><span><b>${fmt(s.decomposed)}</b><span class="k">decomposed</span></span><span><b>${pct(s.covered / Math.max(s.decomposed, 1))}</b><span class="k">carry a feature</span></span><span><b>${pct(s.on_global / Math.max(s.decomposed, 1))}</b><span class="k">carry a global feature</span></span><span><b>${fmt(s.globals)}</b><span class="k">global features present</span></span><span><b>${s.libraries}</b><span class="k">libraries</span></span></div>
-    <div class="block"><div class="t">global features in the slice, by prompts (share of the decomposed prompts)</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none: no seed, or nothing aligned yet</span>'}</div></div>
-    <div class="block"><div class="t">each library's own features in the slice (not under a global: open or domain-specific at the seed)</div><div class="tree" style="max-height:none">${local || '<span class="muted">none</span>'}</div></div>
-  </div></div>`;
-  for (const el of main.querySelectorAll('.field')) {
-    const more = el.querySelector('.more'), find = el.querySelector('.find');
-    if (more) more.onclick = e => { e.preventDefault(); const all = more.textContent === 'all'; el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = !all && i >= SHOW && !w.querySelector('.on'); }); more.textContent = all ? 'fewer' : 'all'; };
-    if (find) find.oninput = () => { const t = find.value.trim().toLowerCase(); el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = t ? !w.querySelector('.chip').dataset.v.includes(t) : (i >= SHOW && !w.querySelector('.on')); }); };
+/* ---------- Ingest: corpora, import, profiles, jobs ---------- */
+const STAGE = { done: 'done', partial: 'part', none: '', running: 'run' };
+const strip = st => `<span class="strip">${st.map(x => `<i class="${STAGE[x] || ''}" title="${x}"></i>`).join('')}</span>`;
+const jstatus = s => `<span class="status ${s === 'running' ? 'run' : s === 'done' ? 'done' : s === 'failed' ? 'fail' : 'look'}">${esc(s)}</span>`;
+async function viewIngest(main, sub, q) {
+  const d = await api('/api/ingest');
+  const tabs = ['corpora', 'import', 'profiles', 'jobs'].map(t => `<a href="#/ingest/${t}" class="${t === sub ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</a>`).join('');
+  let body = '';
+  if (sub === 'corpora') {
+    const pending = d.corpora.filter(c => c.pending && !c.running).length;
+    body = `<h1>Corpora</h1><p class="lede">A corpus is kept: edit it, add or remove prompts, and run it to bring its codebook and its alignment current.</p>
+      <div class="block"><div class="t">stages: decomposed, codebook, aligned &nbsp;${strip(['done'])} done &nbsp;${strip(['partial'])} partial &nbsp;${strip(['running'])} running &nbsp;${strip(['none'])} not run</div>
+      <table class="list"><tr><th>corpus</th><th class="n">prompts</th><th>stages</th><th class="n">decomposed</th><th class="n">features</th><th class="n">aligned</th><th>last job</th><th></th><th></th></tr>
+      ${d.corpora.map(c => `<tr data-c="${esc(c.name)}"><td><b>${esc(c.name)}</b><br><span class="muted" style="font-size:12px">${esc(c.domain || '')}${c.source ? ', ' + esc(c.source) : ''}</span></td><td class="n">${fmt(c.prompts)}</td><td>${strip(c.stages)}</td><td class="n">${fmt(c.decomposed)}${c.coverage != null ? ` <span class="muted">${pct(c.coverage)}</span>` : ''}</td><td class="n">${c.codebook ? fmt(c.features) + (c.unassigned ? ` <span class="muted">+${fmt(c.unassigned)} to place</span>` : '') : '<span class="muted">none</span>'}</td><td class="n">${c.codebook ? `${fmt(c.aligned)} of ${fmt(c.features)}` : '<span class="muted">–</span>'}</td><td style="font-size:12.5px">${c.last_job ? `<a href="${href('/job/' + c.last_job.id)}">#${c.last_job.id}</a> ${esc(c.last_job.kind)} ${jstatus(c.last_job.status)} <span class="muted">$${(c.last_job.spent || 0).toFixed(2)}</span>` : '<span class="muted">none</span>'}</td><td>${c.running ? '<span class="muted">running</span>' : `<a href="#" class="btn quiet small run">run</a>`}</td><td><a href="#" class="muted edit" style="font-size:12px">edit</a></td></tr>
+        <tr class="editor" hidden><td colspan="9"><form class="form cedit" style="grid-template-columns:110px minmax(0,1fr)"><label>name</label><input type="text" name="name" value="${esc(c.name)}"><label>domain</label><input type="text" name="domain" value="${esc(c.domain || '')}"><span></span><span><button class="btn quiet small" type="submit">save</button> <a href="#" class="muted del" style="margin-left:14px;font-size:12px">delete the corpus</a> <span class="muted cstat" style="font-size:12px"></span></span></form></td></tr>`).join('')}</table>
+      <div style="margin-top:12px;display:flex;gap:12px;align-items:baseline"><a href="#" class="btn" id="runall">run all pending</a><span class="muted" style="font-size:12.5px">${pending} corpora with a stage to do, profile <select id="prof" style="padding:2px 6px">${d.profiles.map(p => `<option>${esc(p.name)}</option>`).join('')}</select></span><span id="rstat" class="muted"></span></div></div>`;
+  } else if (sub === 'import') {
+    body = `<h1>Import</h1><p class="lede">A file, a folder or a pasted prompt lands in a corpus, new or existing.</p>
+      <div style="max-width:720px"><div class="drop" id="drop">drop a FACET prompts file, a zipped folder or a text file here, or click to choose<input type="file" id="file" hidden></div>
+      <form id="iform" class="form" style="margin-top:12px"><label>or a path here</label><input type="text" name="path" placeholder="e.g. data/corpora/facet/text2sql.jsonl, a folder, or a zip" list="paths"><datalist id="paths"><option value="data/corpora/facet/text2sql.jsonl"><option value="data/corpora/facet/math.jsonl"><option value="data/corpora/facet/table-qa.jsonl"><option value="data/corpora/facet/science-quantitative.jsonl"><option value="data/corpora/facet/text2cypher.jsonl"><option value="data/corpora/facet/code-generation.jsonl"><option value="data/corpora/plain"></datalist>
+        <label>into corpus</label><select name="into"><option value="">a new corpus</option>${d.corpora.map(c => `<option>${esc(c.name)}</option>`).join('')}</select>
+        <label>name</label><input type="text" name="name" placeholder="for a new corpus">
+        <label>domain</label><input type="text" name="domain" placeholder="tag every prompt with this domain; for a FACET jsonl also keeps only this domain">
+        <label>or paste a prompt</label><textarea name="text"></textarea>
+        <span></span><span><button class="btn" type="submit">import</button> <span id="istatus" class="muted"></span></span></form></div>`;
+  } else if (sub === 'profiles') {
+    const cur = d.profiles.find(p => p.name === (q.profile || 'default')) || d.profiles[0];
+    const row = (k, label, hint) => `<tr><td>${label}</td><td><input type="text" name="${k}" value="${esc(cur.params[k] ?? '')}" list="models" style="width:100%"></td><td class="muted" style="font-size:12px">${hint}</td></tr>`;
+    body = `<h1>Profiles</h1><p class="lede">The settings a run uses. A corpus picks one when it runs.</p>
+      <div style="max-width:800px"><div class="chips" style="margin-bottom:12px">${d.profiles.map(p => `<a class="chip ${p.name === cur.name ? 'on' : ''}" href="${href('/ingest/profiles', { profile: p.name })}"><span>${esc(p.name)}</span></a>`).join('')}<a class="chip" href="${href('/ingest/profiles', { profile: '__new' })}"><span>new</span></a></div>
+      <form id="pform" class="panel"><div class="h"><b><input type="text" name="name" value="${esc(q.profile === '__new' ? '' : cur.name)}" placeholder="name" style="font-weight:600"></b></div>
+      <table class="list"><tr><th>role</th><th>model</th><th></th></tr>
+        ${row('decompose_model', 'decompose', 'stage 1')}${row('codebook_model', 'codebook', 'cold start and naming')}${row('batch_model', 'batch', 'assign and judge')}${row('judge_model', 'judge', 'empty: same as batch')}${row('embed_model', 'embed', 'local, sentence-transformers')}
+        <tr><td>budget</td><td><input type="number" name="budget" value="${esc(cur.params.budget ?? '')}" step="1" placeholder="none"></td><td class="muted" style="font-size:12px">dollars per run; stops the run, keeps what it wrote</td></tr>
+        <tr><td>workers</td><td><input type="number" name="workers" value="${esc(cur.params.workers ?? 128)}" min="1" max="512"></td><td class="muted" style="font-size:12px">calls in flight</td></tr>
+        <tr><td>effort</td><td><select name="effort"><option ${cur.params.effort === 'low' ? 'selected' : ''}>low</option><option ${cur.params.effort === 'default' ? 'selected' : ''}>default</option></select></td><td class="muted" style="font-size:12px">reasoning effort for assign and judge; decomposition always reasons</td></tr>
+        <tr><td>base url</td><td><input type="text" name="base_url" value="${esc(cur.params.base_url ?? '')}" placeholder="optional: another OpenAI-compatible server" style="width:100%"></td><td class="muted" style="font-size:12px">for every role</td></tr></table>
+      <datalist id="models">${d.models.map(m => `<option value="${esc(m.model)}">${esc(m.endpoint)}</option>`).join('')}</datalist>
+      <div style="margin-top:12px"><button class="btn quiet" type="submit">save</button> ${cur.name !== 'default' && q.profile !== '__new' ? `<a href="#" id="pdel" class="muted" style="margin-left:14px;font-size:12px">delete</a>` : ''} <span id="pstat" class="muted" style="font-size:12px"></span></div></form></div>`;
+  } else {
+    body = `<h1>Jobs</h1><table class="list" style="max-width:860px"><tr><th>job</th><th>corpus</th><th>stage</th><th class="n">progress</th><th class="n">status</th><th class="n">spent</th></tr>
+      ${d.jobs.map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind)}</td><td>${esc(j.corpus || '')}</td><td class="muted">${esc(j.params.stage || j.params.kind || '')}</td><td class="n">${j.total ? `${fmt(j.done)} / ${fmt(j.total)}` : ''}</td><td class="n">${jstatus(j.status)}</td><td class="n">$${(j.spent || 0).toFixed(2)}</td></tr>`).join('') || '<tr><td class="muted">none yet</td></tr>'}</table>`;
+  }
+  main.innerHTML = `<div class="sub">${tabs}</div>${body}`;
+  if (sub === 'corpora') {
+    const runOne = async names => { $('#rstat').textContent = 'starting'; try { const r = await post('/api/ingest/run', { corpora: names, profile: $('#prof').value }); location.hash = href('/job/' + r.ids[0]); } catch (e) { $('#rstat').textContent = e.message; } };
+    main.querySelectorAll('a.run').forEach(a => a.onclick = e => { e.preventDefault(); runOne([a.closest('tr').dataset.c]); });
+    $('#runall').onclick = async e => { e.preventDefault(); $('#rstat').textContent = 'starting'; try { const r = await post('/api/ingest/run', { pending: true, profile: $('#prof').value }); location.hash = href('/job/' + r.ids[0]); } catch (err) { $('#rstat').textContent = err.message; } };
+    main.querySelectorAll('a.edit').forEach(a => a.onclick = e => { e.preventDefault(); const ed = a.closest('tr').nextElementSibling; ed.hidden = !ed.hidden; });
+    main.querySelectorAll('form.cedit').forEach(f => { const name = f.closest('tr').previousElementSibling.dataset.c, st = f.querySelector('.cstat');
+      f.onsubmit = async e => { e.preventDefault(); const v = Object.fromEntries(new FormData(f)); try { await post(`/api/corpus/${encodeURIComponent(name)}/retag`, { domain: v.domain }); if (v.name !== name) await post(`/api/corpus/${encodeURIComponent(name)}/rename`, { name: v.name }); route(); } catch (err) { st.textContent = err.message; } };
+      f.querySelector('.del').onclick = async e => { e.preventDefault(); const a = e.target; if (a.textContent !== 'sure? this removes its prompts, codebook and alignment') { a.textContent = 'sure? this removes its prompts, codebook and alignment'; return; } try { await api(`/api/corpus/${encodeURIComponent(name)}`, { method: 'DELETE' }); route(); } catch (err) { st.textContent = err.message; } }; });
+  } else if (sub === 'import') {
+    const drop = $('#drop'), file = $('#file'), nameIn = $('#iform input[name=name]');
+    drop.onclick = () => file.click();
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+    drop.ondragleave = () => drop.classList.remove('over');
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) { file.files = e.dataTransfer.files; drop.textContent = e.dataTransfer.files[0].name; if (!nameIn.value) nameIn.value = e.dataTransfer.files[0].name.replace(/\.[^.]+$/, ''); } };
+    $('#iform input[name=path]').onchange = e => { const v = e.target.value.trim(); if (v && !nameIn.value) nameIn.value = v.replace(/\/+$/, '').split('/').pop().replace(/\.[^.]+$/, ''); };
+    file.onchange = () => { drop.textContent = file.files[0] ? file.files[0].name : 'drop a file here, or click to choose'; if (!nameIn.value && file.files[0]) nameIn.value = file.files[0].name.replace(/\.[^.]+$/, ''); };
+    $('#iform').onsubmit = async e => { e.preventDefault(); const fd = new FormData($('#iform')); const into = fd.get('into'); fd.set('name', into || fd.get('name')); fd.delete('into'); if (file.files[0]) fd.append('file', file.files[0]); if (!fd.get('name')) { $('#istatus').textContent = 'a name is needed for a new corpus'; return; } $('#istatus').textContent = 'importing';
+      try { const r = await api('/api/import', { method: 'POST', body: fd }); $('#istatus').textContent = `added ${r.added}, skipped ${r.skipped}${r.unwrapped ? `, ${r.unwrapped} unwrapped from harvest residue` : ''}`; } catch (err) { $('#istatus').textContent = err.message; } };
+  } else if (sub === 'profiles') {
+    $('#pform').onsubmit = async e => { e.preventDefault(); const v = Object.fromEntries(new FormData($('#pform'))); const name = v.name; delete v.name; try { await post('/api/profiles', { name, params: v }); location.hash = href('/ingest/profiles', { profile: name }); route(); } catch (err) { $('#pstat').textContent = err.message; } };
+    const del = $('#pdel'); if (del) del.onclick = async e => { e.preventDefault(); await api('/api/profiles/' + encodeURIComponent($('#pform input[name=name]').value), { method: 'DELETE' }); location.hash = '#/ingest/profiles'; route(); };
   }
 }
 
-async function viewNode(main, id, q) {
-  const kind = q.kind || 'guidance';
-  const d = await api(`/api/cube/node/${id}?` + new URLSearchParams({ kind, ...fieldQuery(q) }));
-  const nodeHref = i => href('/node/' + i, { kind, ...fieldQuery(q) });
-  const wrow = w => `<tr><td class="serif">${w.polarity === 'forbid' ? pol('forbid') + ' ' : ''}${esc(w.declaration)}</td><td class="n">${fmt(w.prompts)}</td><td class="n muted">${fmt(w.corpus_prompts)}</td><td style="font-size:11.5px">${w.sample.map(p => `<a href="${href('/prompt/' + encodeURIComponent(p))}" class="mono">${esc(p)}</a>`).join(' ')}</td></tr>`;
-  const member = m => `<div class="block"><div class="t">${d.global ? `<span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> · <a href="${href('/feature/' + m.id)}" class="muted">its library page</a> · ` : ''}${fmt(m.prompts)} prompts in the slice · ${m.wordings.length} wordings${m.group ? ` · <span class="muted">${esc(m.group)}</span>` : ''}</div>
-    <table class="list"><tr><th>wording</th><th class="n">prompts here</th><th class="n">in its corpus</th><th>e.g.</th></tr>${m.wordings.slice(0, 60).map(wrow).join('')}</table>${m.wordings.length > 60 ? `<details><summary class="muted" style="cursor:pointer">and ${m.wordings.length - 60} more wordings</summary><table class="list">${m.wordings.slice(60).map(wrow).join('')}</table></details>` : ''}</div>`;
-  main.innerHTML = `<div class="crumb"><a href="${href('/cube', { ...q, kind })}">Cube</a> › ${d.group ? esc(d.group.name) + ' › ' : ''}${d.global ? 'global feature' : `<span class="corp">${esc(d.corpus)}</span> feature`}</div>
-    <h1>${pol(d.polarity)} ${esc(d.name)}</h1><p class="lede">${esc(d.definition)}</p>
-    <div class="facts" style="margin-bottom:16px">
-      <span class="k">${d.global ? 'seed group' : 'library group'}</span><span>${d.group ? esc(d.group.name) + ' <span class="muted">· ' + esc(d.group.aspect || '') + ' · ' + esc(d.group.definition) + '</span>' : ''}</span>
-      ${d.global ? `<span class="k">members</span><span>${d.members.length} per-corpus features from ${[...new Set(d.members.map(m => m.corpus))].length} corpora</span>` : `<span class="k">global feature</span><span>${d.global_of ? `aligned to <a href="${nodeHref(d.global_of)}">${esc(d.global_name)}</a>` : '<span class="muted">none yet: open or domain-specific at the seed</span>'} · <a href="${href('/feature/' + d.id)}" class="muted">its library page</a></span>`}
-      <span class="k">in the slice</span><span>${fmt(d.prompts)} of ${fmt(d.selected)} selected prompts · ${fmt(d.readings)} readings</span>
-      <span class="k">slice</span><span>${filterChips(q, kind) || '<span class="muted">the whole corpus</span>'}</span></div>
-    <div class="cols2"><div>${d.members.map(member).join('') || '<span class="muted">no readings in this slice</span>'}</div>
-    <div><div class="block"><div class="t">prompts in the slice carrying it, by readings${d.prompt_list.length < d.prompts ? ` (first ${d.prompt_list.length})` : ''}</div>
-      <table class="list">${d.prompt_list.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:11.5px">${esc(p.id)}</a> <span class="corp">${esc(p.corpus)}</span> ${['role', 'family', 'stage'].filter(k => p.fields[k]).map(k => `<span class="tag">${esc(p.fields[k])}</span>`).join('')}<div class="serif" style="font-size:12.5px;color:var(--ink2)">${esc(p.head)}…</div></td><td class="n">${p.readings}</td></tr>`).join('')}</table></div></div></div>`;
+/* ---------- a job: the stages one below another, progress over SSE ---------- */
+const codebookTree = (groups, flags) => { const flagsBy = {}; for (const f of flags || []) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
+  return groups.map(g => `<details class="tnode section"><summary><b>${esc(g.name)}</b> <span class="muted">${g.features.length} features, ${fmt(g.support)} prompts</span></summary><div class="kids">
+    ${g.features.map(f => `<div class="tnode leaf plain"><span class="read"><a href="${href('/feature/' + f.id)}">${esc(f.name)}</a>${(flagsBy[f.id] || []).length ? ` <span class="err" style="font-size:12px">${(flagsBy[f.id] || []).length} flags</span>` : ''}<div class="def">${esc(f.definition)}</div>${(f.variants || []).map(v => `<div style="margin:3px 0 0 14px;padding-left:10px;border-left:2px solid var(--rule)"><a href="${href('/feature/' + v.id)}">${esc(v.name)}</a> <span class="muted">variant, ${fmt(v.support)}</span></div>`).join('')}</span><span class="cnt">${fmt(f.support)}</span></div>`).join('')}</div></details>`).join(''); };
+async function viewJob(main, jid) {
+  const [j, st] = await Promise.all([api('/api/jobs/' + jid), api(`/api/jobs/${jid}/stages`)]);
+  const stage = j.params.stage || (j.kind.startsWith('decompose') ? 'decompose' : j.kind.startsWith('library') ? 'codebook' : j.kind.startsWith('align') ? 'align' : '');
+  const st1 = st.decomposition, st2 = st.codebook, st3 = st.alignment;
+  const badge = (name) => { if (j.status === 'running' && stage === name) return jstatus('running'); if (name === 'decompose') return st1 && st1.done >= st1.prompts && st1.prompts ? jstatus('done') : st1 && st1.done ? jstatus('partial') : jstatus('not run'); if (name === 'codebook') return st2 && st2.current ? jstatus('done') : jstatus('not run'); return st3 && st3.corpus && (st3.corpus.aligned || st3.corpus.domain_specific) ? jstatus('done') : jstatus('not run'); };
+  const cur = st2 && st2.versions && st2.versions.length ? st2.versions[st2.versions.length - 1] : null;
+  main.innerHTML = `<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px"><a href="#/ingest/jobs">Jobs</a> › #${jid}</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;max-width:960px"><h1>#${jid} ${esc(j.corpus || 'seed')}${j.params.profile ? `, profile ${esc(j.params.profile)}` : `, ${esc(j.kind)}`}</h1><span><span id="jst">${jstatus(j.status)}</span> &nbsp;<button class="btn quiet" id="stop" ${j.status !== 'running' ? 'disabled' : ''}>stop</button></span></div>
+    <div id="jbody" style="max-width:960px"></div>
+    <div style="max-width:960px">
+    ${j.corpus && j.corpus !== 'seed' ? `<div class="stage"><div class="h"><b>1 &nbsp; decomposition</b>${badge('decompose')}<span class="muted">${st1 ? `${fmt(st1.done)} of ${fmt(st1.prompts)} prompts${st1.coverage != null ? `, mean coverage ${pct(st1.coverage)}` : ''}${st1.failed ? `, ${st1.failed} failed` : ''}` : ''}</span></div>
+      ${st1 ? `<table class="list" style="max-width:720px"><tr><th>needs a look</th><th class="n">prompts</th><th></th></tr>
+        <tr><td>coverage below 90%</td><td class="n">${st1.low_coverage.length}</td><td>${st1.low_coverage.length ? `<a href="#" class="btn quiet small redo" data-ids="${esc(st1.low_coverage.map(x => x.id).join(','))}">redo</a>` : ''}</td></tr>
+        <tr><td>gaps the model declined</td><td class="n">${st1.gaps.length}</td><td>${st1.gaps.length ? `<a href="#" class="btn quiet small redo" data-ids="${esc([...new Set(st1.gaps.map(x => x.id))].join(','))}">redo</a>` : ''}</td></tr>
+        <tr><td>failed</td><td class="n">${st1.failures.length}</td><td>${st1.failures.length ? `<a href="#" class="btn quiet small redo" data-ids="${esc(st1.failures.map(x => x.id).join(','))}">redo</a>` : ''}</td></tr></table>
+        <details style="margin-top:8px;font-size:13px"><summary class="muted" style="cursor:pointer">the prompts</summary>${['low_coverage', 'gaps', 'failures'].map(k => st1[k].length ? `<div class="block" style="margin-top:8px"><div class="t">${k.replace('_', ' ')}</div><table class="list">${st1[k].map(x => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(x.id))}" class="mono" style="font-size:11.5px">${esc(x.id)}</a></td><td style="font-size:12.5px">${esc(x.head || x.text || x.error || '')}</td><td class="n">${x.coverage != null ? pct(x.coverage) : esc(x.note || '')}</td></tr>`).join('')}</table></div>` : '').join('')}</details>` : ''}</div>` : ''}
+    <div class="stage"><div class="h"><b>${j.corpus && j.corpus !== 'seed' ? '2' : ''} &nbsp; codebook</b>${badge('codebook')}<span class="muted">${cur ? `${fmt(cur.features)} features, ${fmt(cur.variants)} variants, ${pct(cur.reading_coverage)} of readings placed, anchors ${cur.anchor_agreement == null ? '' : pct(cur.anchor_agreement)}, ${cur.flags} flags (${cur.standing ?? 0} standing), ${fmt(cur.leftover)} open wordings` : 'none yet'}</span></div>
+      ${st2 && st2.groups.length ? `<div class="tree" style="max-height:none">${codebookTree(st2.groups, st2.flags)}</div>${st2.leftover.length ? `<details style="margin-top:8px;font-size:13px"><summary class="muted" style="cursor:pointer">open wordings, ${fmt(cur ? cur.leftover : st2.leftover.length)}</summary><table class="list">${st2.leftover.slice(0, 100).map(r => `<tr><td>${esc(r.declaration)}</td><td class="n">${r.prompts} prompts</td><td class="n">${esc(r.note || '')}</td></tr>`).join('')}</table></details>` : ''}` : ''}</div>
+    <div class="stage"><div class="h"><b>${j.corpus && j.corpus !== 'seed' ? '3' : ''} &nbsp; alignment</b>${badge('align')}<span class="muted">${st3 && st3.corpus && st3.corpus.features != null ? `${fmt(st3.corpus.aligned)} of ${fmt(st3.corpus.features)} features under ${fmt(st3.seed.globals)} globals, ${fmt(st3.corpus.domain_specific)} specific to this corpus, ${fmt(st3.open.length)} open` : st3 && st3.error ? esc(st3.error) : 'no seed yet'}</span></div>
+      ${st3 && st3.under && st3.under.length ? `<div class="tree" style="max-height:none">${st3.under.map(g => `<details class="tnode section"><summary><b>${esc(g.name)}</b> <span class="muted">${g.features.length}</span></summary><div class="kids">${g.features.map(f => `<div class="tnode leaf plain"><span class="read"><a href="${href('/node/' + f.id)}">${esc(f.name)}</a><div class="def">${f.members.map(m => `<a href="${href('/feature/' + m.id)}">${esc(m.name)}</a>`).join(', ')}</div></span><span class="cnt">${fmt(f.support)}</span></div>`).join('')}</div></details>`).join('')}</div>` : ''}
+      ${st3 && st3.open && st3.open.length ? `<details style="margin-top:8px;font-size:13px"><summary class="muted" style="cursor:pointer">open and specific features, ${st3.open.length}</summary><table class="list">${st3.open.slice(0, 120).map(c => `<tr><td><a href="${href('/feature/' + c.id)}">${esc(c.name)}</a></td><td class="muted" style="font-size:12.5px">${esc(c.definition.slice(0, 120))}</td><td class="n">${c.support}</td><td class="n">${esc(c.note || '')}</td></tr>`).join('')}</table></details>` : ''}</div>
+    <div class="stage"><div class="h"><b>log</b> <span class="mono muted" style="font-size:11.5px">${esc(j.log || '')}</span></div><pre class="log" id="jlog"></pre></div></div>`;
+  const render = d => { const share = d.total ? d.done / d.total : 0; const rate = d.elapsed && d.done ? d.elapsed / d.done : null;
+    $('#jst').innerHTML = jstatus(d.status);
+    $('#jbody').innerHTML = `<div class="muted" style="margin-bottom:6px">${stage && d.status === 'running' ? `stage ${esc(d.params && d.params.stage || stage)}, ` : ''}${d.total ? `${fmt(d.done)} of ${fmt(d.total)}${d.status === 'running' && rate && d.total > d.done ? `, about ${fmtSec(rate * (d.total - d.done))} left` : ''}, ` : ''}${d.elapsed == null ? '' : fmtSec(d.elapsed) + ', '}$${(d.spent || 0).toFixed(2)} spent, ${fmt(d.calls)} calls${d.error ? ` <span class="err">${esc(d.error)}</span>` : ''}</div>
+      <div class="bar"><i style="width:${(100 * share).toFixed(1)}%"></i></div>
+      <div class="recent" style="margin-top:8px">${(d.recent || []).slice(-3).map(r => `<div>${Object.entries(r).filter(([k, v]) => k !== 'error' && v != null).map(([k, v]) => `${esc(k)} ${esc(String(v))}`).join(', ')}${r.error ? ` <span class="err">${esc(r.error)}</span>` : ''}</div>`).join('')}</div>`; };
+  render(j);
+  const loadLog = async () => { const l = await api(`/api/jobs/${jid}/log?tail=60`); $('#jlog').textContent = l.lines.join('\n'); };
+  loadLog();
+  $('#stop').onclick = () => post(`/api/jobs/${jid}/stop`, {});
+  main.querySelectorAll('a.redo').forEach(a => a.onclick = async e => { e.preventDefault(); const r = await post('/api/jobs', { corpus: j.corpus, ids: a.dataset.ids.split(','), redo: true, model: j.params.decompose_model || j.model }); location.hash = href('/job/' + r.id); });
+  if (j.status === 'running') { ES = new EventSource(`/api/jobs/${jid}/events`); let n = 0; ES.onmessage = e => { const d = JSON.parse(e.data); d.params = j.params; render(d); if (++n % 10 === 0) loadLog(); }; ES.addEventListener('end', () => { ES.close(); ES = null; route(); }); }
 }
 
 /* ---------- settings: endpoints and keys by reference; a key is written blind and never read back ---------- */

@@ -223,3 +223,32 @@ def node(store: Store, kind: str, filters: dict[str, set[str]], fid: int, limit:
             "global_of": h["to_global"].get(fid) if not is_global else None, "global_name": nodes.get(h["to_global"].get(fid), {}).get("name") if not is_global else None,
             "filters": {k: sorted(v) for k, v in filters.items()}, "selected": len(selected), "prompts": len(prompts), "readings": sum(prompts.values()),
             "members": members, "prompt_list": plist}
+
+
+def prompts(store: Store, kind: str, filters: dict[str, set[str]], limit: int = 300) -> dict:
+    """The slice projected on prompts: each with its fields, its readings placed on a feature, and the features it carries
+    (globals by name, else the corpus feature), by readings."""
+    fields = prompt_fields(store)
+    rows, h = facts(store, kind)
+    selected = select(fields, filters)
+    pol = filters.get("polarity")
+    per: dict[str, dict] = {}
+    for pid, rid, node, feat, glob in rows:
+        if pid not in selected or (pol and h["nodes"][feat].get("polarity", "require") not in pol):
+            continue
+        d = per.setdefault(pid, {"readings": 0, "features": defaultdict(int)})
+        d["readings"] += 1
+        d["features"][glob if glob is not None else feat] += 1
+    ids = sorted(selected, key=lambda p: (-per.get(p, {}).get("readings", 0), p))[:limit]
+    out = []
+    for i in range(0, len(ids), 400):
+        chunk = ids[i:i + 400]
+        text = {r["id"]: dict(r) for r in store.rows(f"SELECT p.id, k.name corpus, SUBSTR(p.text, 1, 160) head, LENGTH(p.text) chars, d.status, d.coverage FROM prompt p JOIN corpus k ON k.id=p.corpus LEFT JOIN decomp d ON d.prompt=p.id WHERE p.id IN ({','.join('?' * len(chunk))})", chunk)}
+        for pid in chunk:
+            if pid not in text:
+                continue
+            d = per.get(pid, {"readings": 0, "features": {}})
+            feats = sorted(d["features"].items(), key=lambda kv: -kv[1])[:6]
+            out.append(text[pid] | {"fields": fields.get(pid, {}), "readings": d["readings"],
+                                    "features": [{"id": f, "name": h["nodes"][f]["name"], "global": h["nodes"][f]["codebook"] == h["seed"], "n": n} for f, n in feats if f in h["nodes"]]})
+    return {"kind": kind, "filters": {k: sorted(v) for k, v in filters.items()}, "prompts": len(selected), "listed": len(out), "list": out}

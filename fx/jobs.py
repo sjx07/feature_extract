@@ -183,3 +183,68 @@ def setup_logging(ws: Workspace, level: int = logging.INFO) -> None:
     root.setLevel(level); root.addHandler(fh); root.addHandler(sh)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         lg = logging.getLogger(name); lg.handlers = []; lg.propagate = True
+
+
+def set_stage(store: Store, jid: int, stage: str) -> None:
+    """The stage a profile run is in, kept in the job's params so the job page can say it."""
+    r = store.one("SELECT params FROM job WHERE id=?", (jid,))
+    params = json.loads(r["params"] or "{}") | {"stage": stage}
+    with store.lock:
+        store.con.execute("UPDATE job SET params=?, done=0, total=0 WHERE id=?", (json.dumps(params), jid)); store.con.commit()
+
+
+def run_profile(store: Store, ws: Workspace, client, jid: int, corpus: str, profile: dict, *, kind: str = "guidance", stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One corpus through the stages under a profile: decompose what is not decomposed, then the codebook round loop, then the
+    align round loop. Each stage is skipped when there is nothing for it; the run stops on the budget (the client's) or the stop
+    event, and a re-run resumes where the stages left things."""
+    from . import align as A
+    from . import decompose
+    from . import library as L
+    from .library.codebook import COLDSTART_MODEL
+    stop = stop or threading.Event()
+    prog = progress_writer(store, ws, jid, stop, echo)
+
+    def log_line(text: str) -> None:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} {text}\n")
+        if echo:
+            echo(text)
+
+    def log_step(name, res):
+        log_line(f"step {name} result {json.dumps(res)[:2000]}")
+    p = profile
+    workers = int(p.get("workers") or 128)
+    try:
+        # 1 decompose
+        set_stage(store, jid, "decompose")
+        todo = decompose.prompt_ids(store, corpus, None, False, 0)
+        if todo:
+            with store.lock:
+                store.con.execute("UPDATE job SET total=? WHERE id=?", (len(todo), jid)); store.con.commit()
+            s = decompose.run(store, client, corpus, model=p.get("decompose_model") or DEFAULT_MODEL, workers=workers, progress=prog, stop=stop)
+            log_line(f"stage decompose result {json.dumps({k: v for k, v in s.items() if k != 'failed'})[:800]} failed={len(s.get('failed') or [])}")
+            if s.get("stopped"):
+                finish(store, ws, jid, "stopped"); return "stopped"
+        else:
+            log_line("stage decompose: nothing to do")
+        # 2 codebook
+        set_stage(store, jid, "codebook")
+        r = L.run_round(store, client, corpus, kind, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                        workers=workers, effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+        log_line(f"stage codebook result {json.dumps(r)[:800]}")
+        if r.get("stopped_because") == "stopped":
+            finish(store, ws, jid, "stopped"); return "stopped"
+        # 3 align
+        set_stage(store, jid, "align")
+        r = A.run_round(store, client, kind, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                        workers=min(workers, 64), effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+        log_line(f"stage align result {json.dumps(r)[:800]}")
+        set_stage(store, jid, "done")
+        status = "stopped" if stop.is_set() else "done"
+        finish(store, ws, jid, status)
+        return status
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        return "failed"

@@ -105,6 +105,10 @@ CREATE TABLE IF NOT EXISTS alignment (
 CREATE TABLE IF NOT EXISTS fvector (
     feature INTEGER PRIMARY KEY REFERENCES feature(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
 
+-- a profile: the settings a run uses (a model and endpoint per role, the budget), by name
+CREATE TABLE IF NOT EXISTS profile (
+    name TEXT PRIMARY KEY, params TEXT NOT NULL, at TEXT NOT NULL);
+
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, corpus TEXT, model TEXT, params TEXT, status TEXT NOT NULL,
