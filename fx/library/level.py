@@ -15,9 +15,6 @@ from ..store import Store
 from . import prompts as P
 from .codebook import BATCH, MIN_SUPPORT
 
-TAU_DEFAULT, TAU_MIN, TAU_MAX = 0.78, 0.6, 0.92
-
-
 def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional[str] = None, kind: Optional[str] = None) -> Level:
     """From a codebook id, or from corpus and kind when there is no codebook yet (embedding can run before the cold start)."""
     if codebook:
@@ -39,17 +36,6 @@ def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional
             out.append(d)
         return out
 
-    def measure_tau() -> Optional[float]:
-        """The similarity at which known-same pairs (a node's anchors) mostly count as neighbours: the 25th percentile of
-        anchor-pair cosines, clamped; None with fewer than 10 pairs."""
-        sims = []
-        for f in store.rows("SELECT examples FROM feature WHERE codebook=? AND level IN ('feature','variant')", (codebook,)):
-            ex = json.loads(f["examples"] or "[]")
-            if len(ex) >= 2:
-                ids, m = vectors(store, "realization", ex)
-                sims += [float(m[i] @ m[j]) for i in range(len(ids)) for j in range(i + 1, len(ids))]
-        return float(min(TAU_MAX, max(TAU_MIN, np.quantile(sims, 0.25)))) if len(sims) >= 10 else None
-
     return Level(
         kind="realization", codebook=codebook, units=units,
         render_units=P.render_declarations, render_tree=P.render_codebook,
@@ -57,6 +43,6 @@ def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional
         prompt_name=lambda tr, ms: P.name(kind, domain, tr, ms),
         prompt_judge=lambda node, ms, samples: P.judge_members(node, ms),
         prompt_siblings=P.judge_siblings, system=P.SYSTEM, member_samples=lambda u: [],
-        node_vector="anchors", unit_prefix="R", node_prefix="F", min_members=MIN_SUPPORT, min_groups=2, tau=TAU_DEFAULT, measure_tau=measure_tau,
+        node_vector="anchors", unit_prefix="R", node_prefix="F",
         named_min_members=2, named_min_groups=1, allow_variant=True, batch=BATCH, shortlist_k=4,
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"{corpus}:{kind}")

@@ -8,10 +8,6 @@ from . import prompts as P
 from .cards import card_text, cards
 from .seed import seed_codebook
 
-TAU = 0.84      # measured on the four guidance libraries (2026-09-11): same-name pairs sit at 0.90 and above, which is identity
-                # of wording; 0.85 to 0.90 is mostly one instruction under different nouns; 0.80 to 0.85 mostly not.
-                # Kept for `fx align cluster --tau`; the loop itself grows by neighbourhoods (Level.neighbourhood), not by a
-                # threshold: a seed of 609 cards born at 0.84 gave 23 globals and then nothing (2026-09-11, job 39)
 
 
 def feature_level(store: Store, kind: str) -> Level:
@@ -32,7 +28,7 @@ def feature_level(store: Store, kind: str) -> Level:
         prompt_name=lambda tr, ms: P.name(kind, tr, ms),
         prompt_judge=lambda node, ms, sm: P.judge(node, ms, sm),
         prompt_siblings=None, system=P.SYSTEM, member_samples=samples,
-        node_vector="members", unit_prefix="F", node_prefix="S", min_members=2, min_groups=2, tau=TAU, measure_tau=None,
+        node_vector="members", unit_prefix="F", node_prefix="S",
         named_min_members=2, named_min_groups=2, allow_variant=False, allow_new_group=False, batch=12, shortlist_k=5, neighbourhood=5,
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"seed:{kind}")
 

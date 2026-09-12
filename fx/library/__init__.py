@@ -54,13 +54,13 @@ def reopen(store: Store, cb: int) -> dict:
     return E.reopen(store, wording_level(store, cb))
 
 
-def candidates(store: Store, cb: int, corpus: str, kind: str, tau: Optional[float] = None, **_) -> dict:
-    return E.candidates(store, wording_level(store, cb), tau=tau)
+def candidates(store: Store, cb: int, corpus: str, kind: str, **_) -> dict:
+    return E.candidates(store, wording_level(store, cb))
 
 
 def threshold(store: Store, cb: int) -> tuple[Optional[float], int]:
     lv = wording_level(store, cb)
-    return (lv.measure_tau() if lv.measure_tau else None) or lv.tau, 0
+    return None, 0
 
 
 def name(store: Store, client, corpus: str, kind: str, cb: int, clusters: list[dict], round_: int, model: str = COLDSTART_MODEL, workers: int = 16, progress=None) -> dict:
@@ -68,14 +68,14 @@ def name(store: Store, client, corpus: str, kind: str, cb: int, clusters: list[d
 
 
 def run_round(store: Store, client, corpus: str, kind: str, *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 128, effort: str = "low",
-              rounds: int = 5, tau: Optional[float] = None, min_yield: int = 3, encoder=None, log=None, progress=None, stop: Optional[threading.Event] = None) -> dict:
+              rounds: int = 5, encoder=None, log=None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     def before(step):
         step("collapse", lambda: collapse(store, corpus, kind))
         if latest(store, corpus, kind) is None:
             step("coldstart", lambda: coldstart(store, client, corpus, kind, model=codebook_model))
 
     r = E.run_round(store, client, lambda: _level(store, corpus, kind), batch_model=batch_model, codebook_model=codebook_model, workers=workers, effort=effort, rounds=rounds,
-                    tau=tau, min_yield=min_yield, encoder=encoder, before=before, log=log, progress=progress, stop=stop)
+                    encoder=encoder, before=before, log=log, progress=progress, stop=stop)
     return {"corpus": corpus, "kind": kind, **r, "versions": status(store, corpus, kind)["versions"]}
 
 

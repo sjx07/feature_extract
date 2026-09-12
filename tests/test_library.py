@@ -119,12 +119,12 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         tree = L.groups(store, cb); f_think = tree[0]["features"][0]
         srv.router = lambda body: reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}" if int(g) == ids["think step by step"] else None, "confidence": "high"} for g in re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)]}))
         L.assign(store, c, "c", "guidance", model="m", workers=1, shortlist=False)
-        cands = L.candidates(store, cb, "c", "guidance", tau=0.5)
-        assert cands["open"] >= 5 and len(cands["clusters"]) == 1 and cands["specific"] >= 1
+        cands = L.candidates(store, cb, "c", "guidance")
+        # one neighbourhood: the seed wording and every other open wording from other prompts (fewer than k of them here)
+        assert cands["open"] >= 4 and len(cands["clusters"]) == 1 and cands["seeds"] == cands["open"]
         members = {d["declaration"] for d in cands["clusters"][0]["members"]}
-        assert {"keep the answer short", "keep the answer brief", "keep your answer short"} <= members
-        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (ids["cite the source table"],))["note"] == "specific"
-        m = cands["clusters"][0]["members"]
+        assert {"keep the answer short", "keep the answer brief", "keep your answer short", "cite the source table"} <= members
+        m = [d for d in cands["clusters"][0]["members"] if d["declaration"] != "cite the source table"]   # the namer leaves the odd one out
         srv.router = lambda body: reply(json.dumps({"decision": "feature", "why": "", "parent": None, "group": {"name": "answer length", "definition": "how long the answer is", "aspect": "answer"},
                                                    "name": "keep the answer short", "definition": "the answer is brief", "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}))
         n = L.name(store, c, "c", "guidance", cb, cands["clusters"], round_=1, model="m", workers=1)
@@ -132,7 +132,9 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         tree = L.groups(store, cb)
         assert tree[-1]["name"] == "answer length" and tree[-1]["features"][0]["round"] == 1 and tree[-1]["features"][0]["support"] >= 3
         assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
-        assert L.candidates(store, cb, "c", "guidance", tau=0.5)["clusters"] == []                                    # nothing left together
+        c2 = L.candidates(store, cb, "c", "guidance")                                                      # the odd one out is alone: specific
+        assert c2["clusters"] == [] and c2["specific"] >= 1
+        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (ids["cite the source table"],))["note"] == "specific"
         # a variant: the naming call may narrow an existing feature instead
         srv.router = lambda body: reply(json.dumps({"decision": "variant", "why": "", "parent": f"F{f_think['id']}", "group": None, "name": "briefly", "definition": "stepwise but brief", "polarity": "require", "examples": [], "members": [f"R{d['id']}" for d in m]}))
         with store.lock:
@@ -162,11 +164,11 @@ def test_round_runs_the_growing_loop(store):
             return cb_reply(store)
         srv.router = router
         logged = []
-        r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, tau=0.5, min_yield=1, encoder=fake_encoder, log=lambda n, res: logged.append(n))
+        r = L.run_round(store, c, "c", "guidance", batch_model="m", codebook_model="m", workers=1, rounds=3, encoder=fake_encoder, log=lambda n, res: logged.append(n))
         assert logged[:7] == ["collapse", "coldstart", "embed", "assign", "judge", "reopen", "cluster"] and "name" in logged and "reopen" != logged[-1]        # the loop never ends on a reopen
         assert r["stopped_because"].startswith("settled")
         v = r["versions"][0]
-        assert v["features"] == 4 and v["rounds"] == 1 and v["specific"] >= 1 and v["assigned"] >= 4
+        assert v["features"] == 4 and v["rounds"] == 1 and v["assigned"] >= 4
 
 
 def test_site_library_endpoints_and_job(tmp_path):

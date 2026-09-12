@@ -7,7 +7,7 @@
     judge         read-only: per node, members that do not fit and a split; per group, indistinct siblings; a flag
                   raised again after it was acted on is standing
     reopen        first-time flags send their member open with the reason; anchors never
-    candidates    open units that neighbour units from other groups form clusters; the neighbourless are specific
+    candidates    every open unit not yet looked at, with its nearest open units from other groups; a rejected seed is specific
     name          one call per cluster: a variant under a feature, a new feature under a group, or a rejection
     run_round     assign, judge, then reopen -> cluster -> name -> assign -> judge until settled
 
@@ -401,9 +401,9 @@ def reopen(store: Store, lv: Level) -> dict:
 
 
 # ---- candidates, name
-def candidates(store: Store, lv: Level, tau: Optional[float] = None) -> dict:
-    if tau is None:
-        tau = (lv.measure_tau() if lv.measure_tau else None) or lv.tau
+def candidates(store: Store, lv: Level) -> dict:
+    """The open units as neighbourhoods for the namer; see _neighbourhoods. No threshold anywhere in the loop: retrieval
+    orders, the model decides."""
     opened = open_units(store, lv)
     ids, m = vectors(store, lv.kind, [u["id"] for u in opened])
     by_id = {u["id"]: u for u in opened}
@@ -412,43 +412,7 @@ def candidates(store: Store, lv: Level, tau: Optional[float] = None) -> dict:
             if u["note"] is None:
                 store.con.execute("INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) VALUES (?,?,?,NULL,NULL,NULL,?)", (lv.kind, u["id"], lv.codebook, now()))
         store.con.commit()
-    if lv.neighbourhood:
-        return _neighbourhoods(store, lv, ids, m, by_id)
-    parent = list(range(len(ids)))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]; x = parent[x]
-        return x
-    has_neighbour = [False] * len(ids)
-    if len(ids) > 1:
-        sims = m @ m.T
-        for i in range(len(ids)):
-            for j in np.where(sims[i] >= tau)[0]:
-                if j <= i or by_id[ids[i]]["polarity"] != by_id[ids[j]]["polarity"]:
-                    continue
-                gi, gj = by_id[ids[i]]["groups"], by_id[ids[j]]["groups"]
-                if gi & gj == gi | gj:
-                    continue                                    # the same group (prompt, or corpus) saying it twice is not support
-                has_neighbour[i] = has_neighbour[j] = True
-                parent[find(i)] = find(j)
-    comps: dict[int, list[int]] = defaultdict(list)
-    for i in range(len(ids)):
-        comps[find(i)].append(i)
-    clusters = []
-    for mem in comps.values():
-        us = [by_id[ids[i]] for i in mem]
-        ngroups = len(set().union(*(u["groups"] for u in us)))
-        if len(us) >= lv.min_members and ngroups >= lv.min_groups:
-            clusters.append({"members": sorted(us, key=lambda u: -u["support"]), "groups": ngroups})
-    clusters.sort(key=lambda c: (-c["groups"], -len(c["members"])))
-    specific = [ids[i] for i in range(len(ids)) if not has_neighbour[i]]
-    with store.lock:
-        store.con.executemany("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", [(lv.kind, lv.codebook, u) for u in specific])
-        store.con.executemany("UPDATE membership SET note=NULL WHERE kind=? AND codebook=? AND unit=? AND note='specific'", [(lv.kind, lv.codebook, u) for u in ids if u not in specific])
-        store.con.commit()
-    in_cluster = {u["id"] for c in clusters for u in c["members"]}
-    return {"tau": round(tau, 3), "open": len(ids), "specific": len(specific), "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": len(ids) - len(specific) - len(in_cluster)}
+    return _neighbourhoods(store, lv, ids, m, by_id)
 
 
 def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_id: dict) -> dict:
@@ -482,7 +446,7 @@ def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_i
         store.con.commit()
     specific = sum(1 for u in by_id.values() if u["note"] == "specific") + len(alone)
     in_cluster = {u["id"] for c in clusters for u in c["members"]}
-    return {"tau": None, "open": n, "specific": specific, "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - specific - len(in_cluster)}
+    return {"open": n, "specific": specific, "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - specific - len(in_cluster)}
 
 
 def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
@@ -560,7 +524,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
 
 # ---- the loop
 def run_round(store: Store, client: Client, level, *, batch_model: str, codebook_model: str, workers: int = 128, effort: str = "low", rounds: int = 5,
-              tau: Optional[float] = None, min_yield: int = 3, encoder=None, before: Optional[Callable[[Callable], None]] = None,
+              encoder=None, before: Optional[Callable[[Callable], None]] = None,
               log: Optional[Callable[[str, dict], None]] = None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     """assign, judge, then reopen -> cluster -> name -> assign -> judge until settled. `before(step)` lets a level run its own
     first steps (collapse, cold start) through the same step logger; `level` may be a callable, resolved after `before`."""
@@ -587,14 +551,13 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
         first = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (lv.codebook,))["r"]) + 1
         for rnd in range(first, first + rounds):
             r = step("reopen", lambda: reopen(store, lv))
-            c = step("cluster", lambda: candidates(store, lv, tau=tau))
+            c = step("cluster", lambda: candidates(store, lv))
             if not c["clusters"] and r["reopened_misfits"] + r["reopened_split_members"] == 0:
-                why = f"settled: every flag is standing and no candidate cluster is left ({c['specific']} specific, {c['unclustered']} unclustered open units)"; break
-            n = step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=min(workers, 16), progress=progress)) if c["clusters"] else {"variants": 0, "features": 0, "clusters": 0}
+                why = f"settled: every flag is standing and every open unit has had its look ({c['specific']} specific, {c['waiting']} waiting)"; break
+            if c["clusters"]:
+                step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=min(workers, 16), progress=progress))
             step("assign", lambda: assign(store, client, lv, batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
-            j = step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
-            if not lv.neighbourhood and n["variants"] + n["features"] < min_yield and j["new"] == 0:   # neighbourhoods end by running out of seeds
-                why = f"settled: round {rnd} named {n['variants'] + n['features']} nodes and the judge raised nothing new ({j['standing']} standing flags)"; break
+            step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
     except Stopped:
         why = "stopped"
     return {"steps": steps, "stopped_because": why}

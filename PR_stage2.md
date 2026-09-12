@@ -19,9 +19,10 @@ command, a button on the site, and a job with a log.
   resumable. After it, the **anchor agreement**: the share of the nodes' own anchors that landed back on them.
 - **judge**, read-only: per node, members that do not fit and a split; per group, sibling pairs the members cannot
   tell apart. Flags only; nothing moves on a flag.
-- **cluster**, no calls: the open wordings that neighbour each other in the corpus (cosine at a threshold measured
-  from the anchors) form candidates when three or more from two or more prompts agree; an open wording with no
-  neighbour is marked *specific* and waits, reversibly, for a batch of prompts that brings it one.
+- **cluster**, no calls: every open wording not yet looked at is a seed; its candidate is itself and its five nearest
+  open wordings from other prompts. No threshold: retrieval orders, the naming call decides. Each wording sits in one
+  candidate a round; a seed the namer does not place is marked *specific*, reversibly (it stays in the pool as a
+  neighbour for later seeds).
 - **name**: one call per candidate: a *variant* under a feature (the feature narrowed by a constraint), a *feature*
   under an existing or new group, or a rejection. The members the model kept are assigned to the new node.
 - **round**: collapse, embed, cold start if none, assign, judge, then cluster → name → assign the open → judge,
@@ -30,7 +31,8 @@ command, a button on the site, and a job with a log.
 Why this shape: the first design revised the whole codebook each round and re-assigned everything. Measured on
 entity resolution it drifted (anchor agreement 0.98 → 0.73 → 0.82 across versions) and grew by sharpening
 definitions as much as by finding features. Here definitions never change, only the open wordings are ever looked
-at again, and "specific" is decided by the corpus (does anything else say it) rather than guessed by a batch.
+at again, and "specific" is decided by a read of the wording beside its nearest neighbours rather than guessed by a
+batch or by a cosine cutoff.
 
 ## Store
 
@@ -62,8 +64,7 @@ open wordings.
 
 ## Open
 
-- The clustering threshold is the 25th percentile of anchor-pair cosines, clamped to [0.6, 0.92]; it needs one
-  read on a real corpus.
+- The neighbourhood size (five) is the one knob of the cluster step; it is a batch size, not a similarity cutoff.
 - A variant is judged like a feature; siblings are only compared within a group, so two variants of one feature
   are not compared with each other yet.
 - The embedding runs on CPU unless a GPU is free; 3,000 wordings take about a minute on CPU.
