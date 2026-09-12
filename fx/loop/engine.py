@@ -474,7 +474,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         else:
             g = obj.get("group")
             gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
-            if gid is None and isinstance(g, dict) and str(g.get("name") or "").strip():
+            if gid is None and isinstance(g, dict) and str(g.get("name") or "").strip() and lv.allow_new_group:
                 key = str(g["name"]).strip().lower()
                 gid = next((i for i, x in group_ids.items() if x["name"].strip().lower() == key), None)
                 if gid is None:
@@ -482,6 +482,10 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
                     gid = store.insert("feature", {"codebook": lv.codebook, "level": "group", "parent": None, "prev": None, "aspect": aspect if aspect in lv.aspects else "other",
                                                    "name": str(g["name"]).strip(), "definition": str(g.get("definition") or "").strip(), "polarity": None, "examples": [], "round": round_})
                     group_ids[gid] = {"id": gid, "name": str(g["name"]).strip()}; summary["groups"] += 1
+            if gid is None and not lv.allow_new_group:
+                # the groups are fixed: fall back to the aspect named, then to 'other'
+                aspect = str((g or {}).get("aspect") if isinstance(g, dict) else g or "other").lower()
+                gid = next((i for i, x in group_ids.items() if x.get("aspect") == aspect), None) or next((i for i, x in group_ids.items() if x.get("aspect") == "other"), None)
             if gid is None:
                 summary["rejected"] += 1; continue
             row |= {"level": "feature", "parent": gid}

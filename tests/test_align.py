@@ -61,7 +61,7 @@ def test_cards_vectors_and_cross_corpus_candidates(store):
     assert ["think step by step", "think step by step"] in names and ["return Cypher only", "return SQL only"] in names
     assert c["specific"] == 2                                                           # aliases, MERGE: no neighbour in the other corpus
     st = A.status(store, "guidance")
-    assert st["cards"] == 6 and st["domain_specific"] == 2 and st["globals"] == 0
+    assert st["cards"] == 6 and st["domain_specific"] == 2 and st["globals"] == 0 and st["groups"] == 8          # born with the aspect groups
 
 
 def test_name_assign_judge_reopen_and_the_loop(store):
@@ -74,7 +74,8 @@ def test_name_assign_judge_reopen_and_the_loop(store):
             if "# CLUSTER" in text:
                 ids = re.findall(r"^F(\d+) \[", text, re.M)
                 nm = "return the query only" if "SQL" in text else "think step by step"
-                return reply(json.dumps({"decision": "same", "why": "", "group": {"name": "answer form", "definition": "what the answer contains", "aspect": "format"}, "name": nm, "definition": "one instruction across domains", "polarity": "require", "members": [f"F{i}" for i in ids]}))
+                gid = re.findall(r"^G(\d+) format", text, re.M)[0]
+                return reply(json.dumps({"decision": "same", "why": "", "group": f"G{gid}", "name": nm, "definition": "one instruction across domains", "polarity": "require", "members": [f"F{i}" for i in ids]}))
             if "# GLOBAL FEATURES" in text:
                 ids = re.findall(r"^F(\d+) ", text, re.M); sids = re.findall(r"^  S(\d+) ", text, re.M)
                 return reply(json.dumps({"assignments": [{"id": f"F{i}", "feature": None, "confidence": "high"} for i in ids]}))
@@ -120,3 +121,14 @@ def test_site_seed_endpoint_and_cli_status(tmp_path):
     s = c.get("/api/seed?kind=guidance").json()
     assert s["cards"] == 6 and s["globals"] == 0 and set(s["per_corpus"]) == {"sql", "cypher"} and len(s["libraries"]) == 2
     assert main(["-w", str(ws.root), "align", "status"]) == 0
+
+
+def test_regroup_moves_invented_groups_under_the_aspects(store):
+    seed_library(store, "sql", SQL); seed_library(store, "cypher", CYPHER)
+    cb = A.seed_codebook(store, "guidance")
+    g = store.insert("feature", {"codebook": cb, "level": "group", "parent": None, "prev": None, "aspect": "format", "name": "answer form", "definition": "x", "polarity": None, "examples": [], "round": 1})
+    store.insert("feature", {"codebook": cb, "level": "feature", "parent": g, "prev": None, "aspect": None, "name": "return the query only", "definition": "x", "polarity": "require", "examples": [], "round": 1})
+    r = A.regroup_by_aspect(store, "guidance")
+    assert r["moved"] == 1 and r["groups_dropped"] == 1 and r["groups"] == 8
+    fmt = store.one("SELECT id FROM feature WHERE codebook=? AND level='group' AND name='format'", (cb,))["id"]
+    assert store.one("SELECT parent FROM feature WHERE name='return the query only'")["parent"] == fmt

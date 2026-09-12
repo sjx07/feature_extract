@@ -42,7 +42,7 @@ domains; if not, reject.
 - "same": name the global as a short imperative phrase with no domain nouns ("generate a valid query", not "generate
   a valid SQL query"); define it in one sentence a reader can test any domain's feature against; give its polarity;
   list in "members" the feature ids that are instances (leave out the ones that are a different instruction); "group"
-  is an existing seed group id or a new group as {{"name","definition","aspect"}} with aspect one of: {aspects}.
+  is the id of the seed group (one per aspect: {aspects}) the global belongs to; never a new group.
 - "reject": the cluster mixes instructions, or it is already a global feature (say which in "why").
 - A member must come from at least two corpora for a global to exist; a single corpus's feature is domain-specific
   for now, however many of its own features are listed.

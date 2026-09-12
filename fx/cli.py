@@ -64,7 +64,7 @@ def main(argv=None) -> int:
         if name == "preview":
             p.add_argument("--step", default="assign", choices=("coldstart", "assign", "judge", "name"))
     al = sub.add_parser("align", help="stage 3: the seed library, per-corpus features aligned into global features").add_subparsers(dest="sub", required=True)
-    for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status"):
+    for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status", "regroup"):
         p = al.add_parser(name)
         p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
         p.add_argument("--model", default=None, help="batch model for assign and judge (default: the decomposition model)")
@@ -133,6 +133,8 @@ def main(argv=None) -> int:
         from . import align as A
         if a.sub == "status":
             print(json.dumps(A.status(store, a.kind), indent=1)); return 0
+        if a.sub == "regroup":
+            print(json.dumps(A.regroup_by_aspect(store, a.kind))); return 0
         from .jobs import run_align, setup_logging, start
         from .llm import Client
         setup_logging(ws)

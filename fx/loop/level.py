@@ -35,6 +35,7 @@ class Level:
     named_min_members: int = 2                  # a named node needs this many accepted members ...
     named_min_groups: int = 1                   # ... from this many groups
     allow_variant: bool = True                  # may the namer place a cluster under a feature as a variant
+    allow_new_group: bool = True                # may the namer create a group (the seed's groups are the aspects, fixed at birth)
     batch: int = 20
     shortlist_k: int = 4
     aspects: tuple = ()

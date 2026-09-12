@@ -8,12 +8,44 @@ from ..store import Store, now
 from .cards import SEED, cards
 
 
+ASPECT_GROUPS = {
+    "guidance": [("role", "who the model is told to be"), ("task", "what the model is asked to do"), ("reasoning", "how the model is told to think or work"),
+                 ("answer", "what the answer must contain or omit"), ("format", "the shape and serialisation of the answer"), ("tool", "how tools and the environment are used"),
+                 ("safety", "what the model must refuse, avoid or guard"), ("other", "guidance outside the aspects above")],
+    "material": [("example", "worked examples"), ("schema", "schemas and data definitions"), ("code", "code the prompt supplies"), ("slot", "input placeholders"),
+                 ("template", "output shapes to copy"), ("title", "headings and separators"), ("reference", "pasted documents and facts"), ("other", "other supplied material")],
+}
+
+
 def seed_codebook(store: Store, kind: str) -> int:
+    """The seed codebook, born with its groups: one per aspect. A cross-domain library's grouping is the aspect list every
+    corpus library already carries, so the naming call picks a group and never invents one."""
     cid = get_corpus(store, SEED, "align")
     r = store.one("SELECT id FROM codebook WHERE corpus=? AND kind=?", (cid, kind))
     if r:
         return int(r["id"])
-    return store.insert("codebook", {"corpus": cid, "kind": kind, "version": 1, "model": None, "round": 0, "notes": "the seed library: global features aligned across corpora", "at": now()})
+    cb = store.insert("codebook", {"corpus": cid, "kind": kind, "version": 1, "model": None, "round": 0, "notes": "the seed library: global features aligned across corpora", "at": now()})
+    for aspect, definition in ASPECT_GROUPS.get(kind, ASPECT_GROUPS["guidance"]):
+        store.insert("feature", {"codebook": cb, "level": "group", "parent": None, "prev": None, "aspect": aspect, "name": aspect, "definition": definition, "polarity": None, "examples": [], "round": 0})
+    return cb
+
+
+def regroup_by_aspect(store: Store, kind: str) -> dict:
+    """Repair for a seed whose naming calls invented groups: move every global under the aspect group its own group named,
+    create the aspect groups if missing, drop the groups left empty."""
+    cb = seed_codebook(store, kind)
+    have = {r["aspect"]: int(r["id"]) for r in store.rows("SELECT id, aspect FROM feature WHERE codebook=? AND level='group' AND name=aspect", (cb,))}
+    for aspect, definition in ASPECT_GROUPS.get(kind, ASPECT_GROUPS["guidance"]):
+        if aspect not in have:
+            have[aspect] = store.insert("feature", {"codebook": cb, "level": "group", "parent": None, "prev": None, "aspect": aspect, "name": aspect, "definition": definition, "polarity": None, "examples": [], "round": 0})
+    moved = 0
+    with store.lock:
+        for g in store.con.execute("SELECT id, aspect FROM feature WHERE codebook=? AND level='group' AND name != aspect", (cb,)).fetchall():
+            target = have.get(g["aspect"] or "other", have["other"])
+            moved += store.con.execute("UPDATE feature SET parent=? WHERE parent=? AND level='feature'", (target, g["id"])).rowcount
+        dropped = store.con.execute("DELETE FROM feature WHERE codebook=? AND level='group' AND name != aspect AND id NOT IN (SELECT DISTINCT parent FROM feature WHERE parent IS NOT NULL)", (cb,)).rowcount
+        store.con.commit()
+    return {"codebook": cb, "moved": moved, "groups_dropped": dropped, "groups": len(have)}
 
 
 def globals_(store: Store, kind: str) -> list[dict]:
