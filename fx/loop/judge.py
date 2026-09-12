@@ -46,7 +46,9 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
                     sub = g | {"features": fs}
                     jobs.append(lv.prompt_siblings(sub, {f["id"]: members(store, lv, f["id"], 5) for f in fs})); meta.append(("group", sub, {f["id"] for f in fs})); strong.append(False)
     summary = {"codebook": lv.codebook, "calls": len(jobs), "strong": sum(strong) if strong_model else 0, "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0, "new": 0, "standing": 0}
-    previous = {(int(r["feature"]), r["realization"] and int(r["realization"]), r["other"] and int(r["other"]), r["verdict"]) for r in store.rows("SELECT feature, realization, other, verdict FROM flag WHERE codebook=?", (lv.codebook,))}
+    # a flag raised again is standing only if the last one was acted on (reopened, split, put back) or dismissed (the join
+    # said two); a flag from a run's final judge that nothing acted on is fresh again on the next run
+    previous = {(int(r["feature"]), r["realization"] and int(r["realization"]), r["other"] and int(r["other"]), r["verdict"]) for r in store.rows("SELECT feature, realization, other, verdict FROM flag WHERE codebook=? AND standing=1", (lv.codebook,))}
     with store.lock:
         store.con.execute("DELETE FROM flag WHERE codebook=?", (lv.codebook,)); store.con.commit()
     if not jobs:
@@ -98,24 +100,41 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
 
 
 def reopen(store: Store, lv: Level) -> dict:
-    """First-time misfits and split members go open with the judge's reason; a node's own anchors never; standing flags stay."""
+    """First-time misfits go open with the judge's reason; a node's own anchors never. A split becomes structure: the
+    largest part keeps the node and every other part becomes a variant under it with its members, so a bucket turns into
+    a feature with its narrower forms beneath (where the level has no variants, the members go open instead). Flags acted
+    on are marked standing, so a re-raise is the report; standing flags stay."""
     anchor_set = {(int(f["id"]), int(e)) for f in store.rows("SELECT id, examples FROM feature WHERE codebook=?", (lv.codebook,)) for e in json.loads(f["examples"] or "[]")}
     member_col = "realization" if lv.kind == "realization" else "other"
     todo = []
     for r in store.rows(f"SELECT feature, {member_col} m, note FROM flag WHERE codebook=? AND verdict='misfit' AND standing=0 AND {member_col} IS NOT NULL", (lv.codebook,)):
         if (int(r["feature"]), int(r["m"])) not in anchor_set:
             todo.append((int(r["feature"]), int(r["m"]), (r["note"] or "")[:200], "misfit"))
+    splits = []
     for r in store.rows("SELECT feature, note FROM flag WHERE codebook=? AND verdict='split' AND standing=0", (lv.codebook,)):
         n = json.loads(r["note"] or "{}")
         parts = sorted(n.get("parts", []), key=lambda pt: -len(pt.get("members", [])))
-        for part in parts[1:]:                                    # the largest part keeps the node; the others go open to be named
-            for m in part.get("members", []):
-                if (int(r["feature"]), int(m)) not in anchor_set:
-                    todo.append((int(r["feature"]), int(m), f"the judge sees a distinct sub-feature here ({part.get('name', '')}): {n.get('why', '')}"[:200], "split"))
-    counts = {"misfit": 0, "split": 0}
+        node = store.one("SELECT id, name, definition, polarity, level, round FROM feature WHERE id=?", (int(r["feature"]),))
+        for part in parts[1:]:                                    # the largest part keeps the node
+            ms = [int(m) for m in part.get("members", []) if (int(r["feature"]), int(m)) not in anchor_set]
+            if lv.allow_variant and node and node["level"] == "feature" and len(ms) >= lv.named_min_members:
+                splits.append((node, str(part.get("name") or "").strip() or "a narrower form", ms))
+            else:
+                for m in ms:
+                    todo.append((int(r["feature"]), m, f"the judge sees a distinct sub-feature here ({part.get('name', '')}): {n.get('why', '')}"[:200], "split"))
+    counts = {"misfit": 0, "split": 0, "variants": 0}
+    rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (lv.codebook,))["r"])
     with store.lock:
         for nid, uid, why, what in todo:
             counts[what] += store.con.execute("UPDATE membership SET node=NULL, confidence='low', note=?, at=? WHERE kind=? AND codebook=? AND unit=? AND node=?",
                                               (f"reopened:{nid}|{why}", now(), lv.kind, lv.codebook, uid, nid)).rowcount
+        for node, name, ms in splits:
+            cur = store.con.execute("INSERT INTO feature (codebook, level, parent, prev, aspect, name, definition, polarity, examples, round) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                    (lv.codebook, "variant", node["id"], None, None, name, f"{name}: a narrower form of '{node['name']}', set apart by the judge", node["polarity"], json.dumps(ms[:3]), rnd))
+            for m in ms:
+                counts["split"] += store.con.execute("UPDATE membership SET node=?, note='split', at=? WHERE kind=? AND codebook=? AND unit=? AND node=?",
+                                                     (cur.lastrowid, now(), lv.kind, lv.codebook, m, node["id"])).rowcount
+            counts["variants"] += 1
+        store.con.execute("UPDATE flag SET standing=1 WHERE codebook=? AND standing=0 AND verdict IN ('misfit', 'split')", (lv.codebook,))   # acted on
         store.con.commit()
-    return {"codebook": lv.codebook, "reopened_misfits": counts["misfit"], "reopened_split_members": counts["split"]}
+    return {"codebook": lv.codebook, "reopened_misfits": counts["misfit"], "split_members_to_variants": counts["split"], "variants_from_splits": counts["variants"]}

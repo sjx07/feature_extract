@@ -78,6 +78,7 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
     founded: list = []
     folds: list[tuple[int, int]] = []
     narrows: list[tuple[int, int]] = []
+    dismissed: list[tuple[int, int]] = []
     cost = 0.0
     if lv.prompt_join and (proposals or pairs or (unplaced and not lv.groups_fixed)):
         # one call per aspect, and per slice of join_batch proposals within an aspect: a single call over a whole round
@@ -155,7 +156,7 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 elif v.get("verdict") == "narrower" and lv.allow_variant and pr["younger"]["level"] == "feature" and pr["older"]["level"] == "feature":
                     narrows.append((pr["younger"]["id"], pr["older"]["id"]))
                 elif v.get("verdict") == "two":
-                    summary["kept_apart"] += 1
+                    summary["kept_apart"] += 1; dismissed.append((pr["older"]["id"], pr["younger"]["id"]))
     # duplicates chain to a surviving proposal that is itself new
     def survivor(k: int) -> int:
         seen = set()
@@ -219,6 +220,8 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 store.con.execute("UPDATE feature SET parent=?, aspect=NULL WHERE id=? AND parent IS NULL", (cur.lastrowid, fid))
             taken.update(ids); summary["groups"] += 1
         summary["still_unplaced"] = len(pending) - len(taken) if not lv.groups_fixed else 0
+        for a, b in dismissed:                                    # a dismissed pair raised again is the report, not a question
+            store.con.execute("UPDATE flag SET standing=1 WHERE codebook=? AND verdict='indistinct' AND ((feature=? AND other=?) OR (feature=? AND other=?))", (lv.codebook, a, b, b, a))
         # the judge's indistinct pairs the join called the same: the younger folds into the older
         retired: set[int] = set()
         for younger, older in folds:

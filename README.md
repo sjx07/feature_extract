@@ -145,7 +145,7 @@ their own domain nouns. `embed` vectors the cards; `assign` puts open cards on t
 corpora; `name` reads it and proposes a global feature (named without domain nouns, defined across domains,
 members from two or more corpora) or rejects it, and a rejected card is domain-specific; `join` reconciles the
 round's proposals against the seed; `judge` flags members whose wordings give another instruction,
-and reopen sends first-time flags back with the reason. The Seed page shows the globals with their members per
+and reopen sends first-time misfits back with the reason and turns a split into variants under the node. The Seed page shows the globals with their members per
 corpus. Variants stay under their features: global → per-corpus feature → variant.
 
 ```

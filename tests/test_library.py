@@ -301,3 +301,35 @@ def test_a_repeated_flag_is_standing_and_not_reopened(store):
         assert L.reopen(store, cb)["reopened_misfits"] == 0                              # second time: standing, the member stays
         assert store.one("SELECT node feature FROM membership WHERE kind='realization' AND unit=?", (ids["return prose"],))["feature"] == f_think["id"]
         assert L.status(store, "c", "guidance")["versions"][0]["standing"] == 1
+
+
+def test_split_becomes_variants_and_acted_flags_stand(store):
+    atoms = [("keep", "the answer short"), ("keep", "the answer brief"), ("keep", "your answer short"), ("keep", "the answer short"), ("think", "step by step"), ("cite", "the source table")]
+    seed(store, atoms); L.collapse(store, "c", "guidance"); L.embed(store, "c", "guidance", enc=fake_encoder)
+    ids = ids_of(store)
+    with FakeServer() as srv:
+        c = Client(store, base_url=srv.url)
+        srv.calls = 0; srv.script = [cb_reply(store)]
+        cb = L.coldstart(store, c, "c", "guidance", model="m")["codebook"]
+        f_think = L.groups(store, cb)[0]["features"][0]
+        # everything onto 'think step by step', then the judge splits it: the largest part keeps the node, the other becomes a variant
+        srv.router = lambda body: reply(json.dumps({"assignments": [{"id": f"R{g}", "feature": f"F{f_think['id']}", "confidence": "high"} for g in re.findall(r"^R(\d+) \|", body["messages"][-1]["content"], re.M)]}))
+        L.assign(store, c, "c", "guidance", model="m", workers=1, shortlist=False)
+        short = [ids[k] for k in ("keep the answer short", "keep the answer brief", "keep your answer short")]
+        others = [u for u in ids.values() if u not in short]
+        def judge_reply(body):
+            text = body["messages"][-1]["content"]
+            if "# MEMBERS" in text:
+                return reply(json.dumps({"misfits": [], "split": {"why": "two instructions", "parts": [{"name": "stepwise reasoning", "members": [f"R{u}" for u in others]}, {"name": "keep the answer short", "members": [f"R{u}" for u in short]}]}}))
+            return reply(json.dumps({"indistinct": []}))
+        srv.router = judge_reply
+        j = L.judge(store, c, "c", "guidance", model="m", workers=1)
+        assert j["splits"] == 1
+        r = L.reopen(store, cb)
+        assert r["variants_from_splits"] == 1 and r["split_members_to_variants"] == 3 and r["reopened_misfits"] == 0
+        tree = L.groups(store, cb)
+        v = tree[0]["features"][0]["variants"]
+        assert len(v) == 1 and v[0]["name"] == "keep the answer short" and v[0]["members_n"] == 3
+        assert store.one("SELECT node FROM membership WHERE kind='realization' AND unit=?", (short[0],))["node"] == v[0]["id"]
+        assert store.one("SELECT standing FROM flag WHERE codebook=? AND verdict='split'", (cb,))["standing"] == 1          # acted on
+

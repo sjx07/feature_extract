@@ -43,7 +43,7 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
         for rnd in range(first, first + rounds):
             r = step("reopen", lambda: reopen(store, lv))
             c = step("cluster", lambda: candidates(store, lv))
-            if not c["clusters"] and r["reopened_misfits"] + r["reopened_split_members"] == 0:
+            if not c["clusters"] and r["reopened_misfits"] + r["split_members_to_variants"] == 0:
                 why = f"settled: every flag is standing and every open unit has had its look ({c['specific']} specific, {c['waiting']} waiting)"; break
             n = step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=workers, effort=effort, progress=progress)) if c["clusters"] else {"proposals": []}
             step("join", lambda: join(store, client, lv, n["proposals"], rnd, codebook_model, effort=effort, progress=progress))
