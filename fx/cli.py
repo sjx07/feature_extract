@@ -63,6 +63,8 @@ def main(argv=None) -> int:
         p.add_argument("--codebook-model", default=None, help=f"cold start and naming model (default {L_COLDSTART})")
         if name == "preview":
             p.add_argument("--step", default="assign", choices=("coldstart", "assign", "judge", "name"))
+        if name == "coldstart":
+            p.add_argument("--fresh", action="store_true", help="call the model again even if this corpus's cold start is cached (a rebuild, not a replay)")
     al = sub.add_parser("align", help="stage 3: the seed library, per-corpus features aligned into global features").add_subparsers(dest="sub", required=True)
     for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status", "regroup", "reset"):
         p = al.add_parser(name)
@@ -128,7 +130,7 @@ def main(argv=None) -> int:
         rounds, codebook_model = getattr(a, "rounds", 5), getattr(a, "codebook_model", None)
         jid = start(store, ws, f"library:{a.sub}", a.corpus, model, {"kind": a.kind, "version": a.version, "workers": a.workers, "effort": a.effort, "rounds": rounds, "codebook_model": codebook_model, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, 0)
         print(f"job {jid}: {a.sub} {a.kind} on {a.corpus}, log {ws.job_log(jid)}")
-        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, echo=lambda line: print("  " + line, flush=True))
+        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, fresh=getattr(a, "fresh", False), echo=lambda line: print("  " + line, flush=True))
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
         return 0 if status == "done" else 1
     if a.cmd == "align":

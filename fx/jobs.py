@@ -78,7 +78,7 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
 
 
 def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 128,
-                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None,
+                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None, fresh: bool = False,
                 stop: Optional[threading.Event] = None, echo=None) -> str:
     """One library step as a job: coldstart, assign, judge, cluster, name, or the whole round loop (collapse and embed run inline before
     coldstart and assign). `model` is the batch model (assign, judge); `codebook_model` the cold-start and naming model."""
@@ -88,7 +88,7 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
         if step in ("coldstart", "assign", "cluster", "name"):
             L.collapse(store, corpus, kind); L.embed(store, corpus, kind)
         if step == "coldstart":
-            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
+            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, cache=not fresh)
         elif step == "assign":
             r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         elif step == "judge":

@@ -275,9 +275,9 @@ class Client:
             "provider": r.provider, "billed": r.billed})
 
 
-def ask(client: "Client", prompt: str, *, model: str, stage: str, note: str, system: Optional[str] = None, schema=None, max_tokens: int = 32768) -> str:
+def ask(client: "Client", prompt: str, *, model: str, stage: str, note: str, system: Optional[str] = None, schema=None, max_tokens: int = 32768, cache: bool = True) -> str:
     """One call whose reply text the caller will parse: a denial stops the run (raised), any other failure is an empty string."""
-    r = client.complete(prompt, model=model, max_tokens=max_tokens, stage=stage, note=note, system=system, schema=schema)
+    r = client.complete(prompt, model=model, max_tokens=max_tokens, stage=stage, note=note, system=system, schema=schema, cache=cache)
     if r.error and r.error.startswith("denied"):
         raise RuntimeError(r.error)
     return r.text
