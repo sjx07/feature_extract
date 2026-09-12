@@ -165,7 +165,7 @@ async function viewFeature(main, fid) {
 /* ---------- Ingest: corpora, import, profiles, jobs ---------- */
 const STAGE = { done: 'done', partial: 'part', none: '', running: 'run' };
 const strip = st => `<span class="strip">${st.map(x => `<i class="${STAGE[x] || ''}" title="${x}"></i>`).join('')}</span>`;
-const jstatus = s => `<span class="status ${s === 'running' ? 'run' : s === 'done' ? 'done' : s === 'failed' || s === 'stale' ? 'fail' : 'look'}">${esc(s)}</span>`;
+const jstatus = s => `<span class="status ${s === 'running' ? 'run' : s === 'done' ? 'done' : s === 'failed' || s === 'stale' || s === 'lost' ? 'fail' : 'look'}">${esc(s)}</span>`;
 async function viewIngest(main, sub, q) {
   const d = await api('/api/ingest' + (sub === 'corpora' && q.kind ? `?kind=${encodeURIComponent(q.kind)}` : ''));
   const tabs = ['corpora', 'import', 'profiles', 'jobs', 'history'].map(t => `<a href="#/ingest/${t}" class="${t === sub ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</a>`).join('');
