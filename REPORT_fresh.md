@@ -50,6 +50,27 @@ then the seed; budget $40; a granularity read at every step. Site for this works
   features and none of the three buckets; the pair with both fixes runs before the seed.
 - 138 standing misfits; the sample reads as real disagreements.
 
+## math v1 (job 12 + extra rounds 16, 18, 19), $8.20 so far
+- 8,122 wordings; 588 features + 93 variants in 13 groups; reading coverage 97%; 214 specific after a read.
+- Cold start 59 features; round 1 named 409 and folded 70 duplicates at birth; rounds 5 to 13 added 4 to 8 each.
+- The join over the run: folds and narrowings in every round (round 2: 18 folded, 4 narrowed of 38 pairs).
+- The strong judge split 9 then 6 nodes; after the size rule (a part needs three members) two became variants ("Repeat
+  or restate" under "add content beyond the original proof"; "Score or grade the answer" under "evaluate the student's
+  response"). The largest nodes, "follow the specified output format" 174 wordings, "reason step by step" 129, "box the
+  final answer" 127, were read and left whole: one instruction each. So the split fix is proportionate, not carving.
+- Two blemishes for the final refinement: one variant name in Chinese ("精简答案", from before the English rule) and one
+  duplicate name, "provide the final answer" twice.
+
+## text2sql after the repair rounds (jobs 13, 15, 17, 20), $7.10 so far
+- 391 features + 53 variants; coverage 97%; 125 specific.
+- The buckets: "validate the query before answering" (196 wordings) is now a feature of 150 with four variants beneath
+  (general review 14, clause and logic 12, schema and types 9, syntax and executability 8); "use tools to explore the
+  database" (86) has three (execute and test 15, explore generally 12, inspect sample data 7). "understand the question
+  and schema" stays at 209: its split was acted on in an earlier round by reopening, the assigner refiled the members,
+  and the flag is standing; one relook would put it through the variant route.
+- What the fix did not do: "generate a query that answers the question" (143) and "convert natural language to SQL"
+  (137) were read by the strong judge and left whole.
+
 ## Over- and under-clustering, so far
 - No bucket: the largest features are the cold start's and carry one instruction each; loop-born features sit at 3 to 16
   wordings with a median of about 6.
