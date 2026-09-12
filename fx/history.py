@@ -208,12 +208,15 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
             cb_map: dict[int, int] = {}; f_map: dict[int, int] = {}
             for cb in g["codebook"]["codebook"]:
                 cb_map[int(cb["id"])] = _insert_rows(con, "codebook", [dict(cb) | {"corpus": cid}], drop_id=True)[0]
-            for f in sorted(g["codebook"]["feature"], key=lambda x: int(x["id"])):          # parents and prevs have lower ids: a tree only grows
-                ex = json.loads(f.get("examples") or "[]")
-                ff = dict(f) | {"codebook": cb_map[int(f["codebook"])], "parent": f_map.get(int(f["parent"])) if f.get("parent") is not None else None,
-                                "prev": f_map.get(int(f["prev"])) if f.get("prev") is not None else None,
-                                "examples": json.dumps([rz_map.get(int(e), int(e)) for e in ex])}
+            feats = sorted(g["codebook"]["feature"], key=lambda x: int(x["id"]))
+            for f in feats:                                                                 # two passes: a group born later than its features, or a retired
+                ex = json.loads(f.get("examples") or "[]")                                  # feature folded into a younger node, points at a higher id
+                ff = dict(f) | {"codebook": cb_map[int(f["codebook"])], "parent": None, "prev": None, "examples": json.dumps([rz_map.get(int(e), int(e)) for e in ex])}
                 f_map[int(f["id"])] = _insert_rows(con, "feature", [ff], drop_id=True)[0]
+            for f in feats:
+                if f.get("parent") is not None or f.get("prev") is not None:
+                    con.execute("UPDATE feature SET parent=?, prev=? WHERE id=?", (f_map.get(int(f["parent"])) if f.get("parent") is not None else None,
+                                                                                    f_map.get(int(f["prev"])) if f.get("prev") is not None else None, f_map[int(f["id"])]))
             for m in g["codebook"]["membership"]:
                 mm = dict(m) | {"codebook": cb_map[int(m["codebook"])], "node": f_map.get(int(m["node"])) if m.get("node") is not None else None}
                 if m["kind"] == "realization":
@@ -258,8 +261,8 @@ def diff(store: Store, checkpoint_id: int, ws=None) -> dict:
     out = {"checkpoint": checkpoint_id, "corpus": corpus, "then": then, "now": now_, "delta": {k: now_.get(k, 0) - then.get(k, 0) for k in then}}
     if ws is not None:
         old = load(ws, dict(ck) | {"tree": json.loads(ck["tree"])})
-        names_then = {(f["level"], f["name"]) for f in old["codebook"]["feature"] if f["level"] != "group"}
-        names_now = {(f["level"], f["name"]) for f in g["codebook"]["feature"] if f["level"] != "group"}
+        names_then = {(f["level"], f["name"]) for f in old["codebook"]["feature"] if f["level"] in ("feature", "variant")}
+        names_now = {(f["level"], f["name"]) for f in g["codebook"]["feature"] if f["level"] in ("feature", "variant")}
         out["features_added"] = sorted(n for l, n in names_now - names_then)[:200]
         out["features_gone"] = sorted(n for l, n in names_then - names_now)[:200]
     return out

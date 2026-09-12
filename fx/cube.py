@@ -76,7 +76,7 @@ def hierarchy(store: Store, kind: str) -> dict:
     if not cbs:
         return {"nodes": {}, "to_feature": {}, "to_global": {}, "libs": libs, "seed": seed, "corpus_of": {}}
     q = ",".join("?" * len(cbs))
-    nodes = {int(r["id"]): dict(r) for r in store.rows(f"SELECT f.id, f.codebook, f.level, f.parent, f.aspect, f.name, f.definition, f.polarity, f.round, k.name corpus FROM feature f JOIN codebook c ON c.id=f.codebook JOIN corpus k ON k.id=c.corpus WHERE f.codebook IN ({q})", cbs)}
+    nodes = {int(r["id"]): dict(r) for r in store.rows(f"SELECT f.id, f.codebook, f.level, f.parent, f.aspect, f.name, f.definition, f.polarity, f.round, k.name corpus FROM feature f JOIN codebook c ON c.id=f.codebook JOIN corpus k ON k.id=c.corpus WHERE f.codebook IN ({q}) AND f.level IN ('group','feature','variant')", cbs)}      # a retired row is not a node
     to_feature = {i: (n["parent"] if n["level"] == "variant" else i) for i, n in nodes.items() if n["level"] in ("feature", "variant")}
     to_global: dict[int, int] = {}
     if seed:
