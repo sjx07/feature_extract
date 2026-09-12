@@ -33,13 +33,15 @@ def _level(store: Store, corpus: str, kind: str, version: Optional[int] = None):
 
 
 def relook(store: Store, corpus: str, kind: str, version: Optional[int] = None) -> dict:
-    """Clear the 'specific' marks of a library's open wordings so the next round gives each its neighbourhood look. For
-    libraries built before the loop grew by neighbourhoods, whose marks came from a cosine cutoff, not from a read."""
+    """Another look: clear the 'specific' marks of a library's open wordings so the next round gives each its neighbourhood
+    read, and un-stand the judge's indistinct pairs so the next join rules on them again. For libraries built before the
+    loop grew by neighbourhoods, or before the join could answer 'narrower'."""
     lv = _level(store, corpus, kind, version)
     with store.lock:
         n = store.con.execute("UPDATE membership SET note=NULL WHERE kind='realization' AND codebook=? AND node IS NULL AND note='specific'", (lv.codebook,)).rowcount
+        q = store.con.execute("UPDATE flag SET standing=0 WHERE codebook=? AND verdict='indistinct' AND standing=1", (lv.codebook,)).rowcount   # the join asks them again, with every verdict it has now
         store.con.commit()
-    return {"codebook": lv.codebook, "unmarked": n}
+    return {"codebook": lv.codebook, "unmarked": n, "pairs_reopened": q}
 
 
 def embed(store: Store, corpus: str, kind: str, enc=None, model: Optional[str] = None) -> dict:
