@@ -8,6 +8,8 @@ terminal shows on the site's job page, and a run started on the site has the sam
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
+import os
 import logging
 import threading
 import traceback
@@ -20,7 +22,37 @@ from .store import Store, now
 log = logging.getLogger("fx.jobs")
 
 
+def alive(pid: Optional[int]) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def reap(store: Store) -> int:
+    """Rows still 'running' whose process is gone become 'lost' (a job killed from outside never closes its row); rows from
+    before pids were recorded are lost after twelve hours."""
+    n = 0
+    with store.lock:
+        for r in store.con.execute("SELECT id, params, started FROM job WHERE status='running'").fetchall():
+            params = json.loads(r["params"] or "{}")
+            pid = params.get("pid")
+            stale = alive(pid) is False if pid else (r["started"] or "") < (datetime.now() - timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+            if stale:
+                n += store.con.execute("UPDATE job SET status='lost', error=?, finished=? WHERE id=? AND status='running'",
+                                       (f"process {pid} is gone; the row never closed" if pid else "no process recorded; the row never closed", now(), r["id"])).rowcount
+        store.con.commit()
+    return n
+
+
 def start(store: Store, ws: Workspace, kind: str, corpus: Optional[str], model: str, params: dict, total: int) -> int:
+    reap(store)
+    params = params | {"pid": os.getpid()}
     jid = store.insert("job", {"kind": kind, "corpus": corpus, "model": model, "params": params, "status": "running", "total": total, "started": now(), "recent": []})
     with open(ws.job_log(jid), "a") as fh:
         fh.write(f"{now()} job {jid} {kind} corpus={corpus} model={model} total={total} params={json.dumps(params)}\n")
@@ -44,12 +76,12 @@ def progress_writer(store: Store, ws: Workspace, jid: int, stop: threading.Event
 
     def progress(done: int, total: int, info: dict) -> None:
         r = store.one("SELECT recent FROM job WHERE id=?", (jid,))
-        recent = (json.loads(r["recent"] or "[]") + [{k: info.get(k) for k in ("id", "coverage", "n_atoms", "calls", "error")}])[-5:]
+        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
+        recent = (json.loads(r["recent"] or "[]") + [dict(shown, error=info.get("error"))])[-5:]
         with store.lock:
             store.con.execute("UPDATE job SET done=?, total=CASE WHEN ?>0 THEN ? ELSE total END, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
                               (done, total, total, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))   # a step that learns its total (batches) reports it
             store.con.commit()
-        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
         line = f"{now()} {done}/{total} " + " ".join(f"{k}={v}" for k, v in shown.items()) + (f" ERROR {info['error']}" if info.get("error") else "")
         with open(ws.job_log(jid), "a") as fh:
             fh.write(line + "\n")
@@ -78,7 +110,7 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
 
 
 def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 128,
-                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None, tau: Optional[float] = None,
+                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None, fresh: bool = False,
                 stop: Optional[threading.Event] = None, echo=None) -> str:
     """One library step as a job: coldstart, assign, judge, cluster, name, or the whole round loop (collapse and embed run inline before
     coldstart and assign). `model` is the batch model (assign, judge); `codebook_model` the cold-start and naming model."""
@@ -88,7 +120,7 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
         if step in ("coldstart", "assign", "cluster", "name"):
             L.collapse(store, corpus, kind); L.embed(store, corpus, kind)
         if step == "coldstart":
-            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
+            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL, cache=not fresh)
         elif step == "assign":
             r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         elif step == "judge":
@@ -110,7 +142,7 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
                 if echo:
                     echo(f"step {name}: {json.dumps(res)[:300]}")
             r = L.run_round(store, client, corpus, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or L.COLDSTART_MODEL, workers=workers, effort=effort,
-                            rounds=rounds, tau=tau, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+                            rounds=rounds, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
             r["stopped"] = r["stopped_because"] == "stopped"
         else:
             raise ValueError(step)
@@ -126,6 +158,50 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
     return status
 
 
+def run_align(store: Store, ws: Workspace, client, jid: int, kind: str, step: str, *, model: Optional[str] = None, codebook_model: Optional[str] = None, workers: int = 64,
+              effort: str = "low", rounds: int = 5, stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One align step as a job: embed, assign, judge, reopen, cluster, name, or the round loop. `model` is the batch model (assign, judge);
+    `codebook_model` the naming model."""
+    from . import align as A
+    from .library.codebook import COLDSTART_MODEL
+    stop = stop or threading.Event()
+    prog = progress_writer(store, ws, jid, stop, echo)
+    try:
+        if step == "round":
+            def log_step(name, res):
+                with open(ws.job_log(jid), "a") as fh:
+                    fh.write(f"{now()} step {name} result {json.dumps(res)}\n")
+                if echo:
+                    echo(f"step {name}: {json.dumps(res)[:300]}")
+            r = A.run_round(store, client, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or COLDSTART_MODEL, workers=workers, effort=effort, rounds=rounds, log=log_step, progress=prog, stop=stop)
+        elif step == "embed":
+            r = A.embed(store, kind)
+        elif step == "assign":
+            A.embed(store, kind); r = A.assign(store, client, kind, model=model or DEFAULT_MODEL, workers=workers, effort=effort, progress=prog)
+        elif step == "judge":
+            r = A.judge(store, client, kind, model=model or DEFAULT_MODEL, workers=workers, effort=effort, progress=prog)
+        elif step == "reopen":
+            r = A.reopen(store, kind)
+        elif step in ("cluster", "name"):
+            A.embed(store, kind); c = A.candidates(store, kind)
+            if step == "name":
+                rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (A.seed_codebook(store, kind),))["r"]) + 1
+                r = A.name(store, client, kind, c["clusters"], rnd, model=codebook_model or COLDSTART_MODEL, workers=min(workers, 16), progress=prog)
+            else:
+                r = {k: v for k, v in c.items() if k != "clusters"} | {"largest": [[f"[{m['corpus']}] {m['name']}" for m in cl["members"][:5]] for cl in c["clusters"][:6]]}
+        else:
+            raise ValueError(step)
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} result {json.dumps(r)}\n")
+        finish(store, ws, jid, "stopped" if stop.is_set() else "done")
+        return "stopped" if stop.is_set() else "done"
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        return "failed"
+
+
 def setup_logging(ws: Workspace, level: int = logging.INFO) -> None:
     """The site's log: to the workspace's logs/serve.log (rotated) and to the terminal."""
     from logging.handlers import RotatingFileHandler
@@ -139,3 +215,73 @@ def setup_logging(ws: Workspace, level: int = logging.INFO) -> None:
     root.setLevel(level); root.addHandler(fh); root.addHandler(sh)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         lg = logging.getLogger(name); lg.handlers = []; lg.propagate = True
+
+
+def set_stage(store: Store, jid: int, stage: str) -> None:
+    """The stage a profile run is in, kept in the job's params so the job page can say it."""
+    r = store.one("SELECT params FROM job WHERE id=?", (jid,))
+    params = json.loads(r["params"] or "{}") | {"stage": stage}
+    with store.lock:
+        store.con.execute("UPDATE job SET params=?, done=0, total=0 WHERE id=?", (json.dumps(params), jid)); store.con.commit()
+
+
+def run_profile(store: Store, ws: Workspace, client, jid: int, corpus: str, profile: dict, *, kind: str = "guidance", stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One corpus through the stages under a profile: decompose what is not decomposed, then the codebook round loop, then the
+    align round loop. Each stage is skipped when there is nothing for it; the run stops on the budget (the client's) or the stop
+    event, and a re-run resumes where the stages left things."""
+    from . import align as A
+    from . import decompose
+    from . import library as L
+    from .library.codebook import COLDSTART_MODEL
+    stop = stop or threading.Event()
+    prog = progress_writer(store, ws, jid, stop, echo)
+
+    def log_line(text: str) -> None:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} {text}\n")
+        if echo:
+            echo(text)
+
+    def log_step(name, res):
+        log_line(f"step {name} result {json.dumps(res)[:2000]}")
+    p = profile
+    workers = int(p.get("workers") or 128)
+    try:
+        # 1 decompose
+        set_stage(store, jid, "decompose")
+        todo = decompose.prompt_ids(store, corpus, None, False, 0)
+        if todo:
+            with store.lock:
+                store.con.execute("UPDATE job SET total=? WHERE id=?", (len(todo), jid)); store.con.commit()
+            s = decompose.run(store, client, corpus, model=p.get("decompose_model") or DEFAULT_MODEL, workers=workers, progress=prog, stop=stop)
+            log_line(f"stage decompose result {json.dumps({k: v for k, v in s.items() if k != 'failed'})[:800]} failed={len(s.get('failed') or [])}")
+            if s.get("stopped"):
+                finish(store, ws, jid, "stopped"); return "stopped"
+        else:
+            log_line("stage decompose: nothing to do")
+        kinds = ("guidance", "material") if (p.get("kind") or kind) == "both" else ((p.get("kind") or kind),)
+        # 2 codebook, per kind
+        for k in kinds:
+            set_stage(store, jid, "codebook" if len(kinds) == 1 else f"codebook {k}")
+            r = L.run_round(store, client, corpus, k, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                            workers=workers, effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+            log_line(f"stage codebook {k} result {json.dumps(r)[:800]}")
+            if r.get("stopped_because") == "stopped":
+                finish(store, ws, jid, "stopped"); return "stopped"
+        # 3 align, per kind: only once another corpus has a codebook of the kind; alone, a library stands for itself
+        for k in kinds:
+            if len(A.libraries(store, k)) < 2:
+                log_line(f"stage align {k}: skipped, {len(A.libraries(store, k))} corpus with a {k} codebook; alignment needs two"); continue
+            set_stage(store, jid, "align" if len(kinds) == 1 else f"align {k}")
+            r = A.run_round(store, client, k, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                            workers=min(workers, 64), effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+            log_line(f"stage align {k} result {json.dumps(r)[:800]}")
+        set_stage(store, jid, "done")
+        status = "stopped" if stop.is_set() else "done"
+        finish(store, ws, jid, status)
+        return status
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        return "failed"

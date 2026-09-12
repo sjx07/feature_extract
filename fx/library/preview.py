@@ -25,7 +25,7 @@ def preview(store: Store, corpus: str, kind: str, step: str, model: Optional[str
         calls, tin, tout = 1, 1200 + (chars + 30 * n) // 3, 300 + 120 * max(nf, 30)
     elif step == "assign":
         model = model or DEFAULT_MODEL
-        done = int(store.one("SELECT COUNT(*) k FROM assignment WHERE codebook=?", (cbrow["id"],))["k"]) if cbrow else 0
+        done = int(store.one("SELECT COUNT(*) k FROM membership WHERE kind='realization' AND codebook=?", (cbrow["id"],))["k"]) if cbrow else 0
         calls = math.ceil(max(n - done, 0) / batch)
         tin, tout = 900 + 40 * nf + 25 * batch, 20 * batch + 2000
     elif step == "judge":
@@ -33,7 +33,7 @@ def preview(store: Store, corpus: str, kind: str, step: str, model: Optional[str
         calls, tin, tout = nf + ng, 1500, 2500
     elif step == "name":
         model = model or COLDSTART_MODEL
-        open_ = int(store.one("SELECT COUNT(*) k FROM assignment WHERE codebook=? AND feature IS NULL AND (note IS NULL OR note != 'specific')", (cbrow["id"],))["k"]) if cbrow else n // 2
+        open_ = int(store.one("SELECT COUNT(*) k FROM membership WHERE kind='realization' AND codebook=? AND node IS NULL AND (note IS NULL OR note != 'specific')", (cbrow["id"],))["k"]) if cbrow else n // 2
         calls, tin, tout = max(1, open_ // 8), 1500 + 40 * nf, 400        # about one cluster per eight open wordings, from the pilot
     else:
         raise ValueError(step)

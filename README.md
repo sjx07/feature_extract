@@ -12,11 +12,11 @@ Stages, in the order the data flows:
 | 0 | `fx llm ...` | `call`: every model call with tokens, cost, latency, and a cache |
 | 1 | `fx decompose` | `span` (the tree: sections, atoms, material, declined gaps), `reading` (an atom's facets), `decomp` (the run per prompt) |
 | 2 | `fx library round` (coldstart, assign, judge, cluster, name) | `realization`, `vector`, `codebook`, `feature` (the tree: groups, features, variants), `assignment`, `flag` |
-| 3 | `fx align` | folds into the seed library, decisions |
+| 3 | `fx align round` (embed, assign, judge, cluster, name) | `alignment`, `fvector`; the seed codebook's global features in `feature` |
 | 4 | `fx refine` | splits, edges, reversions, as rules with parameters |
 | 5 | `fx serve` | the GUI |
 
-Stages 0, 1 and 2 are in place; the others follow in that order.
+Stages 0 to 3 are in place; the others follow in that order.
 
 ## Stage 0: models, ledger, cache
 
@@ -117,16 +117,41 @@ declarations into realizations and `embed` gives each one a vector from a local 
 the codebook in one whole-corpus call (groups with an aspect, features with a testable definition, polarity
 and example wordings, the anchors); `assign` puts every wording on a node or leaves it open, first against
 the whole codebook and then, for the open ones, against the few nodes nearest by retrieval; `judge` reports
-misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` groups the open
-wordings that neighbour each other in the corpus and marks the neighbourless ones specific; `name` reads
-each candidate cluster and adds it as a variant under a feature, as a new feature, or rejects it; assign
-runs again over the open wordings; until no candidate is left. Nothing written is ever rewritten. The
+misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` gives every open
+wording not yet looked at its neighbourhood, itself and its nearest open wordings from other prompts (no
+threshold: retrieval orders, the model decides); `name` reads each neighbourhood in parallel and proposes a variant
+under a feature, a new feature, or rejects it, and a rejected seed is marked specific; `join`, one call a round,
+sees every proposal beside the tree and decides what is new, what is an existing feature under another wording,
+and what two proposals said twice, then places and founds groups; assign runs again over the open wordings; until
+every open wording has had its look. Nothing written is ever rewritten. The
 site's Library page runs each step with a cost preview and shows the tree, the open wordings and the flags.
 
 ```
 export HF_HOME=/data/users/$USER/.cache/huggingface     # the embedding model downloads here, not into the home quota
 PYTHONPATH=. python -m fx.cli -w runs/dev library round  --corpus text2sql --kind guidance --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
 PYTHONPATH=. python -m fx.cli -w runs/dev library status --corpus text2sql --kind guidance
+```
+
+## Stage 3: the seed library
+
+Stages 2 and 3 are one loop, `fx/loop`, run on two levels: the wordings of a corpus (`fx/library`)
+and the features of every corpus (`fx/align`). A `Level` carries what differs; the engine carries assign,
+judge, reopen, cluster, name and the settle loop.
+
+The stage 2 loop one level up. The units are the per-corpus features of every library of a kind, read as cards
+(name, definition, anchors, corpus, support); a global feature is one instruction several corpora give under
+their own domain nouns. `embed` vectors the cards; `assign` puts open cards on the nearest globals or none;
+`cluster` gives every open card not yet looked at its neighbourhood, itself and its nearest open cards from other
+corpora; `name` reads it and proposes a global feature (named without domain nouns, defined across domains,
+members from two or more corpora) or rejects it, and a rejected card is domain-specific; `join` reconciles the
+round's proposals against the seed; `judge` flags members whose wordings give another instruction,
+and reopen sends first-time misfits back with the reason and turns a split into variants under the node. The Seed page shows the globals with their members per
+corpus. Variants stay under their features: global → per-corpus feature → variant.
+
+```
+PYTHONPATH=. python -m fx.cli -w runs/full align cluster
+PYTHONPATH=. python -m fx.cli -w runs/full align round --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
+PYTHONPATH=. python -m fx.cli -w runs/full align status
 ```
 
 ## Tests

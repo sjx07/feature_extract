@@ -19,18 +19,29 @@ command, a button on the site, and a job with a log.
   resumable. After it, the **anchor agreement**: the share of the nodes' own anchors that landed back on them.
 - **judge**, read-only: per node, members that do not fit and a split; per group, sibling pairs the members cannot
   tell apart. Flags only; nothing moves on a flag.
-- **cluster**, no calls: the open wordings that neighbour each other in the corpus (cosine at a threshold measured
-  from the anchors) form candidates when three or more from two or more prompts agree; an open wording with no
-  neighbour is marked *specific* and waits, reversibly, for a batch of prompts that brings it one.
-- **name**: one call per candidate: a *variant* under a feature (the feature narrowed by a constraint), a *feature*
-  under an existing or new group, or a rejection. The members the model kept are assigned to the new node.
-- **round**: collapse, embed, cold start if none, assign, judge, then cluster → name → assign the open → judge,
-  until no candidate is left. Every step is one line in the job log; a re-run resumes.
+- **cluster**, no calls: every open wording not yet looked at is a seed; its candidate is itself and its five nearest
+  open wordings from other prompts. No threshold: retrieval orders, the naming call decides. Each wording sits in one
+  candidate a round; a seed the namer does not place is marked *specific*, reversibly (it stays in the pool as a
+  neighbour for later seeds).
+- **name**, the fork: one call per neighbourhood, in parallel, each a *proposal*: a *variant* under a feature (the
+  feature narrowed by a constraint), a *feature* under an existing group or under none yet, or a rejection. Nothing
+  is written; the calls cannot see each other.
+- **join**: one call a round that sees every proposal beside the tree and decides what the round adds: a proposal is
+  *new*, or *existing* (the same instruction as a feature already there, so its members go onto it), or a *duplicate*
+  of another proposal (the two become one node). It files unplaced features under a group where one fits and founds a
+  group only when three unplaced features share a purpose, the same support rule a feature needs. It also rules on the
+  pairs the sibling judge reported as indistinct: *same* folds the younger node into the older (members move, the
+  younger is retired with a pointer), *two* dismisses the report; a pair of the cold start's own features is never
+  folded, it is shown to a person. Then the round writes once. A naming call never founds a group or a duplicate: v3 of text2cypher, where 108 parallel calls invented
+  15 groups (13 with one feature) and named the same feature twice, is why.
+- **round**: collapse, embed, cold start if none, assign, judge, then cluster → name → join → assign the open → judge,
+  until every open wording has had its look. Every step is one line in the job log; a re-run resumes.
 
 Why this shape: the first design revised the whole codebook each round and re-assigned everything. Measured on
 entity resolution it drifted (anchor agreement 0.98 → 0.73 → 0.82 across versions) and grew by sharpening
 definitions as much as by finding features. Here definitions never change, only the open wordings are ever looked
-at again, and "specific" is decided by the corpus (does anything else say it) rather than guessed by a batch.
+at again, and "specific" is decided by a read of the wording beside its nearest neighbours rather than guessed by a
+batch or by a cosine cutoff.
 
 ## Store
 
@@ -62,8 +73,7 @@ open wordings.
 
 ## Open
 
-- The clustering threshold is the 25th percentile of anchor-pair cosines, clamped to [0.6, 0.92]; it needs one
-  read on a real corpus.
+- The neighbourhood size (five) is the one knob of the cluster step; it is a batch size, not a similarity cutoff.
 - A variant is judged like a feature; siblings are only compared within a group, so two variants of one feature
   are not compared with each other yet.
 - The embedding runs on CPU unless a GPU is free; 3,000 wordings take about a minute on CPU.

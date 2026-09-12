@@ -56,19 +56,22 @@ CREATE TABLE IF NOT EXISTS decomp (
     prompt TEXT PRIMARY KEY REFERENCES prompt(id), status TEXT NOT NULL, model TEXT, coverage REAL, material_share REAL,
     calls INTEGER, seconds REAL, reasks INTEGER, flags TEXT, failures TEXT, error TEXT, at TEXT NOT NULL);
 
--- stage 2: the feature library of a corpus, one per kind (guidance readings, material readings).
+-- stage 2 and 3: the feature library of a corpus and the seed library across corpora, one loop over two unit kinds.
 -- realization: one distinct declaration (polarity + normalised wording); reading.realization points at it, so
---   support is a join. Assignment works on realizations, never on single readings.
--- feature: the codebook as a tree in one table: level 'group', 'feature' and 'variant' rows, parent = the row above
---   (a variant is a feature narrowed by a constraint). The tree only grows: a node is never rewritten, and `round`
---   says when it was added. Realizations are assigned to features and variants; a group's support is the union.
--- vector: one embedding per realization, the retrieval that sorts the leftovers (see fx.library.cluster).
--- assignment: realization -> node (NULL = open) under one codebook, with the model's confidence; note says
---   'specific' (no other prompt says the same thing yet) or 'named' (placed by the naming call that made its node).
--- flag: what the read-only coherence judge reported: a misfit member, a split, or two siblings it could not tell
---   apart. A flag raised for the first time is actionable (reopen sends the member open); one raised again on the
---   same member and node after that is standing: the member stays and the flag is the report.
--- codebook: the version record: which model wrote it, from which round, and the anchor agreement measured on it.
+--   support is a join. The wording level's unit.
+-- feature: every codebook as a tree in one table: level 'group', 'feature' and 'variant' rows, parent = the row
+--   above; a codebook only grows (`round` says when a node was added). A corpus's codebook holds its features; the
+--   codebook on the corpus named 'seed' holds the global features, whose units are the corpora's features.
+-- membership: unit -> node (NULL = open) under one codebook, for either unit kind ('realization' for wordings on a
+--   corpus codebook, 'feature' for per-corpus features on the seed); note says 'specific' (nothing else in the
+--   corpus, or no other corpus, says it yet), 'named' (placed by the naming call that made its node), or
+--   'reopened:<node>|<why>' (the judge's reason, carried to the assigner).
+-- embedding: one vector per unit of either kind.
+-- flag: what the read-only judge reported: a misfit member (realization or other = the member), a split, or two
+--   siblings it could not tell apart; standing = raised again after it was acted on, the member stays.
+-- codebook: the codebook row: corpus, kind, model, the anchor agreement measured on it.
+-- assignment, vector, fvector: legacy tables of earlier code, copied into membership and embedding on open; alignment (a
+--   pre-refactor branch's, never holding a global) is left as is.
 CREATE TABLE IF NOT EXISTS realization (
     id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, key TEXT NOT NULL,
     polarity TEXT NOT NULL, declaration TEXT NOT NULL, n INTEGER NOT NULL, prompts INTEGER NOT NULL, conditions TEXT, head TEXT,
@@ -82,16 +85,33 @@ CREATE TABLE IF NOT EXISTS feature (
     id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), level TEXT NOT NULL, parent INTEGER REFERENCES feature(id),
     prev INTEGER REFERENCES feature(id), aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT, round INTEGER);
 CREATE INDEX IF NOT EXISTS feature_codebook ON feature(codebook);
+CREATE TABLE IF NOT EXISTS membership (
+    kind TEXT NOT NULL, unit INTEGER NOT NULL, codebook INTEGER NOT NULL REFERENCES codebook(id), node INTEGER REFERENCES feature(id),
+    confidence TEXT, note TEXT, at TEXT NOT NULL, PRIMARY KEY (kind, unit, codebook));
+CREATE INDEX IF NOT EXISTS membership_node ON membership(node);
+CREATE TABLE IF NOT EXISTS embedding (
+    kind TEXT NOT NULL, unit INTEGER NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL, PRIMARY KEY (kind, unit));
+CREATE TABLE IF NOT EXISTS flag (
+    id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), feature INTEGER NOT NULL REFERENCES feature(id),
+    realization INTEGER REFERENCES realization(id), other INTEGER REFERENCES feature(id), verdict TEXT NOT NULL, note TEXT, standing INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS flag_codebook ON flag(codebook);
 CREATE TABLE IF NOT EXISTS assignment (
     realization INTEGER NOT NULL REFERENCES realization(id), codebook INTEGER NOT NULL REFERENCES codebook(id),
     feature INTEGER REFERENCES feature(id), confidence TEXT, at TEXT NOT NULL, note TEXT, PRIMARY KEY (realization, codebook));
 CREATE TABLE IF NOT EXISTS vector (
     realization INTEGER PRIMARY KEY REFERENCES realization(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
-CREATE INDEX IF NOT EXISTS assignment_feature ON assignment(feature);
-CREATE TABLE IF NOT EXISTS flag (
-    id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), feature INTEGER NOT NULL REFERENCES feature(id),
-    realization INTEGER REFERENCES realization(id), other INTEGER REFERENCES feature(id), verdict TEXT NOT NULL, note TEXT, standing INTEGER DEFAULT 0);
-CREATE INDEX IF NOT EXISTS flag_codebook ON flag(codebook);
+CREATE TABLE IF NOT EXISTS alignment (
+    feature INTEGER PRIMARY KEY REFERENCES feature(id), global INTEGER REFERENCES feature(id), confidence TEXT, note TEXT, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fvector (
+    feature INTEGER PRIMARY KEY REFERENCES feature(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+
+-- a profile: the settings a run uses (a model and endpoint per role, the budget), by name
+CREATE TABLE IF NOT EXISTS profile (
+    name TEXT PRIMARY KEY, params TEXT NOT NULL, at TEXT NOT NULL);
+
+-- history: a checkpoint of one corpus (or the seed line) as content-addressed blobs under runs/history/objects
+CREATE TABLE IF NOT EXISTS checkpoint (
+    id INTEGER PRIMARY KEY, corpus TEXT NOT NULL, job INTEGER, at TEXT NOT NULL, note TEXT, tree TEXT NOT NULL, counts TEXT NOT NULL, bytes INTEGER);
 
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
@@ -118,12 +138,26 @@ class Store:
             self._migrate()
 
     def _migrate(self) -> None:
-        """Columns added after a store was created: provider and billed on call (2026-09-10), realization on reading and head on realization (stage 2)."""
-        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT"))), ("assignment", (("note", "TEXT"),)), ("feature", (("round", "INTEGER"),)), ("flag", (("standing", "INTEGER DEFAULT 0"),))):
+        """Columns added after a store was created, and the legacy tables copied into membership and embedding (rows not yet
+        there; the legacy tables stay for older code still writing them)."""
+        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)),
+                            ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT"))), ("assignment", (("note", "TEXT"),)),
+                            ("feature", (("round", "INTEGER"),)), ("flag", (("standing", "INTEGER DEFAULT 0"),))):
             have = {r[1] for r in self.con.execute(f"PRAGMA table_info({table})")}
             for col, typ in cols:
                 if col not in have:
                     self.con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.con.execute("CREATE INDEX IF NOT EXISTS reading_realization ON reading(realization)")   # after the column exists
+        # the legacy copies write only when the legacy table holds rows the new table lacks, so a reader opening a store
+        # beside a running job does not queue behind its write lock for nothing
+        for legacy, kind, target, copy in (
+                ("assignment", "realization", "membership", "INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) SELECT 'realization', realization, codebook, feature, confidence, note, at FROM assignment"),
+                ("vector", "realization", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'realization', realization, model, dim, vec FROM vector"),
+                ("fvector", "feature", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'feature', feature, model, dim, vec FROM fvector")):
+            n_legacy = self.con.execute(f"SELECT COUNT(*) FROM {legacy}").fetchone()[0]
+            n_have = self.con.execute(f"SELECT COUNT(*) FROM {target} WHERE kind=?", (kind,)).fetchone()[0] if n_legacy else 0
+            if n_legacy > n_have:
+                self.con.execute(copy)
         self.con.commit()                        # called under self.lock from migrate()
 
     def insert(self, table: str, row: dict[str, Any]) -> int:

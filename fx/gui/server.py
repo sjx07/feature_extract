@@ -14,12 +14,17 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import decompose, jobs
 from .. import library as L
+from .. import align as A
+from .. import cube as C
+from .. import settings as S
+from .. import ingest as I
+from .. import history as H
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -120,6 +125,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def api_jobs():
+        from ..jobs import reap
+        reap(store)
         return [dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT * FROM job ORDER BY id DESC LIMIT 50")]
 
     @app.post("/api/jobs")
@@ -164,7 +171,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         group = dict(store.one("SELECT * FROM feature WHERE id=?", (f["parent"],))) if f["parent"] else None
         ms = L.members(store, f["codebook"], fid, 500)
         readings = [dict(r) for r in store.rows("SELECT r.id, r.prompt, r.declaration, r.condition, s.lo, s.hi, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 200)) text, r.realization FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
-                                                "WHERE r.realization IN (SELECT realization FROM assignment WHERE codebook=? AND feature=?) ORDER BY r.prompt LIMIT 300", (f["codebook"], fid))]
+                                                "WHERE r.realization IN (SELECT unit FROM membership WHERE kind='realization' AND codebook=? AND node=?) ORDER BY r.prompt LIMIT 300", (f["codebook"], fid))]
         fl = [x for x in L.flags(store, f["codebook"]) if x["feature"] == fid or x["other"] == fid]
         lineage = []
         prev = f["prev"]
@@ -173,7 +180,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             if not r:
                 break
             lineage.append(dict(r)); prev = r["prev"]
-        return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage}
+        al = store.one("SELECT m.node global, m.note, g.name global_name FROM membership m LEFT JOIN feature g ON g.id=m.node WHERE m.kind='feature' AND m.unit=?", (fid,))
+        return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage, "aligned": dict(al) if al else None}
 
     @app.get("/api/library/preview")
     def api_library_preview(corpus: str, kind: str = "guidance", step: str = "assign", model: str = ""):
@@ -200,6 +208,224 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
         threading.Thread(target=work, daemon=True).start()
         return {"id": jid, "log": str(ws.job_log(jid))}
+
+    # ---- stage 3: the seed library
+    @app.get("/api/seed")
+    def api_seed(kind: str = "guidance"):
+        cb = A.seed_codebook(store, kind)
+        fl = [dict(r) for r in store.rows("SELECT f.*, x.name global_name, y.name member_name FROM flag f JOIN feature x ON x.id=f.feature LEFT JOIN feature y ON y.id=f.other WHERE f.codebook=?", (cb,))]
+        return {"status": A.status(store, kind), "groups": A.globals_(store, kind), "open": A.open_cards(store, kind), "flags": fl, "libraries": A.libraries(store, kind)}   # counts under status; the lists keep their names
+
+    @app.post("/api/align/jobs")
+    def api_align_job(body: dict):
+        kind, step = body.get("kind") or "guidance", body.get("step") or "round"
+        model = body.get("model") or DEFAULT_MODEL
+        workers = int(body.get("workers") or 64)
+        params = {"kind": kind, "workers": workers, "effort": body.get("effort") or "low", "rounds": int(body.get("rounds") or 5), "codebook_model": body.get("codebook_model") or None, "from": "gui"}
+        jid = jobs.start(store, ws, f"align:{step}", "seed", model, params, 0)
+        stop = threading.Event()
+        running[jid] = stop
+        budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else float("inf")
+        client = Client(store, base_url=body.get("base_url") or None, max_connections=workers + 64, budget=budget)
+
+        def work():
+            jobs.run_align(store, ws, client, jid, kind, step, model=model, codebook_model=params["codebook_model"], workers=workers, effort=params["effort"], rounds=params["rounds"], stop=stop)
+            running.pop(jid, None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"id": jid, "log": str(ws.job_log(jid))}
+
+    # ---- the cube: the Library side, readings × prompt fields × the seed's hierarchy
+    @app.get("/api/cube")
+    def api_cube(request: Request, kind: str = "guidance", view: str = "features", limit: int = 300):
+        f = C.parse_filters(dict(request.query_params))
+        return C.prompts(store, kind, f, limit) if view == "prompts" else C.slice(store, kind, f)
+
+    # ---- ingest: corpora kept, profiles, one run through the stages
+    @app.get("/api/ingest")
+    def api_ingest(kind: str = "guidance"):
+        js = [dict(r) | {"params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT id, kind, corpus, model, status, done, total, spent, started, finished, params FROM job ORDER BY id DESC LIMIT 40")]
+        live = {j["id"]: j["live"] for j in I.running_jobs(store, ws)}
+        for j in js:
+            if j["status"] == "running" and not live.get(j["id"], True):
+                j["status"] = "stale"
+        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+
+    @app.post("/api/jobs/{jid}/close")
+    def api_job_close(jid: int):
+        """A row left running by a process that died: closed by hand from the jobs page."""
+        if jid in running:
+            raise HTTPException(409, "this job is running in this server; stop it instead")
+        return I.close_job(store, jid)
+
+    @app.get("/api/ingest/estimate")
+    def api_ingest_estimate(profile: str = "default", corpora: str = ""):
+        try:
+            prof = I.profile(store, profile)
+        except KeyError:
+            raise HTTPException(404, "no such profile")
+        kind = prof.get("kind") or "guidance"
+        names = [n for n in corpora.split(",") if n] or [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"]]
+        est = {n: I.estimate(store, n, prof, kind) for n in names}
+        return {"profile": profile, "kind": kind, "corpora": est, "total": round(sum(e["total"] for e in est.values()), 2)}
+
+    @app.post("/api/corpus/{name}/rename")
+    def api_corpus_rename(name: str, body: dict):
+        try:
+            return I.rename(store, name, str(body.get("name") or ""))
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/corpus/{name}/retag")
+    def api_corpus_retag(name: str, body: dict):
+        try:
+            return I.retag(store, name, body.get("domain"), body.get("tags") or None)
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    @app.delete("/api/corpus/{name}")
+    def api_corpus_delete(name: str):
+        if name in {j for j in running_corpora()}:
+            raise HTTPException(409, "a job is running on this corpus; stop it first")
+        try:
+            return I.delete(store, name)
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    def running_corpora():
+        return [r["corpus"] for r in store.rows("SELECT corpus FROM job WHERE status='running'")]
+
+    @app.post("/api/prompts/delete")
+    def api_prompts_delete(body: dict):
+        return I.delete_prompts(store, [str(x) for x in (body.get("ids") or [])])
+
+    @app.get("/api/profiles")
+    def api_profiles():
+        return I.profiles(store)
+
+    @app.post("/api/profiles")
+    def api_profile_save(body: dict):
+        try:
+            return I.save_profile(store, str(body.get("name") or ""), body.get("params") or {})
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.delete("/api/profiles/{name}")
+    def api_profile_delete(name: str):
+        I.delete_profile(store, name); return {"ok": True}
+
+    @app.post("/api/ingest/run")
+    def api_ingest_run(body: dict):
+        """One job per corpus, run one after another in one thread under one profile; 'pending' means every corpus with a stage to do."""
+        try:
+            prof = I.profile(store, body.get("profile") or "default")
+        except KeyError:
+            raise HTTPException(404, "no such profile")
+        kind = body.get("kind") or prof.get("kind") or "guidance"
+        names = body.get("corpora") or []
+        if names == "pending" or body.get("pending"):
+            names = [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"] and not c["running"]]
+        names = [n for n in names if n not in running_corpora()]
+        if not names:
+            raise HTTPException(400, "nothing to run")
+        budget = float(prof.get("budget") or 0) or float("inf")
+        jids = []
+        for n in names:
+            jids.append(jobs.start(store, ws, "profile", n, prof.get("batch_model") or DEFAULT_MODEL, {"profile": body.get("profile") or "default", "kind": kind, "stage": "queued", "from": "gui"} | {k: prof.get(k) for k in ("decompose_model", "codebook_model", "batch_model", "workers", "effort")}, 0))
+        stop = threading.Event()
+        for jid in jids:
+            running[jid] = stop
+
+        def work():
+            for n, jid in zip(names, jids):
+                if stop.is_set():
+                    jobs.finish(store, ws, jid, "stopped"); running.pop(jid, None); continue
+                client = Client(store, budget=budget, base_url=prof.get("base_url") or None, max_connections=int(prof.get("workers") or 128) + 64)
+                try:
+                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM corpus WHERE name='seed'") else None
+                except Exception as e:  # noqa: BLE001  a checkpoint failure must not stop the run
+                    logging.getLogger("fx").warning("checkpoint before job %d failed: %s", jid, e)
+                jobs.run_profile(store, ws, client, jid, n, prof, kind=kind, stop=stop)
+                running.pop(jid, None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"ids": jids, "corpora": names}
+
+    # ---- history: checkpoints per corpus, restore, diff, branch
+    @app.get("/api/history")
+    def api_history(corpus: str = ""):
+        return {"checkpoints": H.checkpoints(store, corpus or None), "objects": str(H.objects_dir(ws)), "workspace": str(ws.root)}
+
+    @app.post("/api/history/checkpoint")
+    def api_history_checkpoint(body: dict):
+        try:
+            return H.checkpoint(store, ws, str(body.get("corpus") or ""), note=body.get("note") or "by hand")
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    @app.get("/api/history/{cid}/diff")
+    def api_history_diff(cid: int):
+        try:
+            return H.diff(store, cid, ws)
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+
+    @app.post("/api/history/{cid}/restore")
+    def api_history_restore(cid: int):
+        live = {j["corpus"] for j in I.running_jobs(store, ws) if j["live"]}
+        try:
+            r = H.restore(store, ws, cid, live_corpora=live)
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        C._cache.clear()
+        return r
+
+    @app.post("/api/history/{cid}/branch")
+    def api_history_branch(cid: int, body: dict):
+        try:
+            return H.branch(store, ws, cid, str(body.get("name") or ""))
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/jobs/{jid}/stages")
+    def api_job_stages(jid: int):
+        r = store.one("SELECT corpus, params FROM job WHERE id=?", (jid,))
+        if not r:
+            raise HTTPException(404, "no such job")
+        k = json.loads(r["params"] or "{}").get("kind") or "guidance"
+        return I.stages(store, r["corpus"], "guidance" if k == "both" else k)
+
+    @app.get("/api/cube/node/{fid}")
+    def api_cube_node(request: Request, fid: int, kind: str = "guidance"):
+        d = C.node(store, kind, C.parse_filters(dict(request.query_params)), fid)
+        if not d:
+            raise HTTPException(404, "no such feature in this kind's libraries")
+        return d
+
+    # ---- settings: keys and endpoints by reference; a key is written blind and never read back
+    @app.get("/api/settings")
+    def api_settings():
+        return S.status() | {"default_model": DEFAULT_MODEL, "models": models()}
+
+    @app.post("/api/settings/key")
+    def api_settings_key(body: dict):
+        name, value = str(body.get("name") or "").strip(), str(body.get("value") or "")
+        if name not in S.KEYS and name not in S.SETTINGS:
+            raise HTTPException(400, f"not a known key or setting: {name}")
+        try:
+            return S.save(name, value.strip())
+        except (ValueError, OSError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/settings/probe")
+    def api_settings_probe(body: dict):
+        return S.probe(body.get("endpoint") or None, body.get("base_url") or None)
 
     @app.post("/api/jobs/{jid}/stop")
     def api_job_stop(jid: int):

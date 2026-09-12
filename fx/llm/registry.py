@@ -60,6 +60,11 @@ OPENROUTER = Endpoint("openrouter", OPENROUTER_URL, "OPENROUTER_API_KEY")
 LOCAL = Endpoint("local", LOCAL_URL, "", local=True)
 
 
+def local_url() -> str:
+    """The local server's URL as of now: FX_LOCAL_URL may be set after import (the settings page writes the key file)."""
+    return os.environ.get("FX_LOCAL_URL", LOCAL_URL)
+
+
 def _custom() -> dict:
     p = os.environ.get("FX_MODELS")
     if p and Path(p).exists():
@@ -78,7 +83,8 @@ def resolve(model: str, base_url: Optional[str] = None) -> Endpoint:
         return OPENAI
     if "/" in model and model.split("/", 1)[0] in ("deepseek", "qwen", "anthropic", "google", "meta-llama", "mistralai", "x-ai"):
         return OPENROUTER
-    return LOCAL
+    u = local_url()
+    return LOCAL if u == LOCAL.base_url else Endpoint("local", u, "", local=True)
 
 
 def price(model: str, endpoint: Optional[Endpoint] = None) -> tuple[float, float]:
