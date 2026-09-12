@@ -12,9 +12,9 @@ from ..llm.registry import DEFAULT_MODEL
 from ..store import Store
 from .cards import cards, libraries
 from .level import TAU, feature_level
-from .seed import globals_, open_cards, regroup_by_aspect, seed_codebook, status
+from .seed import globals_, open_cards, regroup_by_aspect, reset, seed_codebook, status
 
-__all__ = ["assign", "candidates", "cards", "embed", "feature_level", "globals_", "judge", "libraries", "name", "open_cards", "regroup_by_aspect", "reopen", "run_round", "seed_codebook", "status", "threshold"]
+__all__ = ["assign", "candidates", "cards", "embed", "feature_level", "globals_", "judge", "libraries", "name", "open_cards", "regroup_by_aspect", "reopen", "reset", "run_round", "seed_codebook", "status", "threshold"]
 
 
 def embed(store: Store, kind: str, enc=None, model: Optional[str] = None) -> dict:

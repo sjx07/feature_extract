@@ -9,7 +9,10 @@ from .cards import render_cards
 _WHAT = ("Each FEATURE below comes from the library of one corpus (one domain of prompts): its name, its definition, the clearest "
          "wordings it covers, and its support there. A GLOBAL feature is one reusable instruction that prompts in several domains "
          "give under their own domain nouns: 'generate a valid SQL query' and 'generate a valid Cypher query' are one global feature; "
-         "'translate a question into a query' and 'fix an erroneous query' are two. Domain nouns are never identity; polarity always is.")
+         "'translate a question into a query' and 'fix an erroneous query' are two. A feature that adds a rule to a global's instruction "
+         "('quote identifiers in the query' beside 'generate a valid query'; 'box the final answer' beside 'follow the output format') "
+         "is a narrower, different instruction, not an instance: narrower features become global features of their own. Domain nouns "
+         "are never identity; polarity always is.")
 
 ASSIGN = """# TASK
 For each FEATURE below, say which GLOBAL feature of the seed library it is an instance of, or null.
@@ -17,9 +20,10 @@ For each FEATURE below, say which GLOBAL feature of the seed library it is an in
 
 # RULES
 - A feature is an instance of a global when its definition and wordings give the same instruction as the global's
-  definition, domain nouns aside; polarity must match. A narrower feature (the instruction plus a constraint) is still
-  an instance. Two different instructions on the same topic are not.
-- One global or null per feature ("feature" in the reply is the global's S-id). Do not stretch a definition to avoid null.
+  definition, domain nouns aside; polarity must match. A narrower feature (the instruction plus a rule or constraint)
+  is not an instance, nor are two different instructions on the same topic: null, so it can become its own global.
+- One global or null per feature ("feature" in the reply is the global's S-id). Do not stretch a definition to avoid null;
+  most features of a domain are its own and get null.
 - Reply with the JSON below and nothing else, one entry per feature id, in the given order.
 
 # OUTPUT
@@ -33,16 +37,18 @@ For each FEATURE below, say which GLOBAL feature of the seed library it is an in
 """
 
 NAME = """# TASK
-A cluster of FEATURES from the libraries of different corpora that retrieval found to say nearly the same thing.
-Decide whether they are instances of one global feature the seed library lacks. If so, name and define it across
-domains; if not, reject.
+A neighbourhood of FEATURES from the libraries of different corpora: the first is the one under study, the rest are its
+nearest by retrieval, which says they are about the same things, not that they say the same thing. Decide whether two or
+more of them, from different corpora, are instances of one global feature the seed library lacks. If so, name and define
+it across domains and list exactly those; if not, reject. Most neighbourhoods hold no global: reject is the usual answer.
 {what}
 
 # RULES
 - "same": name the global as a short imperative phrase with no domain nouns ("generate a valid query", not "generate
   a valid SQL query"); define it in one sentence a reader can test any domain's feature against; give its polarity;
   list in "members" the feature ids that are instances (leave out the ones that are a different instruction); "group"
-  is the id of the seed group (one per aspect: {aspects}) the global belongs to; never a new group.
+  is the id of the seed group (one per aspect: {aspects}) the global belongs to; never a new group. A member must give
+  the same instruction, not a narrower or broader one; the feature under study need not be a member.
 - "reject": the cluster mixes instructions, or it is already a global feature (say which in "why").
 - A member must come from at least two corpora for a global to exist; a single corpus's feature is domain-specific
   for now, however many of its own features are listed.
@@ -61,7 +67,7 @@ domains; if not, reject.
 JUDGE = """# TASK
 One GLOBAL feature of the seed library and its member features, one or more per corpus, each shown with a sample of
 the prompt wordings it covers. Say which members are not instances of the global as defined (their wordings give a
-different instruction, not merely the same instruction with domain nouns or a constraint). Report only; nothing is
+different or narrower instruction, not merely the same instruction under other domain nouns). Report only; nothing is
 changed by your reply.
 
 # OUTPUT

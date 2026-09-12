@@ -38,5 +38,7 @@ class Level:
     allow_new_group: bool = True                # may the namer create a group (the seed's groups are the aspects, fixed at birth)
     batch: int = 20
     shortlist_k: int = 4
+    neighbourhood: int = 0                      # >0: candidates are neighbourhoods (a seed unit and its k nearest from other groups),
+                                                # no threshold; the namer decides and a rejected seed is specific. 0: threshold clusters
     aspects: tuple = ()
     label: str = ""                             # for logs and notes: 'text2sql guidance', 'seed guidance'

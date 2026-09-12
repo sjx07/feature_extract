@@ -249,6 +249,13 @@ def assign(store: Store, client: Client, lv: Level, model: str, workers: int = 1
         summary["second_pass"] = len(jobs2)
         if jobs2:
             _run(store, client, lv, jobs2, valid, model, workers, effort, note + ":shortlist", summary, progress, stop, jd)
+    if not summary["stopped"] and jd:
+        # the assigner has adjudicated every reopened unit it was offered: the ones it left open drop the judge's reason,
+        # so they are ordinary open units from here (at the feature level, a seed once, then specific)
+        offered = {u["id"] for b, _, _ in jobs for u in b} | ({u["id"] for b, _, _ in jobs2 for u in b} if shortlist else set())
+        with store.lock:
+            store.con.executemany("UPDATE membership SET note=NULL WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND note LIKE 'reopened:%'", [(lv.kind, lv.codebook, u) for u in offered if u in jd])
+            store.con.commit()
     summary["anchor_agreement"] = anchors(store, lv)
     return summary
 
@@ -400,6 +407,13 @@ def candidates(store: Store, lv: Level, tau: Optional[float] = None) -> dict:
     opened = open_units(store, lv)
     ids, m = vectors(store, lv.kind, [u["id"] for u in opened])
     by_id = {u["id"]: u for u in opened}
+    with store.lock:                              # every open unit has a membership row, so the marks below have somewhere to go
+        for u in opened:
+            if u["note"] is None:
+                store.con.execute("INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) VALUES (?,?,?,NULL,NULL,NULL,?)", (lv.kind, u["id"], lv.codebook, now()))
+        store.con.commit()
+    if lv.neighbourhood:
+        return _neighbourhoods(store, lv, ids, m, by_id)
     parent = list(range(len(ids)))
 
     def find(x):
@@ -430,14 +444,54 @@ def candidates(store: Store, lv: Level, tau: Optional[float] = None) -> dict:
     clusters.sort(key=lambda c: (-c["groups"], -len(c["members"])))
     specific = [ids[i] for i in range(len(ids)) if not has_neighbour[i]]
     with store.lock:
-        for u in opened:
-            if u["note"] is None and u["id"] not in {int(r["unit"]) for r in []}:
-                store.con.execute("INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) VALUES (?,?,?,NULL,NULL,NULL,?)", (lv.kind, u["id"], lv.codebook, now()))
         store.con.executemany("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", [(lv.kind, lv.codebook, u) for u in specific])
         store.con.executemany("UPDATE membership SET note=NULL WHERE kind=? AND codebook=? AND unit=? AND note='specific'", [(lv.kind, lv.codebook, u) for u in ids if u not in specific])
         store.con.commit()
     in_cluster = {u["id"] for c in clusters for u in c["members"]}
     return {"tau": round(tau, 3), "open": len(ids), "specific": len(specific), "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": len(ids) - len(specific) - len(in_cluster)}
+
+
+def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_id: dict) -> dict:
+    """Candidates without a threshold. Every open unit not yet marked specific is a seed; its cluster is the seed and its k
+    nearest open units from other groups with the same polarity (specific ones included, so the mark is reversible), each unit
+    in one cluster a round. The namer decides what the neighbourhood holds; a rejected seed becomes specific, having had its
+    look. A seed whose partners are all taken this round waits for the next. Ends when no seed is left."""
+    n = len(ids)
+    sims = m @ m.T if n > 1 else np.zeros((max(n, 1), max(n, 1)))
+
+    def partner(i: int, j: int) -> bool:
+        ui, uj = by_id[ids[i]], by_id[ids[j]]
+        return i != j and ui["polarity"] == uj["polarity"] and ui["groups"] & uj["groups"] != ui["groups"] | uj["groups"]
+    ranked = {i: [int(j) for j in np.argsort(-sims[i]) if partner(i, int(j))] for i in range(n)}
+    seeds = [i for i in range(n) if by_id[ids[i]]["note"] != "specific"]
+    seeds.sort(key=lambda i: -(sims[i][ranked[i][0]] if ranked[i] else -2.0))
+    taken: set[int] = set(); clusters = []; waiting = 0; alone = []
+    for i in seeds:
+        if i in taken:
+            continue
+        if not ranked[i]:
+            alone.append(ids[i]); continue                    # no unit of another group to compare with at all
+        free = [j for j in ranked[i] if j not in taken][:lv.neighbourhood]
+        if not free:
+            waiting += 1; continue
+        taken.add(i); taken.update(free)
+        us = [by_id[ids[x]] for x in [i] + free]
+        clusters.append({"members": us, "groups": len(set().union(*(u["groups"] for u in us))), "seed": ids[i]})
+    with store.lock:
+        store.con.executemany("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", [(lv.kind, lv.codebook, u) for u in alone])
+        store.con.commit()
+    specific = sum(1 for u in by_id.values() if u["note"] == "specific") + len(alone)
+    in_cluster = {u["id"] for c in clusters for u in c["members"]}
+    return {"tau": None, "open": n, "specific": specific, "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - specific - len(in_cluster)}
+
+
+def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
+    """A neighbourhood's seed that the namer did not place has had its look: specific, unless it carries a judge's reason still
+    waiting for the assigner."""
+    if c.get("seed") is not None and c["seed"] not in kept:
+        with store.lock:
+            store.con.execute("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", (lv.kind, lv.codebook, c["seed"]))
+            store.con.commit()
 
 
 def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
@@ -462,6 +516,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         ngroups = len(set().union(*(by_id[u]["groups"] for u in kept))) if kept else 0
         if decision == "reject" or len(kept) < lv.named_min_members or ngroups < lv.named_min_groups or not str(obj.get("name") or "").strip():
             summary["rejected"] += 1
+            _seed_looked(store, lv, c, [])
             if progress:
                 progress(done, len(clusters), {"cluster": k, "decision": "reject", "cost": r.cost, "calls": 1})
             continue
@@ -497,6 +552,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
                                   (lv.kind, uid, lv.codebook, nid, now()))
             store.con.commit()
         summary["assigned"] += len(kept)
+        _seed_looked(store, lv, c, kept)
         if progress:
             progress(done, len(clusters), {"cluster": k, "decision": row["level"], "name": row["name"], "cost": r.cost, "calls": 1})
     return summary
@@ -537,7 +593,7 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
             n = step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=min(workers, 16), progress=progress)) if c["clusters"] else {"variants": 0, "features": 0, "clusters": 0}
             step("assign", lambda: assign(store, client, lv, batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
             j = step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
-            if n["variants"] + n["features"] < min_yield and j["new"] == 0:
+            if not lv.neighbourhood and n["variants"] + n["features"] < min_yield and j["new"] == 0:   # neighbourhoods end by running out of seeds
                 why = f"settled: round {rnd} named {n['variants'] + n['features']} nodes and the judge raised nothing new ({j['standing']} standing flags)"; break
     except Stopped:
         why = "stopped"

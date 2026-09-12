@@ -30,6 +30,24 @@ def seed_codebook(store: Store, kind: str) -> int:
     return cb
 
 
+def reset(store: Store, kind: str) -> dict:
+    """Delete the seed of a kind: its globals and groups, memberships, flags, alignments and codebook row. The cards'
+    embeddings stay (they key on the feature, not the seed), so the next round is born fresh without re-embedding."""
+    cid = get_corpus(store, SEED, "align")
+    r = store.one("SELECT id FROM codebook WHERE corpus=? AND kind=?", (cid, kind))
+    if not r:
+        return {"codebook": None, "deleted": {}}
+    cb = int(r["id"])
+    with store.lock:
+        d = {"flags": store.con.execute("DELETE FROM flag WHERE codebook=?", (cb,)).rowcount,
+             "memberships": store.con.execute("DELETE FROM membership WHERE kind='feature' AND codebook=?", (cb,)).rowcount,
+             "alignments": store.con.execute("DELETE FROM alignment WHERE global IN (SELECT id FROM feature WHERE codebook=?)", (cb,)).rowcount,
+             "nodes": store.con.execute("DELETE FROM feature WHERE codebook=?", (cb,)).rowcount}
+        store.con.execute("DELETE FROM codebook WHERE id=?", (cb,))
+        store.con.commit()
+    return {"codebook": cb, "deleted": d}
+
+
 def regroup_by_aspect(store: Store, kind: str) -> dict:
     """Repair for a seed whose naming calls invented groups: move every global under the aspect group its own group named,
     create the aspect groups if missing, drop the groups left empty."""
