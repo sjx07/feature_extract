@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 from ..llm import Client
+from ..llm.registry import reasoning_low
 from ..store import Store, now
 from ..util.ids import parse_id, parse_ids
 from ..util.jsonx import extract_object
@@ -71,7 +72,8 @@ def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
             store.con.commit()
 
 
-def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
+def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, effort: str = "low",
+         progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
     group_ids = {g["id"]: g for g in tr}
@@ -80,7 +82,8 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         return summary
     prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
     done = 0
-    for k, r in _stream(client, prompts, model, workers, f"{lv.label}:name:r{round_}", lv.system, schema=NAME_SCHEMA):
+    extra = reasoning_low(model, client.base_url) if effort == "low" else None       # the same knob as assign and judge, whatever the model
+    for k, r in _stream(client, prompts, model, workers, f"{lv.label}:name:r{round_}", lv.system, schema=NAME_SCHEMA, extra=extra):
         c = clusters[k]
         done += 1
         obj = extract_object(r.text) if r and r.text else None
