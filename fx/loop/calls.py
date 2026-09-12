@@ -13,7 +13,7 @@ ASSIGN_SCHEMA = {"type": "object", "properties": {"assignments": {"type": "array
     "id": {"type": "string"}, "feature": {"type": ["string", "null"]}, "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}, "required": ["id", "feature", "confidence"]}}}, "required": ["assignments"]}
 NAME_SCHEMA = {"type": "object", "properties": {
     "decision": {"type": "string", "enum": ["variant", "feature", "same", "reject"]}, "why": {"type": "string"}, "parent": {"type": ["string", "null"]},
-    "group": {"type": ["string", "null"]},
+    "group": {"type": ["string", "null"]}, "aspect": {"type": ["string", "null"]},
     "name": {"type": "string"}, "definition": {"type": "string"}, "polarity": {"type": "string", "enum": ["require", "forbid"]},
     "examples": {"type": "array", "items": {"type": "string"}}, "members": {"type": "array", "items": {"type": "string"}}},
     "required": ["decision", "why", "parent", "group", "name", "definition", "polarity", "examples", "members"], "additionalProperties": False}

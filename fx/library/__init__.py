@@ -21,7 +21,7 @@ from .coldstart import coldstart
 from .collapse import collapse, realizations
 from .level import wording_level
 
-__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest", "relook",
+__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest", "regroup", "relook",
            "leftovers", "members", "name", "nodes", "preview", "realizations", "reopen", "run_round", "status", "threshold", "vectors", "wording_level"]
 
 
@@ -54,6 +54,12 @@ def vectors(store: Store, ids: list[int]):
 def assign(store: Store, client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, batch: int = BATCH,
            only_open: bool = False, effort: str = "low", shortlist: bool = True, progress=None, stop: Optional[threading.Event] = None) -> dict:
     return E.assign(store, client, _level(store, corpus, kind, version), model, workers=workers, batch=batch, effort=effort, only_open=only_open, shortlist=shortlist, progress=progress, stop=stop)
+
+
+def regroup(store: Store, client, corpus: str, kind: str, model: str = COLDSTART_MODEL, version: Optional[int] = None, effort: str = "low", progress=None) -> dict:
+    lv = _level(store, corpus, kind, version)
+    rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (lv.codebook,))["r"])
+    return E.regroup(store, client, lv, rnd, model, effort=effort, progress=progress)
 
 
 def judge(store: Store, client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, effort: str = "low", progress=None) -> dict:

@@ -59,9 +59,18 @@ def tree(store: Store, lv: Level) -> list[dict]:
         node["support"], node["groups_n"] = node["own"], len(set().union(*(u["groups"] for u in ms)) if ms else set())
         node["anchors"] = [units[e]["label"] for e in node["examples"] if e in units]
     out = []
-    for g in by_parent.get(None, []):
+    roots = by_parent.get(None, [])
+    unplaced = [f for f in roots if f["level"] == "feature"]           # named with no fitting group yet; the group step places them
+    for aspect in sorted({f.get("aspect") or "other" for f in unplaced}):
+        roots.append({"id": None, "codebook": lv.codebook, "level": "group", "parent": None, "prev": None, "aspect": aspect, "name": f"unplaced · {aspect}",
+                      "definition": "features that fit no group yet; the group step files them under one or founds a group when three share a purpose",
+                      "polarity": None, "examples": [], "round": None, "unplaced": True})
+        by_parent[None] = [f for f in unplaced if (f.get("aspect") or "other") == aspect]
+        roots[-1]["_kids"] = by_parent[None]
+    for g in [x for x in roots if x["level"] == "group"]:
         g["features"] = []
-        for f in [x for x in by_parent.get(g["id"], []) if x["level"] == "feature"]:
+        kids = g.pop("_kids", None) or by_parent.get(g["id"], [])
+        for f in [x for x in kids if x["level"] == "feature"]:
             fill(f); f["variants"] = []
             for v in [x for x in by_parent.get(f["id"], []) if x["level"] == "variant"]:
                 fill(v); f["variants"].append(v); f["support"] += v["support"]; f["members_n"] += v["members_n"]

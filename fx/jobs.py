@@ -95,6 +95,8 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
             r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
         elif step == "reopen":
             r = L.reopen(store, int(L.latest(store, corpus, kind)["id"]))
+        elif step == "group":
+            r = L.regroup(store, client, corpus, kind, model=codebook_model or L.COLDSTART_MODEL, version=version, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
         elif step in ("cluster", "name"):
             cb = int(L.latest(store, corpus, kind)["id"])
             r = L.candidates(store, cb, corpus, kind)

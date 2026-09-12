@@ -12,7 +12,7 @@ from ..util.jsonx import extract_object
 from .level import Level
 from typing import Callable, Optional
 from .calls import NAME_SCHEMA, _stream
-from .state import node_vectors, members, nodes, open_units, tree, vectors
+from .state import members, nodes, open_units, tree, vectors
 
 # ---- candidates, name
 def candidates(store: Store, lv: Level) -> dict:
@@ -63,28 +63,6 @@ def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_i
     return {"open": n, "specific": len(marked), "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - len(marked | in_cluster)}
 
 
-def _nearest_group(store: Store, lv: Level, tr: list[dict], kept: list[int], aspect: Optional[str]) -> Optional[int]:
-    """The group whose features' vectors lie nearest the mean of the kept units' vectors; restricted to `aspect` when given and
-    some group carries it. None only when the tree has no group at all."""
-    cands = [g for g in tr if aspect is None or g.get("aspect") == aspect] or list(tr)
-    if not cands:
-        return None
-    ids, m = vectors(store, lv.kind, kept)
-    nid, nm = node_vectors(store, lv, tr)
-    if not ids or not nid:
-        return cands[0]["id"]
-    q = m.mean(axis=0); q = q / max(float(np.linalg.norm(q)), 1e-9)
-    of = dict(zip(nid, nm))
-    best, score = cands[0]["id"], -2.0
-    for g in cands:
-        vs = [of[f["id"]] for f in g["features"] if f["id"] in of]
-        if vs:
-            v = np.mean(vs, axis=0); s = float(v @ q) / max(float(np.linalg.norm(v)), 1e-9)
-            if s > score:
-                best, score = g["id"], s
-    return best
-
-
 def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
     """A neighbourhood's seed that the namer did not place has had its look: specific, unless it carries a judge's reason still
     waiting for the assigner."""
@@ -98,8 +76,8 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
          progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
-    group_ids = {g["id"]: g for g in tr}
-    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "placed_by_vector": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
+    group_ids = {g["id"]: g for g in tr if g["id"] is not None}
+    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "unplaced": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
     if not clusters:
         return summary
     prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
@@ -134,13 +112,12 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
             # when one was named), so the groups stay the ones the cold start (or the seed's aspects) laid down
             g = obj.get("group")
             gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
-            if gid is None:
-                aspect = str((g.get("aspect") if isinstance(g, dict) else g) or "").lower()
-                gid = _nearest_group(store, lv, tr, kept, aspect if aspect in lv.aspects else None)
-                summary["placed_by_vector"] += 1
-            if gid is None:
-                summary["rejected"] += 1; continue
-            row |= {"level": "feature", "parent": gid}
+            if gid is None:                          # unplaced: the group step (fx.loop.group) sees them all at once
+                aspect = str(obj.get("aspect") or (g.get("aspect") if isinstance(g, dict) else g) or "").lower()
+                summary["unplaced"] += 1
+                row |= {"level": "feature", "parent": None, "aspect": aspect if aspect in lv.aspects else "other"}
+            else:
+                row |= {"level": "feature", "parent": gid}
         nid = store.insert("feature", row)
         summary["variants" if row["level"] == "variant" else "features"] += 1
         with store.lock:

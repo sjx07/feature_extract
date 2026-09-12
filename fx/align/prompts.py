@@ -95,7 +95,7 @@ SYSTEM = ("You are aligning feature libraries built from prompt corpora in diffe
 def render_globals(groups: list[dict], anchors: bool = False, names_only: bool = False, members_of=None) -> str:
     out = []
     for g in groups:
-        out.append(f"G{g['id']} {g['name']} ({g.get('aspect') or 'other'})" + ("" if names_only else f": {g.get('definition') or ''}"))
+        out.append((f"G{g['id']} {g['name']}" if g["id"] is not None else "(unplaced)") + f" ({g.get('aspect') or 'other'})" + ("" if names_only else f": {g.get('definition') or ''}"))
         for s in g["features"]:
             line = f"  S{s['id']} ({s['polarity']}) {s['name']}"
             if not names_only:
