@@ -106,15 +106,34 @@ def facts(store: Store, kind: str) -> tuple[list[tuple], dict]:
 
 
 def parse_filters(params: dict) -> dict[str, set[str]]:
-    """Query parameters to filters: a field's values comma-separated; values within a field are OR, fields AND."""
-    return {k: {v for v in str(vs).split(",") if v} for k, vs in params.items() if k in FIELD_ORDER and vs}
+    """Query parameters to filters: a field's values comma-separated; values within a field are OR, fields AND. `text` is
+    the search box: prompts whose text, or one of whose wordings, contains it."""
+    out = {k: {v for v in str(vs).split(",") if v} for k, vs in params.items() if k in FIELD_ORDER and vs}
+    if str(params.get("text") or "").strip():
+        out["text"] = {str(params["text"]).strip()}
+    return out
 
 
-def select(fields: dict[str, dict[str, str]], filters: dict[str, set[str]], skip: Optional[str] = None) -> set[str]:
+def text_matches(store: Store, text: str) -> set[str]:
+    """Prompts matching the search box: the words in the prompt's text, or a wording (a reading's declaration) containing it."""
+    key = ("text", text.lower()) + _version(store)
+    if key in _cache:
+        return _cache[key]
+    like = f"%{text}%"
+    ids = {r["id"] for r in store.rows("SELECT id FROM prompt WHERE text LIKE ?", (like,))}
+    ids |= {r["prompt"] for r in store.rows("SELECT DISTINCT prompt FROM reading WHERE declaration LIKE ?", (like,))}
+    _cache[key] = ids
+    return ids
+
+
+def select(fields: dict[str, dict[str, str]], filters: dict[str, set[str]], skip: Optional[str] = None, store: Optional[Store] = None) -> set[str]:
     out = set()
     for pid, f in fields.items():
-        if all(k == skip or f.get(k) in vs for k, vs in filters.items() if k != "polarity"):
+        if all(k == skip or f.get(k) in vs for k, vs in filters.items() if k not in ("polarity", "text")):
             out.add(pid)
+    if "text" in filters and store is not None:
+        for t in filters["text"]:
+            out &= text_matches(store, t)
     return out
 
 
@@ -123,13 +142,13 @@ def slice(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
     and the hierarchy present in it."""
     fields = prompt_fields(store)
     rows, h = facts(store, kind)
-    selected = select(fields, filters)
+    selected = select(fields, filters, store=store)
     pol = filters.get("polarity")
     decomposed = {r["prompt"] for r in store.rows("SELECT prompt FROM decomp WHERE status='done'")} & selected
     # facets
     facets = []
     for name in FIELD_ORDER[:-1]:
-        base = select(fields, filters, skip=name) if name in filters else selected
+        base = select(fields, filters, skip=name, store=store) if name in filters else selected
         counts: dict[str, int] = defaultdict(int)
         for pid in base:
             v = fields[pid].get(name)
@@ -193,7 +212,7 @@ def node(store: Store, kind: str, filters: dict[str, set[str]], fid: int, limit:
     nodes = h["nodes"]
     if fid not in nodes:
         return {}
-    selected = select(fields, filters)
+    selected = select(fields, filters, store=store)
     f = nodes[fid]; is_global = f["codebook"] == h["seed"]
     feats = {x for x, g in h["to_global"].items() if g == fid} if is_global else {fid}
     by_feat: dict[int, dict[int, set]] = defaultdict(lambda: defaultdict(set)); prompts: dict[str, int] = defaultdict(int)
@@ -238,7 +257,7 @@ def prompts(store: Store, kind: str, filters: dict[str, set[str]], limit: int = 
     (globals by name, else the corpus feature), by readings."""
     fields = prompt_fields(store)
     rows, h = facts(store, kind)
-    selected = select(fields, filters)
+    selected = select(fields, filters, store=store)
     pol = filters.get("polarity")
     per: dict[str, dict] = {}
     for pid, rid, node, feat, glob in rows:

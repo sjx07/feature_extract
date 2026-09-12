@@ -255,6 +255,17 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             raise HTTPException(409, "this job is running in this server; stop it instead")
         return I.close_job(store, jid)
 
+    @app.get("/api/ingest/estimate")
+    def api_ingest_estimate(profile: str = "default", corpora: str = ""):
+        try:
+            prof = I.profile(store, profile)
+        except KeyError:
+            raise HTTPException(404, "no such profile")
+        kind = prof.get("kind") or "guidance"
+        names = [n for n in corpora.split(",") if n] or [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"]]
+        est = {n: I.estimate(store, n, prof, kind) for n in names}
+        return {"profile": profile, "kind": kind, "corpora": est, "total": round(sum(e["total"] for e in est.values()), 2)}
+
     @app.post("/api/corpus/{name}/rename")
     def api_corpus_rename(name: str, body: dict):
         try:
@@ -305,21 +316,21 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
     @app.post("/api/ingest/run")
     def api_ingest_run(body: dict):
         """One job per corpus, run one after another in one thread under one profile; 'pending' means every corpus with a stage to do."""
-        kind = body.get("kind") or "guidance"
         try:
             prof = I.profile(store, body.get("profile") or "default")
         except KeyError:
             raise HTTPException(404, "no such profile")
+        kind = body.get("kind") or prof.get("kind") or "guidance"
         names = body.get("corpora") or []
         if names == "pending" or body.get("pending"):
-            names = [c["name"] for c in I.corpora(store, kind, ws) if c["pending"] and not c["running"]]
+            names = [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"] and not c["running"]]
         names = [n for n in names if n not in running_corpora()]
         if not names:
             raise HTTPException(400, "nothing to run")
         budget = float(prof.get("budget") or 0) or float("inf")
         jids = []
         for n in names:
-            jids.append(jobs.start(store, ws, "profile", n, prof.get("batch_model") or DEFAULT_MODEL, {"profile": body.get("profile") or "default", "kind": kind, "stage": "queued", "from": "gui"} | {k: prof[k] for k in ("decompose_model", "codebook_model", "batch_model", "workers", "effort")}, 0))
+            jids.append(jobs.start(store, ws, "profile", n, prof.get("batch_model") or DEFAULT_MODEL, {"profile": body.get("profile") or "default", "kind": kind, "stage": "queued", "from": "gui"} | {k: prof.get(k) for k in ("decompose_model", "codebook_model", "batch_model", "workers", "effort")}, 0))
         stop = threading.Event()
         for jid in jids:
             running[jid] = stop
@@ -340,7 +351,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         r = store.one("SELECT corpus, params FROM job WHERE id=?", (jid,))
         if not r:
             raise HTTPException(404, "no such job")
-        return I.stages(store, r["corpus"], json.loads(r["params"] or "{}").get("kind") or "guidance")
+        k = json.loads(r["params"] or "{}").get("kind") or "guidance"
+        return I.stages(store, r["corpus"], "guidance" if k == "both" else k)
 
     @app.get("/api/cube/node/{fid}")
     def api_cube_node(request: Request, fid: int, kind: str = "guidance"):

@@ -82,7 +82,7 @@ def test_run_profile_runs_the_stages_in_order_and_stops(tmp_path, monkeypatch):
     j = store.one("SELECT status, params FROM job WHERE id=?", (jid,))
     assert j["status"] == "done" and json.loads(j["params"])["stage"] == "done"
     log = ws.job_log(jid).read_text()
-    assert "stage decompose result" in log and "stage codebook result" in log and "stage align result" in log
+    assert "stage decompose result" in log and "stage codebook guidance result" in log and "stage align guidance result" in log
     # a stop inside the codebook stage ends the run there
     order.clear()
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "stopped"})
@@ -139,3 +139,24 @@ def test_a_running_row_whose_log_went_quiet_is_stale_not_running(tmp_path):
     j = I.running_jobs(store, ws)[0]
     assert not j["live"] and j["idle_minutes"] > 50 and I.corpora(store, ws=ws)[0]["running"] is None
     assert I.close_job(store, jid)["closed"] and store.one("SELECT status FROM job WHERE id=?", (jid,))["status"] == "stopped" and not I.close_job(store, jid)["closed"]
+
+
+def test_estimate_sums_the_stages_and_a_profile_kind_runs_both_kinds(tmp_path, monkeypatch):
+    ws = Workspace(tmp_path / "ws"); store = Store(ws.store_path)
+    a, b, g = two_libraries_and_a_global(store)
+    import_text(store, "a fresh prompt to decompose", name="fresh")
+    e = I.estimate(store, "fresh", I.DEFAULT_PROFILE)
+    assert e["decompose"] > 0 and e["total"] >= e["decompose"] and any(s["stage"] == "decompose" for s in e["steps"])
+    e2 = I.estimate(store, "sql", I.DEFAULT_PROFILE)
+    assert e2["decompose"] == 0 and e2["codebook"] >= 0 and e2["align"] > 0 and e2["total"] == round(e2["decompose"] + e2["codebook"] + e2["align"], 2)
+    order = []
+    import fx.decompose as D
+    import fx.library as L
+    import fx.align as A
+    monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
+    monkeypatch.setattr(L, "run_round", lambda st, cl, corpus, kind, **k: order.append(("codebook", kind)) or {"steps": [], "stopped_because": "settled"})
+    monkeypatch.setattr(A, "run_round", lambda st, cl, kind, **k: order.append(("align", kind)) or {"steps": [], "stopped_because": "settled"})
+    jid = jobs.start(store, ws, "profile", "sql", "m", {"profile": "default"}, 0)
+    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE | {"kind": "both"}) == "done"
+    assert order == [("codebook", "guidance"), ("codebook", "material"), ("align", "guidance"), ("align", "material")]
+    assert I.save_profile(store, "mat", {"kind": "material"})["params"]["kind"] == "material" and I.save_profile(store, "bad", {"kind": "nope"})["params"]["kind"] == "guidance"

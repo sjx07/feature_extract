@@ -116,3 +116,16 @@ def test_site_cube_and_settings_endpoints(tmp_path, monkeypatch):
     monkeypatch.delenv("FX_API_KEY", raising=False)
     assert c.post("/api/settings/key", json={"name": "FX_API_KEY", "value": "abc"}).json()["set"] and os.environ["FX_API_KEY"] == "abc"
     assert next(k for k in c.get("/api/settings").json()["keys"] if k["name"] == "FX_API_KEY")["length"] == 3
+
+
+def test_the_search_box_narrows_the_slice_by_prompt_text_or_wording(store):
+    a, b, g = two_libraries_and_a_global(store)
+    f = cube.parse_filters({"text": " MERGE ", "corpus": ""})
+    assert f == {"text": {"MERGE"}}
+    s = cube.slice(store, "guidance", f)
+    assert s["prompts"] == 1 and s["filters"] == {"text": ["MERGE"]}                      # the cypher prompt: its wording "use MERGE"
+    assert [u["corpus"] for u in s["unaligned"]] == ["cypher"]
+    assert cube.slice(store, "guidance", {"text": {"prompt of sql"}})["prompts"] == 1      # the prompt's own text
+    assert cube.slice(store, "guidance", {"text": {"zzz"}})["prompts"] == 0
+    p = cube.prompts(store, "guidance", {"text": {"step by step"}})
+    assert p["prompts"] == 2

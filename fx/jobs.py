@@ -229,18 +229,21 @@ def run_profile(store: Store, ws: Workspace, client, jid: int, corpus: str, prof
                 finish(store, ws, jid, "stopped"); return "stopped"
         else:
             log_line("stage decompose: nothing to do")
-        # 2 codebook
-        set_stage(store, jid, "codebook")
-        r = L.run_round(store, client, corpus, kind, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
-                        workers=workers, effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
-        log_line(f"stage codebook result {json.dumps(r)[:800]}")
-        if r.get("stopped_because") == "stopped":
-            finish(store, ws, jid, "stopped"); return "stopped"
-        # 3 align
-        set_stage(store, jid, "align")
-        r = A.run_round(store, client, kind, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
-                        workers=min(workers, 64), effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
-        log_line(f"stage align result {json.dumps(r)[:800]}")
+        kinds = ("guidance", "material") if (p.get("kind") or kind) == "both" else ((p.get("kind") or kind),)
+        # 2 codebook, per kind
+        for k in kinds:
+            set_stage(store, jid, "codebook" if len(kinds) == 1 else f"codebook {k}")
+            r = L.run_round(store, client, corpus, k, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                            workers=workers, effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+            log_line(f"stage codebook {k} result {json.dumps(r)[:800]}")
+            if r.get("stopped_because") == "stopped":
+                finish(store, ws, jid, "stopped"); return "stopped"
+        # 3 align, per kind
+        for k in kinds:
+            set_stage(store, jid, "align" if len(kinds) == 1 else f"align {k}")
+            r = A.run_round(store, client, k, batch_model=p.get("batch_model") or DEFAULT_MODEL, codebook_model=p.get("codebook_model") or COLDSTART_MODEL,
+                            workers=min(workers, 64), effort=p.get("effort") or "low", rounds=20, log=log_step, progress=prog, stop=stop)
+            log_line(f"stage align {k} result {json.dumps(r)[:800]}")
         set_stage(store, jid, "done")
         status = "stopped" if stop.is_set() else "done"
         finish(store, ws, jid, status)

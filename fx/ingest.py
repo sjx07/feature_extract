@@ -16,7 +16,8 @@ from .llm.registry import DEFAULT_MODEL
 from .store import Store, now
 
 DEFAULT_PROFILE = {"decompose_model": DEFAULT_MODEL, "codebook_model": "gpt-5.6-sol", "batch_model": DEFAULT_MODEL, "judge_model": "",
-                   "embed_model": "BAAI/bge-large-en-v1.5", "budget": 30.0, "workers": 128, "effort": "low", "base_url": ""}
+                   "embed_model": "BAAI/bge-large-en-v1.5", "budget": 30.0, "workers": 128, "effort": "low", "base_url": "", "kind": "guidance"}
+KINDS = ("guidance", "material", "both")
 ROLES = ("decompose", "codebook", "batch", "judge", "embed")
 
 
@@ -42,6 +43,7 @@ def save_profile(store: Store, name: str, params: dict) -> dict:
     clean = {k: params.get(k, v) for k, v in DEFAULT_PROFILE.items()}
     clean["budget"] = float(clean["budget"] or 0) or None
     clean["workers"] = int(clean["workers"] or 128)
+    clean["kind"] = clean["kind"] if clean.get("kind") in KINDS else "guidance"
     with store.lock:
         store.con.execute("INSERT INTO profile (name, params, at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET params=excluded.params, at=excluded.at", (name, json.dumps(clean), now()))
         store.con.commit()
@@ -248,4 +250,45 @@ def stages(store: Store, corpus: Optional[str], kind: str = "guidance", min_cove
         out["alignment"] = {"seed": {k: a[k] for k in ("globals", "groups", "cards", "aligned", "domain_specific", "open", "flags", "standing", "rounds")}, "corpus": per, "under": under, "open": opens}
     except Exception as e:  # noqa: BLE001  a store without a seed yet
         out["alignment"] = {"error": f"{type(e).__name__}: {e}"}
+    return out
+
+
+# ---- what a run would cost, per corpus and stage, from the previews and the registry's prices
+def estimate(store: Store, corpus: str, prof: dict, kind: str = "guidance") -> dict:
+    """Dollars for bringing one corpus current under a profile: the decomposition left to do, the codebook steps of one round
+    (cold start when there is no codebook, assign for the unplaced wordings, judge, name), and the alignment of its open cards.
+    A guess from counts; the previews' own bases apply."""
+    import math
+    from . import decompose
+    from . import library as L
+    from .llm.registry import price, resolve
+    kinds = ("guidance", "material") if kind == "both" else (kind,)
+    out = {"corpus": corpus, "decompose": 0.0, "codebook": 0.0, "align": 0.0, "steps": []}
+    try:
+        d = decompose.preview(store, corpus, prof.get("decompose_model") or DEFAULT_MODEL, int(prof.get("workers") or 128))
+        if d.get("prompts"):
+            out["decompose"] = float(d["dollars"]); out["steps"].append({"stage": "decompose", "prompts": d["prompts"], "calls": d["calls"], "dollars": d["dollars"]})
+    except Exception as e:  # noqa: BLE001
+        out["steps"].append({"stage": "decompose", "error": str(e)[:120]})
+    for k in kinds:
+        try:
+            has_cb = L.latest(store, corpus, k) is not None
+            for step in (("assign", "judge", "name") if has_cb else ("coldstart", "assign", "judge", "name")):
+                model = prof.get("codebook_model") if step in ("coldstart", "name") else prof.get("batch_model")
+                r = L.preview(store, corpus, k, step, model or None)
+                out["codebook"] += float(r["dollars"]); out["steps"].append({"stage": f"codebook {k}", "step": step, "calls": r["calls"], "dollars": r["dollars"]})
+        except Exception as e:  # noqa: BLE001
+            out["steps"].append({"stage": f"codebook {k}", "error": str(e)[:120]})
+        # align: the corpus's cards not yet placed at the seed; a batch of 12 per assign call, a naming call per six
+        row = next((c for c in corpora(store, k) if c["name"] == corpus), None)
+        open_cards = (row["features"] - row["aligned"] - row["specific"]) if row and row["codebook"] else 0
+        if open_cards > 0:
+            bm, cm = prof.get("batch_model") or DEFAULT_MODEL, prof.get("codebook_model") or "gpt-5.6-sol"
+            pa = price(bm, resolve(bm)); pn = price(cm, resolve(cm))
+            a_calls, n_calls = math.ceil(open_cards / 12), max(1, open_cards // 6)
+            dollars = a_calls * (2500 * pa[0] + 600 * pa[1]) / 1e6 + n_calls * (2000 * pn[0] + 400 * pn[1]) / 1e6
+            out["align"] += dollars; out["steps"].append({"stage": f"align {k}", "cards": open_cards, "calls": a_calls + n_calls, "dollars": round(dollars, 3)})
+    out["total"] = round(out["decompose"] + out["codebook"] + out["align"], 2)
+    for k in ("decompose", "codebook", "align"):
+        out[k] = round(out[k], 2)
     return out
