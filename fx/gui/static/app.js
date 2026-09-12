@@ -14,7 +14,7 @@ const pol = p => `<span class="pol ${p === 'forbid' ? 'forbid' : ''}">${p === 'f
 function parseHash() { const h = location.hash.slice(1) || '/corpora'; const [path, qs] = h.split('?'); return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) }; }
 async function route() {
   const { parts, q } = parseHash(); const view = parts[0] || 'corpora';
-  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library'], ['seed', 'Seed']].map(([k, l]) => `<a href="${href('/' + k, { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') ? 'on' : ''}">${l}</a>`).join('');
+  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library'], ['seed', 'Seed'], ['cube', 'Cube'], ['settings', 'Settings']].map(([k, l]) => `<a href="${href('/' + k, k === 'cube' || k === 'settings' ? {} : { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') || (k === 'cube' && view === 'node') ? 'on' : ''}" ${k === 'cube' ? 'style="margin-left:18px"' : ''}>${l}</a>`).join('');
   if (ES) { ES.close(); ES = null; }
   const main = $('#main'); main.innerHTML = '<div class="loading">loading</div>'; window.scrollTo(0, 0);
   try {
@@ -27,6 +27,9 @@ async function route() {
     else if (view === 'library') await viewLibrary(main, q);
     else if (view === 'seed') await viewSeed(main, q);
     else if (view === 'feature') await viewFeature(main, +parts[1]);
+    else if (view === 'cube') await viewCube(main, q);
+    else if (view === 'node') await viewNode(main, +parts[1], q);
+    else if (view === 'settings') await viewSettings(main, q);
     else main.innerHTML = '<p>No such page.</p>';
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; console.error(e); }
 }
@@ -270,4 +273,82 @@ async function viewSeed(main, q) {
   </div></div>`;
   $('#arun').onclick = async () => { const d = Object.fromEntries(new FormData($('#aform'))); $('#astatus').textContent = 'starting';
     try { const r = await post('/api/align/jobs', { kind, step: d.step, model: d.model, codebook_model: d.codebook_model, rounds: +d.rounds, workers: +d.workers, budget: d.budget || null }); location.hash = href('/job/' + r.id); } catch (e) { $('#astatus').textContent = e.message; } };
+}
+
+/* ---------- the cube: the Library side. Fields on the left; the seed's hierarchy present in the slice on the right ---------- */
+const FIELDS = ['corpus', 'domain', 'system', 'task', 'collection', 'bank_source', 'role', 'family', 'stage', 'subtask', 'polarity'];
+const fieldQuery = q => Object.fromEntries(FIELDS.filter(f => q[f]).map(f => [f, q[f]]));
+const filterChips = (q, kind) => FIELDS.filter(f => q[f]).flatMap(f => q[f].split(',').filter(Boolean).map(v => `<a class="chip on" href="${href('/cube', { ...q, kind, [f]: q[f].split(',').filter(x => x !== v).join(',') })}" title="remove"><span>${esc(f)} = ${esc(v)}</span><span class="n">×</span></a>`)).join(' ');
+
+async function viewCube(main, q) {
+  const kind = q.kind || 'guidance';
+  const s = await api('/api/cube?' + new URLSearchParams({ kind, ...fieldQuery(q) }));
+  const nodeHref = id => href('/node/' + id, { kind, ...fieldQuery(q) });
+  const toggle = (field, value, on) => { const cur = (q[field] || '').split(',').filter(Boolean); return href('/cube', { ...q, kind, [field]: (on ? cur.filter(v => v !== value) : [...cur, value]).join(',') }); };
+  const chip = (f, v) => `<a class="chip ${v.on ? 'on' : ''}" href="${toggle(f.field, v.value, v.on)}" data-v="${esc(v.value.toLowerCase())}"><span>${esc(v.value)}</span><span class="n">${fmt(v.prompts)}</span></a>`;
+  const SHOW = 14;
+  const fieldHtml = f => { const big = f.values.length > SHOW; return `<div class="field" data-field="${f.field}"><div class="t"><span>${esc(f.field)} <span class="muted">· ${f.values.length}</span></span>${big ? `<a href="#" class="more" data-n="${f.values.length}">all</a>` : ''}</div>${big ? `<input class="find" placeholder="find a value">` : ''}<div class="chips">${f.values.map((v, i) => `<span ${i >= SHOW && !v.on ? 'hidden' : ''} class="cw">${chip(f, v)}</span>`).join('')}</div></div>`; };
+  const polar = { field: 'polarity', values: ['require', 'forbid'].map(v => ({ value: v, prompts: null, on: (q.polarity || '').split(',').includes(v) })) };
+  const bar = (share, pol) => `<div class="gbar"><i class="${pol === 'forbid' ? 'forbid' : ''}" style="width:${Math.max(1, Math.round(100 * share))}%"></i></div>`;
+  const leaf = f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${fmt(f.prompts)}<small>${pct(f.share)}</small></span><span class="read"><a href="${nodeHref(f.id)}">${pol(f.polarity)} ${esc(f.name)}</a><span class="tag">${f.corpora ? f.corpora.map(c => `<span class="corp">${esc(c)}</span>`).join('') : ''}${f.readings} readings${f.corpus && !f.corpora ? '' : ''}</span>${bar(f.share, f.polarity)}<span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>${f.members ? `<div style="margin-top:4px;font-size:12.5px">${f.members.slice(0, 4).map(m => `<span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span>&nbsp;&nbsp; `).join('')}${f.members.length > 4 ? `<details style="display:inline"><summary class="muted" style="cursor:pointer;display:inline">+${f.members.length - 4} more</summary>${f.members.slice(4).map(m => `<div><span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> <span class="muted">${fmt(m.prompts)}</span></div>`).join('')}</details>` : ''}</div>` : ''}</span></div>`;
+  const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect || '')} · ${g.features.length} global feature${g.features.length === 1 ? '' : 's'} · ${fmt(g.prompts)} prompts</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('');
+  const local = s.unaligned.map(u => `<details class="tnode section" ${s.seed ? '' : 'open'}><summary><b>${esc(u.corpus)}</b> <span class="tag">${u.features} features of its own · ${fmt(u.prompts)} prompts</span></summary><div class="kids">${u.groups.map(g => `<details class="tnode section" open><summary>${esc(g.name)} <span class="tag">${esc(g.aspect || '')} · ${g.features.length} · ${fmt(g.prompts)} prompts</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('')}</div></details>`).join('');
+  main.innerHTML = `<div class="cube"><div class="fields">
+      <div class="field"><div class="t"><span>kind</span></div><div class="chips">${['guidance', 'material'].map(k => `<a class="chip ${k === kind ? 'on' : ''}" href="${href('/cube', { ...q, kind: k })}"><span>${k}</span></a>`).join('')}</div></div>
+      ${s.facets.map(fieldHtml).join('')}${fieldHtml(polar)}
+    </div><div>
+    <h1>Cube</h1>
+    <p class="lede">Pick values on the left; the slice is every prompt matching them. The right side is what those prompts ask for: the seed's global features with their support in the slice, then each library's own features the seed has not absorbed.${s.seed ? '' : ' There is no seed yet, so each library stands for itself.'}</p>
+    <div style="margin-bottom:10px">${filterChips(q, kind) || '<span class="muted" style="font-size:12.5px">the whole corpus</span>'}</div>
+    <div class="measures"><span><b>${fmt(s.prompts)}</b><span class="k">prompts in the slice</span></span><span><b>${fmt(s.decomposed)}</b><span class="k">decomposed</span></span><span><b>${pct(s.covered / Math.max(s.decomposed, 1))}</b><span class="k">carry a feature</span></span><span><b>${pct(s.on_global / Math.max(s.decomposed, 1))}</b><span class="k">carry a global feature</span></span><span><b>${fmt(s.globals)}</b><span class="k">global features present</span></span><span><b>${s.libraries}</b><span class="k">libraries</span></span></div>
+    <div class="block"><div class="t">global features in the slice, by prompts (share of the decomposed prompts)</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none: no seed, or nothing aligned yet</span>'}</div></div>
+    <div class="block"><div class="t">each library's own features in the slice (not under a global: open or domain-specific at the seed)</div><div class="tree" style="max-height:none">${local || '<span class="muted">none</span>'}</div></div>
+  </div></div>`;
+  for (const el of main.querySelectorAll('.field')) {
+    const more = el.querySelector('.more'), find = el.querySelector('.find');
+    if (more) more.onclick = e => { e.preventDefault(); const all = more.textContent === 'all'; el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = !all && i >= SHOW && !w.querySelector('.on'); }); more.textContent = all ? 'fewer' : 'all'; };
+    if (find) find.oninput = () => { const t = find.value.trim().toLowerCase(); el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = t ? !w.querySelector('.chip').dataset.v.includes(t) : (i >= SHOW && !w.querySelector('.on')); }); };
+  }
+}
+
+async function viewNode(main, id, q) {
+  const kind = q.kind || 'guidance';
+  const d = await api(`/api/cube/node/${id}?` + new URLSearchParams({ kind, ...fieldQuery(q) }));
+  const nodeHref = i => href('/node/' + i, { kind, ...fieldQuery(q) });
+  const wrow = w => `<tr><td class="serif">${w.polarity === 'forbid' ? pol('forbid') + ' ' : ''}${esc(w.declaration)}</td><td class="n">${fmt(w.prompts)}</td><td class="n muted">${fmt(w.corpus_prompts)}</td><td style="font-size:11.5px">${w.sample.map(p => `<a href="${href('/prompt/' + encodeURIComponent(p))}" class="mono">${esc(p)}</a>`).join(' ')}</td></tr>`;
+  const member = m => `<div class="block"><div class="t">${d.global ? `<span class="corp">${esc(m.corpus)}</span><a href="${nodeHref(m.id)}">${esc(m.name)}</a> · <a href="${href('/feature/' + m.id)}" class="muted">its library page</a> · ` : ''}${fmt(m.prompts)} prompts in the slice · ${m.wordings.length} wordings${m.group ? ` · <span class="muted">${esc(m.group)}</span>` : ''}</div>
+    <table class="list"><tr><th>wording</th><th class="n">prompts here</th><th class="n">in its corpus</th><th>e.g.</th></tr>${m.wordings.slice(0, 60).map(wrow).join('')}</table>${m.wordings.length > 60 ? `<details><summary class="muted" style="cursor:pointer">and ${m.wordings.length - 60} more wordings</summary><table class="list">${m.wordings.slice(60).map(wrow).join('')}</table></details>` : ''}</div>`;
+  main.innerHTML = `<div class="crumb"><a href="${href('/cube', { ...q, kind })}">Cube</a> › ${d.group ? esc(d.group.name) + ' › ' : ''}${d.global ? 'global feature' : `<span class="corp">${esc(d.corpus)}</span> feature`}</div>
+    <h1>${pol(d.polarity)} ${esc(d.name)}</h1><p class="lede">${esc(d.definition)}</p>
+    <div class="facts" style="margin-bottom:16px">
+      <span class="k">${d.global ? 'seed group' : 'library group'}</span><span>${d.group ? esc(d.group.name) + ' <span class="muted">· ' + esc(d.group.aspect || '') + ' · ' + esc(d.group.definition) + '</span>' : ''}</span>
+      ${d.global ? `<span class="k">members</span><span>${d.members.length} per-corpus features from ${[...new Set(d.members.map(m => m.corpus))].length} corpora</span>` : `<span class="k">global feature</span><span>${d.global_of ? `aligned to <a href="${nodeHref(d.global_of)}">${esc(d.global_name)}</a>` : '<span class="muted">none yet: open or domain-specific at the seed</span>'} · <a href="${href('/feature/' + d.id)}" class="muted">its library page</a></span>`}
+      <span class="k">in the slice</span><span>${fmt(d.prompts)} of ${fmt(d.selected)} selected prompts · ${fmt(d.readings)} readings</span>
+      <span class="k">slice</span><span>${filterChips(q, kind) || '<span class="muted">the whole corpus</span>'}</span></div>
+    <div class="cols2"><div>${d.members.map(member).join('') || '<span class="muted">no readings in this slice</span>'}</div>
+    <div><div class="block"><div class="t">prompts in the slice carrying it, by readings${d.prompt_list.length < d.prompts ? ` (first ${d.prompt_list.length})` : ''}</div>
+      <table class="list">${d.prompt_list.map(p => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(p.id))}" class="mono" style="font-size:11.5px">${esc(p.id)}</a> <span class="corp">${esc(p.corpus)}</span> ${['role', 'family', 'stage'].filter(k => p.fields[k]).map(k => `<span class="tag">${esc(p.fields[k])}</span>`).join('')}<div class="serif" style="font-size:12.5px;color:var(--ink2)">${esc(p.head)}…</div></td><td class="n">${p.readings}</td></tr>`).join('')}</table></div></div></div>`;
+}
+
+/* ---------- settings: endpoints and keys by reference; a key is written blind and never read back ---------- */
+async function viewSettings(main) {
+  const s = await api('/api/settings');
+  const src = k => k.set ? `<span class="ok">set</span> <span class="muted">from the ${k.source === 'file' ? 'key file' : 'shell environment'}${k.secret ? `, ${k.length} characters` : ''}</span>` : '<span class="muted">not set</span>';
+  const row = k => `<tr><td class="mono">${esc(k.name)}</td><td>${src(k)}</td><td><form class="kf" data-name="${esc(k.name)}" style="display:flex;gap:6px"><input type="${k.secret ? 'password' : 'text'}" name="value" placeholder="${k.secret ? 'paste a key to save it' : 'value'}" value="${k.secret ? '' : esc(k.value || '')}" autocomplete="off" style="flex:1"><button class="btn quiet" type="submit">save</button>${k.set && k.source === 'file' ? '<button class="btn quiet" type="button" data-clear>remove</button>' : ''}</form></td></tr>`;
+  main.innerHTML = `<h1>Settings</h1>
+    <p class="lede">Keys are references: a job names the endpoint, the endpoint names the variable, the variable's value lives in your shell or in the key file below. The site writes the file and never shows a value.</p>
+    <div class="kv" style="margin-bottom:22px"><span class="k">key file</span><span class="mono">${esc(s.file)} <span class="muted" style="font-family:var(--sans)">${s.exists ? `· mode ${s.mode}${s.loose ? ' <span class="err">(should be 600)</span>' : ''}` : '· not written yet'}</span></span>
+      <span class="k">shell alternative</span><span class="muted">export the variables before <span class="mono">fx serve</span>; the shell's value wins over the file's</span></div>
+    <div class="block"><div class="t">keys</div><table class="list"><tr><th>variable</th><th>status</th><th>set it</th></tr>${s.keys.map(row).join('')}</table></div>
+    <div class="block"><div class="t">endpoints · a probe lists the endpoint's models with its key, which costs nothing</div><table class="list"><tr><th>endpoint</th><th>base url</th><th>key</th><th></th><th>probe</th></tr>
+      ${s.endpoints.map(e => `<tr><td>${esc(e.name)}</td><td class="mono" style="font-size:12px">${esc(e.base_url)}</td><td class="mono" style="font-size:12px">${esc(e.key_env || 'none needed')}</td><td><button class="btn quiet" data-probe="${esc(e.name)}">probe</button></td><td id="probe-${esc(e.name)}" class="muted" style="font-size:12.5px"></td></tr>`).join('')}
+      <tr><td>any other</td><td colspan="2"><input type="text" id="purl" placeholder="an OpenAI-compatible base url, e.g. http://localhost:8002/v1; key from FX_API_KEY" style="width:100%"></td><td><button class="btn quiet" data-probe="" id="pcustom">probe</button></td><td id="probe-custom" class="muted" style="font-size:12.5px"></td></tr></table></div>
+    <div class="block"><div class="t">settings the same file may hold</div><table class="list"><tr><th>variable</th><th>status</th><th>value</th></tr>${s.settings.map(row).join('')}</table>
+      <p class="muted" style="font-size:12.5px">FX_LOCAL_URL: the local vLLM server (default http://localhost:8000/v1). FX_PROVIDER: the OpenRouter upstream to pin (default Wafer; empty allows any but the known loopers). FX_MODEL: the default batch model, read at start, so a change applies after a restart.</p></div>
+    <div class="block"><div class="t">models the registry knows · default ${esc(s.default_model)}</div><table class="list"><tr><th>model</th><th>endpoint</th><th class="n">$ / M in</th><th class="n">$ / M out</th></tr>${s.models.map(m => `<tr><td class="mono" style="font-size:12px">${esc(m.model)}</td><td>${esc(m.endpoint)}</td><td class="n">${m.price_in}</td><td class="n">${m.price_out}</td></tr>`).join('')}</table></div>`;
+  for (const f of main.querySelectorAll('form.kf')) {
+    f.onsubmit = async e => { e.preventDefault(); const v = f.value.value; if (!v.trim()) return; try { await post('/api/settings/key', { name: f.dataset.name, value: v }); f.value.value = ''; await viewSettings(main); } catch (err) { f.querySelector('button').textContent = err.message.slice(0, 80); } };
+    const c = f.querySelector('[data-clear]'); if (c) c.onclick = async () => { await post('/api/settings/key', { name: f.dataset.name, value: '' }); await viewSettings(main); };
+  }
+  for (const b of main.querySelectorAll('[data-probe]')) b.onclick = async () => { const name = b.dataset.probe, out = $('#probe-' + (name || 'custom')); out.textContent = 'probing'; try { const r = await post('/api/settings/probe', name ? { endpoint: name } : { base_url: $('#purl').value }); out.innerHTML = r.ok ? `<span class="ok">ok</span> · ${r.models} models · ${r.ms} ms${r.sample.length ? ' · e.g. ' + esc(r.sample.slice(0, 4).join(', ')) : ''}` : `<span class="err">failed</span> · ${r.status || ''} ${esc(r.error || '')} · ${r.ms} ms`; } catch (e) { out.textContent = e.message; } };
 }

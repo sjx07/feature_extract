@@ -14,13 +14,15 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import decompose, jobs
 from .. import library as L
 from .. import align as A
+from .. import cube as C
+from .. import settings as S
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -228,6 +230,37 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
         threading.Thread(target=work, daemon=True).start()
         return {"id": jid, "log": str(ws.job_log(jid))}
+
+    # ---- the cube: the Library side, readings × prompt fields × the seed's hierarchy
+    @app.get("/api/cube")
+    def api_cube(request: Request, kind: str = "guidance"):
+        return C.slice(store, kind, C.parse_filters(dict(request.query_params)))
+
+    @app.get("/api/cube/node/{fid}")
+    def api_cube_node(request: Request, fid: int, kind: str = "guidance"):
+        d = C.node(store, kind, C.parse_filters(dict(request.query_params)), fid)
+        if not d:
+            raise HTTPException(404, "no such feature in this kind's libraries")
+        return d
+
+    # ---- settings: keys and endpoints by reference; a key is written blind and never read back
+    @app.get("/api/settings")
+    def api_settings():
+        return S.status() | {"default_model": DEFAULT_MODEL, "models": models()}
+
+    @app.post("/api/settings/key")
+    def api_settings_key(body: dict):
+        name, value = str(body.get("name") or "").strip(), str(body.get("value") or "")
+        if name not in S.KEYS and name not in S.SETTINGS:
+            raise HTTPException(400, f"not a known key or setting: {name}")
+        try:
+            return S.save(name, value.strip())
+        except (ValueError, OSError) as e:
+            raise HTTPException(400, str(e))
+
+    @app.post("/api/settings/probe")
+    def api_settings_probe(body: dict):
+        return S.probe(body.get("endpoint") or None, body.get("base_url") or None)
 
     @app.post("/api/jobs/{jid}/stop")
     def api_job_stop(jid: int):
