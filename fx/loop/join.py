@@ -14,7 +14,7 @@ from ..llm.registry import reasoning_low
 from ..store import Store, now
 from ..util.ids import parse_id, parse_ids
 from ..util.jsonx import extract_object
-from .calls import JOIN_SCHEMA, MAX_TOKENS
+from .calls import JOIN_SCHEMA, _stream
 from .level import Level
 from .state import nodes, tree
 
@@ -62,42 +62,78 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
     place: dict = {}
     founded: list = []
     folds: list[tuple[int, int]] = []
-    if proposals or pairs or (unplaced and not lv.groups_fixed):
-        if lv.prompt_join:
-            extra = reasoning_low(model, client.base_url) if effort == "low" else None
-            r = client.complete(lv.prompt_join(tr, proposals, unplaced, render_pairs(pairs, lv.node_prefix)), model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=f"{lv.label}:join:r{round_}", system=lv.system, schema=JOIN_SCHEMA)
-            summary["calls"] = 1
-            if r.error and r.error.startswith("denied"):
-                raise RuntimeError(r.error)
+    cost = 0.0
+    if lv.prompt_join and (proposals or pairs or (unplaced and not lv.groups_fixed)):
+        # one call per aspect, and per slice of join_batch proposals within an aspect: a single call over a whole round
+        # (447 proposals on text2sql) answered for 200 of them, all "new", and nothing else. Duplicates live within an
+        # aspect almost always; a leak across chunks is caught by the sibling judge and folded by the next join.
+        aspect_of_node = {n["id"]: g.get("aspect") or "other" for g in tr for n in g["features"] for n in [n] + n.get("variants", [])}
+        aspect_of_group = {g["id"]: g.get("aspect") or "other" for g in tr if g["id"] is not None}
+        def aspect_of(p: dict) -> str:
+            if p["parent"] is not None:
+                return aspect_of_node.get(p["parent"], "other")
+            if p["group"] is not None:
+                return aspect_of_group.get(p["group"], "other")
+            return p["aspect"] or "other"
+        chunks: list[dict] = []
+        by_aspect: dict = {}
+        for k, p in enumerate(proposals):
+            by_aspect.setdefault(aspect_of(p), []).append(k)
+        for f in unplaced:
+            by_aspect.setdefault(f.get("aspect") or "other", [])
+        for q, pr in enumerate(pairs):
+            by_aspect.setdefault(aspect_of_node.get(pr["older"]["id"], "other"), [])
+        for asp, ks in by_aspect.items():
+            slices = [ks[i:i + lv.join_batch] for i in range(0, len(ks), lv.join_batch)] or [[]]
+            for j, sl in enumerate(slices):
+                chunks.append({"aspect": asp, "proposals": sl,
+                               "unplaced": [f for f in unplaced if (f.get("aspect") or "other") == asp] if j == 0 and not lv.groups_fixed else [],
+                               "pairs": [q for q, pr in enumerate(pairs) if aspect_of_node.get(pr["older"]["id"], "other") == asp] if j == 0 else []})
+        chunks = [c for c in chunks if c["proposals"] or c["unplaced"] or c["pairs"]]
+        prompts = [lv.prompt_join(tr, [proposals[k] for k in c["proposals"]], c["unplaced"], render_pairs([pairs[q] for q in c["pairs"]], lv.node_prefix)) for c in chunks]
+        extra = reasoning_low(model, client.base_url) if effort == "low" else None
+        for i, r in _stream(client, prompts, model, max(1, min(len(prompts), 16)), f"{lv.label}:join:r{round_}", lv.system, schema=JOIN_SCHEMA, extra=extra):
+            c = chunks[i]
+            summary["calls"] += 1; cost += r.cost or 0.0
             obj = extract_object(r.text) if r and r.text else None
             if not isinstance(obj, dict):
-                summary["unparsed"] = 1; obj = {}
-            pids = set(range(1, len(proposals) + 1))
+                summary["unparsed"] += 1; continue
+            local = c["proposals"]                                   # local P<j> (1-based) -> global index local[j-1]
+            pids = set(range(1, len(local) + 1))
+            def gkey(x) -> Optional[str]:                            # a local "P3" or a global "F41" -> the pending key
+                if not isinstance(x, str):
+                    return None
+                j = parse_id(x, pids) if x.startswith("P") else None
+                return f"P{local[j - 1] + 1}" if j is not None else (x if x.startswith("F") else None)
             for v in obj.get("proposals") or []:
                 if not isinstance(v, dict):
                     continue
-                k = parse_id(v.get("id"), pids)
-                if k is None:
+                j = parse_id(v.get("id"), pids)
+                if j is None:
                     continue
+                k = local[j - 1]
                 if v.get("verdict") == "existing":
                     fid = parse_id(v.get("feature"), set(features))
-                    if fid is not None and features[fid]["polarity"] == proposals[k - 1]["polarity"]:
-                        verdict[k - 1] = ("existing", fid)
+                    if fid is not None and features[fid]["polarity"] == proposals[k]["polarity"]:
+                        verdict[k] = ("existing", fid)
                 elif v.get("verdict") == "duplicate":
                     of = parse_id(v.get("of"), pids)
-                    if of is not None and of != k and proposals[of - 1]["polarity"] == proposals[k - 1]["polarity"]:
-                        verdict[k - 1] = ("duplicate", of - 1)
-            for p in obj.get("place") or []:
-                if isinstance(p, dict):
-                    place[str(p.get("id") or "")] = parse_id(p.get("group"), set(groups))
-            founded = [g for g in obj.get("groups") or [] if isinstance(g, dict) and str(g.get("name") or "").strip()]
-            qids = set(range(1, len(pairs) + 1))
+                    if of is not None and of != j and proposals[local[of - 1]]["polarity"] == proposals[k]["polarity"]:
+                        verdict[k] = ("duplicate", local[of - 1])
+            for pl in obj.get("place") or []:
+                if isinstance(pl, dict) and gkey(pl.get("id")):
+                    place[gkey(pl.get("id"))] = parse_id(pl.get("group"), set(groups))
+            for g in obj.get("groups") or []:
+                if isinstance(g, dict) and str(g.get("name") or "").strip():
+                    founded.append(g | {"ids": [gkey(x) for x in (g.get("ids") or []) if gkey(x)]})
+            qlocal = c["pairs"]; qids = set(range(1, len(qlocal) + 1))
             for v in obj.get("pairs") or []:
-                q = parse_id(v.get("id"), qids) if isinstance(v, dict) else None
-                if q is None:
+                j = parse_id(v.get("id"), qids) if isinstance(v, dict) else None
+                if j is None:
                     continue
+                pr = pairs[qlocal[j - 1]]
                 if v.get("verdict") == "same":
-                    folds.append((pairs[q - 1]["younger"]["id"], pairs[q - 1]["older"]["id"]))
+                    folds.append((pr["younger"]["id"], pr["older"]["id"]))
                 elif v.get("verdict") == "two":
                     summary["kept_apart"] += 1
     # duplicates chain to a surviving proposal that is itself new
@@ -173,5 +209,5 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 store.con.execute("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", (lv.kind, lv.codebook, p["seed"]))
         store.con.commit()
     if progress and summary["calls"]:
-        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "folded": summary["folded"], "cost": r.cost, "calls": 1})
+        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "folded": summary["folded"], "cost": cost, "calls": summary["calls"]})
     return summary
