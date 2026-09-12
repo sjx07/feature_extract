@@ -36,13 +36,30 @@ def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional
             out.append(d)
         return out
 
-    return Level(
+    lv_ref: list = []
+    lv = Level(
         kind="realization", codebook=codebook, units=units,
         render_units=P.render_declarations, render_tree=P.render_codebook,
         prompt_assign=lambda tr, us, shortlist: P.assign(kind, tr, us, shortlist=shortlist),
-        prompt_name=lambda tr, ms: P.name(kind, domain, tr, ms),
+        prompt_name=lambda tr, ms: P.name(kind, domain, tr, ms, near=_near(store, lv_ref[0], tr, ms)),
         prompt_judge=lambda node, ms, samples: P.judge_members(node, ms),
         prompt_siblings=P.judge_siblings, system=P.SYSTEM, member_samples=lambda u: [],
         node_vector="anchors", unit_prefix="R", node_prefix="F",
         named_min_members=2, named_min_groups=1, allow_variant=True, batch=BATCH, shortlist_k=4,
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"{corpus}:{kind}")
+    lv_ref.append(lv)
+    return lv
+
+
+NEAR = 8
+
+
+def _near(store: Store, lv: Level, tr: list[dict], members: list[dict]) -> set:
+    """The ids of the NEAR nodes nearest to a neighbourhood's members (by the mean of their vectors), for the naming prompt."""
+    from ..loop import node_vectors, vectors
+    ids, m = vectors(store, "realization", [u["id"] for u in members])
+    nid, nm = node_vectors(store, lv, tr)
+    if not ids or not nid:
+        return set()
+    q = m.mean(axis=0); q = q / max(float(np.linalg.norm(q)), 1e-9)
+    return {nid[j] for j in np.argsort(-(nm @ q))[:NEAR]}

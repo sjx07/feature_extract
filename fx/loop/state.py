@@ -116,3 +116,14 @@ def judged(store: Store, lv: Level) -> dict[int, tuple[int, str]]:
         if nid.isdigit():
             out[int(r["unit"])] = (int(nid), why)
     return out
+
+
+def node_vectors(store: Store, lv: Level, tr: list[dict]) -> tuple[list[int], np.ndarray]:
+    """One unit vector per node: the mean of its anchors' vectors, or of its members' (Level.node_vector)."""
+    ids, vecs = [], []
+    for n in nodes(tr):
+        src = n["examples"] if lv.node_vector == "anchors" else [int(r["unit"]) for r in store.rows("SELECT unit FROM membership WHERE kind=? AND codebook=? AND node=?", (lv.kind, lv.codebook, n["id"]))]
+        got, m = vectors(store, lv.kind, src)
+        if got:
+            v = m.mean(axis=0); ids.append(n["id"]); vecs.append(v / max(float(np.linalg.norm(v)), 1e-9))
+    return ids, (np.stack(vecs) if vecs else np.zeros((0, 0), dtype=np.float32))

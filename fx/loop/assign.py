@@ -16,19 +16,9 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 from .calls import ASSIGN_SCHEMA, MAX_TOKENS
-from .state import _place, anchors, judged, nodes, open_units, tree, vectors
+from .state import node_vectors, _place, anchors, judged, nodes, open_units, tree, vectors
 
 # ---- assign
-def _node_vectors(store: Store, lv: Level, tr: list[dict]) -> tuple[list[int], np.ndarray]:
-    ids, vecs = [], []
-    for n in nodes(tr):
-        src = n["examples"] if lv.node_vector == "anchors" else [int(r["unit"]) for r in store.rows("SELECT unit FROM membership WHERE kind=? AND codebook=? AND node=?", (lv.kind, lv.codebook, n["id"]))]
-        got, m = vectors(store, lv.kind, src)
-        if got:
-            v = m.mean(axis=0); ids.append(n["id"]); vecs.append(v / max(float(np.linalg.norm(v)), 1e-9))
-    return ids, (np.stack(vecs) if vecs else np.zeros((0, 0), dtype=np.float32))
-
-
 def _subtree(tr: list[dict], keep: set[int]) -> list[dict]:
     out = []
     for g in tr:
@@ -74,7 +64,7 @@ def assign(store: Store, client: Client, lv: Level, model: str, workers: int = 1
     if shortlist and not summary["stopped"]:
         opened = open_units(store, lv)
         oid, om = vectors(store, lv.kind, [u["id"] for u in opened])
-        nid, nm = _node_vectors(store, lv, tr)
+        nid, nm = node_vectors(store, lv, tr)
         lists: dict[int, list[int]] = {}
         if oid and nid:
             sims = om @ nm.T

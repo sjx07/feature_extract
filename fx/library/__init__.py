@@ -21,7 +21,7 @@ from .coldstart import coldstart
 from .collapse import collapse, realizations
 from .level import wording_level
 
-__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest",
+__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest", "relook",
            "leftovers", "members", "name", "nodes", "preview", "realizations", "reopen", "run_round", "status", "threshold", "vectors", "wording_level"]
 
 
@@ -30,6 +30,16 @@ def _level(store: Store, corpus: str, kind: str, version: Optional[int] = None):
     if not cb:
         raise ValueError(f"no codebook for {corpus} {kind}: run coldstart first")
     return wording_level(store, int(cb["id"]))
+
+
+def relook(store: Store, corpus: str, kind: str, version: Optional[int] = None) -> dict:
+    """Clear the 'specific' marks of a library's open wordings so the next round gives each its neighbourhood look. For
+    libraries built before the loop grew by neighbourhoods, whose marks came from a cosine cutoff, not from a read."""
+    lv = _level(store, corpus, kind, version)
+    with store.lock:
+        n = store.con.execute("UPDATE membership SET note=NULL WHERE kind='realization' AND codebook=? AND node IS NULL AND note='specific'", (lv.codebook,)).rowcount
+        store.con.commit()
+    return {"codebook": lv.codebook, "unmarked": n}
 
 
 def embed(store: Store, corpus: str, kind: str, enc=None, model: Optional[str] = None) -> dict:
