@@ -91,7 +91,7 @@ def run_round(store: Store, client, corpus: str, kind: str, *, batch_model: str 
             step("coldstart", lambda: coldstart(store, client, corpus, kind, model=codebook_model))
 
     r = E.run_round(store, client, lambda: _level(store, corpus, kind), batch_model=batch_model, codebook_model=codebook_model, workers=workers, effort=effort, rounds=rounds,
-                    encoder=encoder, before=before, log=log, progress=progress, stop=stop)
+                    encoder=encoder, strong_model=COLDSTART_MODEL, before=before, log=log, progress=progress, stop=stop)   # large nodes are judged by the cold-start model
     return {"corpus": corpus, "kind": kind, **r, "versions": status(store, corpus, kind)["versions"]}
 
 

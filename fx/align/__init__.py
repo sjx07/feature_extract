@@ -48,5 +48,5 @@ def reopen(store: Store, kind: str) -> dict:
 def run_round(store: Store, client, kind: str = "guidance", *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 64, effort: str = "low",
               rounds: int = 5, encoder=None, log=None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     r = E.run_round(store, client, feature_level(store, kind), batch_model=batch_model, codebook_model=codebook_model, workers=workers, effort=effort, rounds=rounds,
-                    encoder=encoder, log=log, progress=progress, stop=stop)
+                    encoder=encoder, strong_model=COLDSTART_MODEL, log=log, progress=progress, stop=stop)
     return {"kind": kind, **r, "status": status(store, kind)}
