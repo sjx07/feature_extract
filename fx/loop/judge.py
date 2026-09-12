@@ -25,21 +25,27 @@ def spread(ms: list[dict], keep: int = 60, head: int = 20) -> list[dict]:
     return ms[:head] + [rest[int(i * step)] for i in range(keep - head)]
 
 
-def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 128, effort: str = "low", progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
+def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 128, effort: str = "low", progress: Optional[Callable[[int, int, dict], None]] = None,
+          strong_model: Optional[str] = None) -> dict:
+    """strong_model: the model for the nodes the judge cannot see whole (more members than the sample shows). Those are
+    the nodes that can be buckets, and the batch model at low effort read a 226-wording bucket as one instruction where
+    the codebook model split it five ways."""
     tr = tree(store, lv)
-    jobs, meta = [], []
+    jobs, meta, strong = [], [], []
     for n in nodes(tr):
-        ms = spread(members(store, lv, n["id"], limit=10000))          # the judge must see the tail: a bucket hides there, not in the top by support
+        allm = members(store, lv, n["id"], limit=10000)
+        ms = spread(allm)                                             # the judge must see the tail: a bucket hides there, not in the top by support
         if len(ms) >= 2:
             jobs.append(lv.prompt_judge(n, ms, {m["id"]: lv.member_samples(m) for m in ms})); meta.append(("node", n, {m["id"] for m in ms}))
+            strong.append(len(allm) > len(ms))
     if lv.prompt_siblings:
         for g in tr:
             for pol in ("require", "forbid"):                       # polarity is identity: a require and a forbid are never indistinct
                 fs = [f for f in g["features"] if f["polarity"] == pol]
                 if g["id"] is not None and len(fs) >= 2:
                     sub = g | {"features": fs}
-                    jobs.append(lv.prompt_siblings(sub, {f["id"]: members(store, lv, f["id"], 5) for f in fs})); meta.append(("group", sub, {f["id"] for f in fs}))
-    summary = {"codebook": lv.codebook, "calls": len(jobs), "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0, "new": 0, "standing": 0}
+                    jobs.append(lv.prompt_siblings(sub, {f["id"]: members(store, lv, f["id"], 5) for f in fs})); meta.append(("group", sub, {f["id"] for f in fs})); strong.append(False)
+    summary = {"codebook": lv.codebook, "calls": len(jobs), "strong": sum(strong) if strong_model else 0, "misfits": 0, "splits": 0, "indistinct": 0, "unparsed": 0, "new": 0, "standing": 0}
     previous = {(int(r["feature"]), r["realization"] and int(r["realization"]), r["other"] and int(r["other"]), r["verdict"]) for r in store.rows("SELECT feature, realization, other, verdict FROM flag WHERE codebook=?", (lv.codebook,))}
     with store.lock:
         store.con.execute("DELETE FROM flag WHERE codebook=?", (lv.codebook,)); store.con.commit()
@@ -47,7 +53,15 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
         return summary
     member_col = "realization" if lv.kind == "realization" else "other"
     done = 0
-    for k, r in _stream(client, jobs, model, workers, f"{lv.label}:judge", lv.system, extra=reasoning_low(model, client.base_url) if effort == "low" else None):
+    def replies():
+        lanes = {model: [k for k in range(len(jobs)) if not (strong[k] and strong_model)]}
+        if strong_model:
+            lanes[strong_model] = [k for k in range(len(jobs)) if strong[k]]
+        for m, ks in lanes.items():
+            if ks:
+                for j, r in _stream(client, [jobs[k] for k in ks], m, workers, f"{lv.label}:judge", lv.system, extra=reasoning_low(m, client.base_url) if effort == "low" else None):
+                    yield ks[j], r
+    for k, r in replies():
         what, node, valid = meta[k]
         done += 1
         obj = extract_object(r.text) if r and r.text else None
@@ -61,8 +75,11 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
                     rows.append({"codebook": lv.codebook, "feature": node["id"], "realization": None, "other": None, "verdict": "misfit", "note": str((m.get("why") if isinstance(m, dict) else "") or "")[:300]} | {member_col: uid})
                     summary["misfits"] += 1
             sp = obj.get("split")
+            parts = []
             if isinstance(sp, dict) and len(sp.get("parts") or []) >= 2:
                 parts = [{"name": str(p.get("name") or ""), "members": parse_ids(p.get("members"), valid)} for p in sp["parts"] if isinstance(p, dict)]
+                parts = [p for p in parts if len(p["members"]) >= lv.named_min_members]     # a part too small to be a feature is not a split
+            if len(parts) >= 2:
                 rows.append({"codebook": lv.codebook, "feature": node["id"], "realization": None, "other": None, "verdict": "split", "note": json.dumps({"why": str(sp.get("why") or "")[:300], "parts": parts})})
                 summary["splits"] += 1
         else:

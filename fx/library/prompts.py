@@ -101,8 +101,9 @@ report; nothing moves because of it.
 - A split is the report for a feature that has become a bucket: its definition is wide ("understand the question and
   schema") and its members give several distinct instructions under it ("determine necessary joins", "detect hidden
   constraints such as temporal windows", "understand the user's intention"). Then give "split" with a part per
-  instruction, each with a short name and the members that give it, every member listed under exactly one part. A
-  feature whose members all give its one instruction, in whatever detail, has no split.
+  instruction, each with a short name and the members that give it, every member listed under exactly one part. A part
+  needs three or more members to be worth a feature; fewer is not a split. A feature whose members all give its one
+  instruction, in whatever detail, has no split.
 
 # OUTPUT
 {{"misfits":[{{"id":"R12","why":"…"}}],"split":null}}

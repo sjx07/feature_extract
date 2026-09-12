@@ -15,7 +15,7 @@ from .name import candidates, name
 
 # ---- the loop
 def run_round(store: Store, client: Client, level, *, batch_model: str, codebook_model: str, workers: int = 128, effort: str = "low", rounds: int = 5,
-              encoder=None, before: Optional[Callable[[Callable], None]] = None,
+              encoder=None, strong_model: Optional[str] = None, before: Optional[Callable[[Callable], None]] = None,
               log: Optional[Callable[[str, dict], None]] = None, progress=None, stop: Optional[threading.Event] = None) -> dict:
     """assign, judge, then reopen -> cluster -> name -> assign -> judge until settled. `before(step)` lets a level run its own
     first steps (collapse, cold start) through the same step logger; `level` may be a callable, resolved after `before`."""
@@ -38,7 +38,7 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
         lv = level() if callable(level) else level
         step("embed", lambda: embed(store, lv, enc=encoder))
         step("assign", lambda: assign(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress, stop=stop))
-        step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
+        step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress, strong_model=strong_model or codebook_model))
         first = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (lv.codebook,))["r"]) + 1
         for rnd in range(first, first + rounds):
             r = step("reopen", lambda: reopen(store, lv))
@@ -48,7 +48,7 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
             n = step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=workers, effort=effort, progress=progress)) if c["clusters"] else {"proposals": []}
             step("join", lambda: join(store, client, lv, n["proposals"], rnd, codebook_model, effort=effort, progress=progress))
             step("assign", lambda: assign(store, client, lv, batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
-            step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
+            step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress, strong_model=strong_model or codebook_model))
     except Stopped:
         why = "stopped"
     return {"steps": steps, "stopped_because": why}
