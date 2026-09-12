@@ -119,9 +119,11 @@ and example wordings, the anchors); `assign` puts every wording on a node or lea
 the whole codebook and then, for the open ones, against the few nodes nearest by retrieval; `judge` reports
 misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` gives every open
 wording not yet looked at its neighbourhood, itself and its nearest open wordings from other prompts (no
-threshold: retrieval orders, the model decides); `name` reads each neighbourhood and adds a variant under a
-feature, a new feature, or rejects it, and a rejected seed is marked specific; assign runs again over the open
-wordings; until every open wording has had its look. Nothing written is ever rewritten. The
+threshold: retrieval orders, the model decides); `name` reads each neighbourhood in parallel and proposes a variant
+under a feature, a new feature, or rejects it, and a rejected seed is marked specific; `join`, one call a round,
+sees every proposal beside the tree and decides what is new, what is an existing feature under another wording,
+and what two proposals said twice, then places and founds groups; assign runs again over the open wordings; until
+every open wording has had its look. Nothing written is ever rewritten. The
 site's Library page runs each step with a cost preview and shows the tree, the open wordings and the flags.
 
 ```
@@ -140,8 +142,9 @@ The stage 2 loop one level up. The units are the per-corpus features of every li
 (name, definition, anchors, corpus, support); a global feature is one instruction several corpora give under
 their own domain nouns. `embed` vectors the cards; `assign` puts open cards on the nearest globals or none;
 `cluster` gives every open card not yet looked at its neighbourhood, itself and its nearest open cards from other
-corpora; `name` reads it and either creates a global feature (named without domain nouns, defined across domains,
-members from two or more corpora) or rejects it, and a rejected card is domain-specific; `judge` flags members whose wordings give another instruction,
+corpora; `name` reads it and proposes a global feature (named without domain nouns, defined across domains,
+members from two or more corpora) or rejects it, and a rejected card is domain-specific; `join` reconciles the
+round's proposals against the seed; `judge` flags members whose wordings give another instruction,
 and reopen sends first-time flags back with the reason. The Seed page shows the globals with their members per
 corpus. Variants stay under their features: global → per-corpus feature → variant.
 

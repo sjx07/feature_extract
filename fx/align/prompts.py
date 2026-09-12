@@ -72,6 +72,34 @@ Reply with this JSON and nothing else; every id must be copied exactly:
 {cluster}
 """
 
+JOIN = """# TASK
+This round's naming calls ran in parallel, one per neighbourhood of per-corpus features, and each PROPOSED a global
+feature without seeing the others. You see them all, beside the SEED LIBRARY. Decide what the round adds.
+{what}
+
+# FOR EACH PROPOSAL, one verdict
+- "new": neither the seed nor another proposal gives this instruction; it becomes a global as proposed.
+- "existing": it gives the same instruction as seed global S (domain words aside; same polarity). Give "feature": its
+  members go onto S and no global is made. A narrower instruction (S plus a rule) is not the same: it stays new.
+- "duplicate": it gives the same instruction as another proposal P. Give "of": that proposal must be "new"; the two
+  become one global under P's name with the members of both.
+Every id must be copied exactly. Reply with the JSON below and nothing else.
+
+# OUTPUT
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"S12","of":"P3"}}]}}
+
+# SEED LIBRARY
+{globals}
+
+# PROPOSALS
+{proposals}
+"""
+
+
+def join_prompt(groups: list[dict], proposals_text: str) -> str:
+    return JOIN.format(what=_WHAT, globals=render_globals(groups), proposals=proposals_text)
+
+
 JUDGE = """# TASK
 Below is one GLOBAL feature and the features filed under it, one or more per domain, each with a sample of the prompt
 wordings it covers. Read each member and ask: do these wordings give the global's instruction, only in this domain's

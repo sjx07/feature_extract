@@ -21,7 +21,7 @@ from .coldstart import coldstart
 from .collapse import collapse, realizations
 from .level import wording_level
 
-__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest", "regroup", "relook",
+__all__ = ["BATCH", "COLDSTART_MODEL", "KINDS", "MIN_SUPPORT", "anchors", "assign", "candidates", "coldstart", "collapse", "embed", "flags", "groups", "judge", "latest", "relook",
            "leftovers", "members", "name", "nodes", "preview", "realizations", "reopen", "run_round", "status", "threshold", "vectors", "wording_level"]
 
 
@@ -56,12 +56,6 @@ def assign(store: Store, client, corpus: str, kind: str, model: str = DEFAULT_MO
     return E.assign(store, client, _level(store, corpus, kind, version), model, workers=workers, batch=batch, effort=effort, only_open=only_open, shortlist=shortlist, progress=progress, stop=stop)
 
 
-def regroup(store: Store, client, corpus: str, kind: str, model: str = COLDSTART_MODEL, version: Optional[int] = None, effort: str = "low", progress=None) -> dict:
-    lv = _level(store, corpus, kind, version)
-    rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (lv.codebook,))["r"])
-    return E.regroup(store, client, lv, rnd, model, effort=effort, progress=progress)
-
-
 def judge(store: Store, client, corpus: str, kind: str, model: str = DEFAULT_MODEL, version: Optional[int] = None, workers: int = 128, effort: str = "low", progress=None) -> dict:
     return E.judge(store, client, _level(store, corpus, kind, version), model, workers=workers, effort=effort, progress=progress)
 
@@ -80,7 +74,11 @@ def threshold(store: Store, cb: int) -> tuple[Optional[float], int]:
 
 
 def name(store: Store, client, corpus: str, kind: str, cb: int, clusters: list[dict], round_: int, model: str = COLDSTART_MODEL, workers: int = 16, progress=None) -> dict:
-    return E.name(store, client, wording_level(store, cb), clusters, round_, model, workers=workers, progress=progress)
+    """The fork and the join as one step: propose in parallel, then one call decides what the round adds and writes it."""
+    lv = wording_level(store, cb)
+    n = E.name(store, client, lv, clusters, round_, model, workers=workers, progress=progress)
+    j = E.join(store, client, lv, n["proposals"], round_, model, progress=progress)
+    return {k: v for k, v in n.items() if k != "proposals"} | {"join": j}
 
 
 def run_round(store: Store, client, corpus: str, kind: str, *, batch_model: str = DEFAULT_MODEL, codebook_model: str = COLDSTART_MODEL, workers: int = 128, effort: str = "low",

@@ -104,7 +104,7 @@ def test_coldstart_assign_judge(store):
         assert st["assigned"] == 4 and st["leftover"] == 1 and st["reading_coverage"] == round(11 / 12, 3)
         srv.router = lambda body: reply(json.dumps({"misfits": [{"id": f"R{ids['reason step by step']}", "why": "x"}], "split": None})) if "# MEMBERS" in body["messages"][-1]["content"] else reply(json.dumps({"indistinct": [{"a": f"F{f_json['id']}", "b": f"F{f_prose['id']}", "why": "same"}]}))
         j = L.judge(store, c, "c", "guidance", model="m", workers=1)
-        assert j["calls"] == 2 and j["misfits"] == 1 and j["indistinct"] == 1
+        assert j["calls"] == 1 and j["misfits"] == 1 and j["indistinct"] == 0     # 'return JSON only' and 'return prose' differ in polarity: never siblings to compare
 
 
 def test_cluster_marks_specific_and_name_grows_the_tree(store):
@@ -125,33 +125,51 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         members = {d["declaration"] for d in cands["clusters"][0]["members"]}
         assert {"keep the answer short", "keep the answer brief", "keep your answer short", "cite the source table"} <= members
         m = [d for d in cands["clusters"][0]["members"] if d["declaration"] != "cite the source table"]   # the namer leaves the odd one out
-        srv.router = lambda body: reply(json.dumps({"decision": "feature", "why": "", "parent": None, "group": {"name": "answer length", "definition": "how long the answer is", "aspect": "answer"},
-                                                   "name": "keep the answer short", "definition": "the answer is brief", "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}))
-        n = L.name(store, c, "c", "guidance", cb, cands["clusters"], round_=1, model="m", workers=1)
-        assert n["features"] == 1 and n["unplaced"] == 1 and n["assigned"] == len(m)                # a naming call never creates a group
+        # fork and join: two neighbourhoods propose the same feature in parallel; the join sees both, keeps one, and no group
+        # fits, so the feature waits unplaced under its aspect
+        answers = {}
+        def router(body):
+            text = body["messages"][-1]["content"]
+            return reply(json.dumps(answers["join"])) if "# PROPOSALS" in text else reply(json.dumps(answers["name"]))
+        srv.router = router
+        answers["name"] = {"decision": "feature", "why": "", "parent": None, "group": None, "aspect": "answer", "name": "keep the answer short", "definition": "the answer is brief",
+                           "polarity": "require", "examples": [f"R{m[0]['id']}"], "members": [f"R{d['id']}" for d in m]}
+        answers["join"] = {"proposals": [{"id": "P1", "verdict": "new"}, {"id": "P2", "verdict": "duplicate", "of": "P1"}], "place": [], "groups": []}
+        two = [cands["clusters"][0], dict(cands["clusters"][0], seed=None)]
+        n = L.name(store, c, "c", "guidance", cb, two, round_=1, model="m", workers=1)
+        j = n["join"]
+        assert n["proposed"] == 2 and j["features"] == 1 and j["duplicates"] == 1 and j["unplaced"] == 1 and j["calls"] == 1
         tree = L.groups(store, cb)
         assert [g["name"] for g in tree] == ["reasoning", "output", "unplaced · answer"] and tree[-1]["id"] is None
         new = tree[-1]["features"]
         assert len(new) == 1 and new[0]["round"] == 1 and new[0]["support"] >= 3 and new[0]["aspect"] == "answer"
-        # the group step: one call sees the unplaced features beside the groups; a new group needs three, so this one is placed
+        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
+        # the next join, with nothing proposed, still reviews the unplaced feature and files it under an existing group
         gid_out = tree[1]["id"]
-        srv.router = lambda body: reply(json.dumps({"place": [{"feature": f"F{new[0]['id']}", "group": f"G{gid_out}"}], "groups": [{"name": "answer length", "definition": "how long", "aspect": "answer", "features": [f"F{new[0]['id']}"]}]}))
-        g = L.regroup(store, c, "c", "guidance", model="m")
-        assert g["unplaced"] == 1 and g["placed"] == 1 and g["groups"] == 0 and g["still_unplaced"] == 0
+        answers["join"] = {"proposals": [], "place": [{"id": f"F{new[0]['id']}", "group": f"G{gid_out}"}], "groups": [{"name": "answer length", "definition": "how long", "aspect": "answer", "ids": [f"F{new[0]['id']}"]}]}
+        j = L.name(store, c, "c", "guidance", cb, [], round_=2, model="m", workers=1)["join"]
+        assert j["placed"] == 1 and j["groups"] == 0 and j["still_unplaced"] == 0                      # a group needs three; one gets placed instead
         tree = L.groups(store, cb)
         assert len(tree) == 2 and any(f["name"] == "keep the answer short" for f in tree[1]["features"])
-        assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["note"] == "named"
         c2 = L.candidates(store, cb, "c", "guidance")                                                      # the odd one out is alone: specific
         assert c2["clusters"] == [] and c2["specific"] >= 1
         assert store.one("SELECT note FROM membership WHERE kind='realization' AND unit=?", (ids["cite the source table"],))["note"] == "specific"
         # a variant: the naming call may narrow an existing feature instead
-        srv.router = lambda body: reply(json.dumps({"decision": "variant", "why": "", "parent": f"F{f_think['id']}", "group": None, "name": "briefly", "definition": "stepwise but brief", "polarity": "require", "examples": [], "members": [f"R{d['id']}" for d in m]}))
+        answers["name"] = {"decision": "variant", "why": "", "parent": f"F{f_think['id']}", "group": None, "name": "briefly", "definition": "stepwise but brief", "polarity": "require", "examples": [], "members": [f"R{d['id']}" for d in m]}
+        answers["join"] = {"proposals": [{"id": "P1", "verdict": "new"}], "place": [], "groups": []}
         with store.lock:
             store.con.execute("UPDATE membership SET node=NULL, note=NULL WHERE kind='realization' AND codebook=? AND note='named'", (cb,)); store.con.commit()
-        n = L.name(store, c, "c", "guidance", cb, [{"members": m, "prompts": 4}], round_=2, model="m", workers=1)
-        assert n["variants"] == 1
+        j = L.name(store, c, "c", "guidance", cb, [{"members": m, "prompts": 4}], round_=3, model="m", workers=1)["join"]
+        assert j["variants"] == 1
         tree = L.groups(store, cb)
         assert tree[0]["features"][0]["variants"][0]["name"] == "briefly" and tree[0]["features"][0]["support"] == tree[0]["features"][0]["own"] + tree[0]["features"][0]["variants"][0]["support"]
+        # "existing": a proposal that says what a feature already says sends its members there and makes no node
+        with store.lock:
+            store.con.execute("UPDATE membership SET node=NULL, note=NULL WHERE kind='realization' AND codebook=? AND note='named'", (cb,)); store.con.commit()
+        answers["join"] = {"proposals": [{"id": "P1", "verdict": "existing", "feature": f"F{new[0]['id']}"}], "place": [], "groups": []}
+        j = L.name(store, c, "c", "guidance", cb, [{"members": m}], round_=4, model="m", workers=1)["join"]
+        assert j["into_existing"] == 1 and j["features"] == 0
+        assert store.one("SELECT node FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["node"] == new[0]["id"]
 
 
 def test_round_runs_the_growing_loop(store):

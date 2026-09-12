@@ -10,7 +10,7 @@ from .calls import Stopped
 from .state import embed
 from .assign import assign
 from .judge import judge, reopen
-from .group import regroup
+from .join import join
 from .name import candidates, name
 
 # ---- the loop
@@ -24,9 +24,9 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
 
     def step(nm: str, fn) -> dict:
         r = fn()
-        steps.append({"step": nm, **{k: v for k, v in r.items() if k not in ("notes", "clusters")}})
+        steps.append({"step": nm, **{k: v for k, v in r.items() if k not in ("notes", "clusters", "proposals")}})
         if log:
-            log(nm, {k: v for k, v in r.items() if k != "clusters"})
+            log(nm, {k: v for k, v in r.items() if k not in ("clusters", "proposals")})
         if r.get("stopped") or stop.is_set():
             raise Stopped()
         return r
@@ -45,10 +45,8 @@ def run_round(store: Store, client: Client, level, *, batch_model: str, codebook
             c = step("cluster", lambda: candidates(store, lv))
             if not c["clusters"] and r["reopened_misfits"] + r["reopened_split_members"] == 0:
                 why = f"settled: every flag is standing and every open unit has had its look ({c['specific']} specific, {c['waiting']} waiting)"; break
-            if c["clusters"]:
-                step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=workers, effort=effort, progress=progress))
-            if lv.prompt_group:
-                step("group", lambda: regroup(store, client, lv, rnd, codebook_model, effort=effort, progress=progress))
+            n = step("name", lambda: name(store, client, lv, c["clusters"], rnd, codebook_model, workers=workers, effort=effort, progress=progress)) if c["clusters"] else {"proposals": []}
+            step("join", lambda: join(store, client, lv, n["proposals"], rnd, codebook_model, effort=effort, progress=progress))
             step("assign", lambda: assign(store, client, lv, batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
             step("judge", lambda: judge(store, client, lv, batch_model, workers=workers, effort=effort, progress=progress))
     except Stopped:
