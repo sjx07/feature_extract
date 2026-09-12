@@ -50,7 +50,52 @@ then the seed; budget $40; a granularity read at every step. Site for this works
   features and none of the three buckets; the pair with both fixes runs before the seed.
 - 138 standing misfits; the sample reads as real disagreements.
 
-## Over- and under-clustering, so far
+## math v1 (job 12 + extra rounds 16, 18, 19), $8.20 so far
+- 8,122 wordings; 588 features + 93 variants in 13 groups; reading coverage 97%; 214 specific after a read.
+- Cold start 59 features; round 1 named 409 and folded 70 duplicates at birth; rounds 5 to 13 added 4 to 8 each.
+- The join over the run: folds and narrowings in every round (round 2: 18 folded, 4 narrowed of 38 pairs).
+- The strong judge split 9 then 6 nodes; after the size rule (a part needs three members) two became variants ("Repeat
+  or restate" under "add content beyond the original proof"; "Score or grade the answer" under "evaluate the student's
+  response"). The largest nodes, "follow the specified output format" 174 wordings, "reason step by step" 129, "box the
+  final answer" 127, were read and left whole: one instruction each. So the split fix is proportionate, not carving.
+- Two blemishes for the final refinement: one variant name in Chinese ("精简答案", from before the English rule) and one
+  duplicate name, "provide the final answer" twice.
+
+## text2sql after the repair rounds (jobs 13, 15, 17, 20), $7.10 so far
+- 391 features + 53 variants; coverage 97%; 125 specific.
+- The buckets: "validate the query before answering" (196 wordings) is now a feature of 150 with four variants beneath
+  (general review 14, clause and logic 12, schema and types 9, syntax and executability 8); "use tools to explore the
+  database" (86) has three (execute and test 15, explore generally 12, inspect sample data 7). "understand the question
+  and schema" stays at 209: its split was acted on in an earlier round by reopening, the assigner refiled the members,
+  and the flag is standing; one relook would put it through the variant route.
+- What the fix did not do: "generate a query that answers the question" (143) and "convert natural language to SQL"
+  (137) were read by the strong judge and left whole.
+
+## The seed (job 22), eight rounds, $2.34; the run's last assign was cut off by the account's credits (402)
+- 1,200 cards from the four fresh libraries; 122 globals in the 8 aspect groups; 606 cards aligned, 290 domain-specific
+  after a read, 304 still open when the credits ran out (they would have had one more assign pass and a final judge).
+- Born per round: 39, 23, 20, 12, 8, 8, 6, 6; the join folded 7 duplicates over the run, dropped 2 proposals as topics, and
+  ruled on 45 judge pairs (3 folded, the rest kept apart). The seed was stopped once and restarted: its first assign
+  rebuilt the whole card set per global per batch (fixed, 591979d).
+- Well formed: the middle of the seed reads as one instruction per global across domains ("reason step by step" from
+  all four, "format mathematics in LaTeX" from math and science only, "answer in the same language as the user's
+  question", "declare variables before use" from math and science). The concentration report tops out at 4%: no global
+  holds more than a twenty-fifth of any corpus's features, against job 39's fifth.
+- Over-clustering, where it remains: the assign step, not the naming. "present the final answer in the specified format"
+  was born from 5 cards and now holds 45 ("put each item on its own line", "format date and time fields according to
+  prescribed patterns"); "choose one option from predefined alternatives" 22; "use the provided context or information"
+  22; "return only the requested information" 20 ("respond with code only" is filed there). The seed judge flagged 157
+  members and the assigner put them all back (all standing), which says the assign prompt's "a narrower feature is not
+  an instance" is not being applied by the batch model at low effort on these broad globals. The fix that matches the
+  libraries: let the seed judge split, and give the seed level variants so a split becomes structure (allow_variant is
+  off at the feature level today); or route the seed's assign of broad globals to the stronger model.
+- Under-clustering: 34 indistinct pairs stand as reports; a few read as one instruction ("act as a helpful assistant" ~
+  "act as an assistant") and would fold with one more join pass, others are the judge over-reading ("do not provide
+  explanations" ~ "do not include units in the final answer").
+- Blemishes for the refinement pass: one member card named in Chinese ("不自动扣分省略的规则步骤", from before the English
+  rule) and one text2sql feature named "B" (a decomposition artefact) that reached the seed.
+
+## Over- and under-clustering, the libraries
 - No bucket: the largest features are the cold start's and carry one instruction each; loop-born features sit at 3 to 16
   wordings with a median of about 6.
 - Under-clustering is confined to pairs the loop is not allowed to fold (cold-start pairs) and to pairs reported in the
