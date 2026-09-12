@@ -73,6 +73,7 @@ def test_run_profile_runs_the_stages_in_order_and_stops(tmp_path, monkeypatch):
     import fx.library as L
     import fx.align as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: ["p1"])
+    monkeypatch.setattr(A, "libraries", lambda st, k: [{"corpus": 1}, {"corpus": 2}])           # two corpora with a codebook: alignment runs
     monkeypatch.setattr(D, "run", lambda *a, **k: order.append("decompose") or {"stopped": False, "failed": []})
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda *a, **k: order.append("align") or {"steps": [], "stopped_because": "settled"})
@@ -154,9 +155,30 @@ def test_estimate_sums_the_stages_and_a_profile_kind_runs_both_kinds(tmp_path, m
     import fx.library as L
     import fx.align as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
+    monkeypatch.setattr(A, "libraries", lambda st, k: [{"corpus": 1}, {"corpus": 2}])
     monkeypatch.setattr(L, "run_round", lambda st, cl, corpus, kind, **k: order.append(("codebook", kind)) or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda st, cl, kind, **k: order.append(("align", kind)) or {"steps": [], "stopped_because": "settled"})
     jid = jobs.start(store, ws, "profile", "sql", "m", {"profile": "default"}, 0)
     assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE | {"kind": "both"}) == "done"
     assert order == [("codebook", "guidance"), ("codebook", "material"), ("align", "guidance"), ("align", "material")]
     assert I.save_profile(store, "mat", {"kind": "material"})["params"]["kind"] == "material" and I.save_profile(store, "bad", {"kind": "nope"})["params"]["kind"] == "guidance"
+
+
+def test_a_lone_corpus_skips_alignment_and_is_not_pending_for_it(tmp_path, monkeypatch):
+    from test_align import SQL, seed_library
+    ws = Workspace(tmp_path / "ws"); store = Store(ws.store_path)
+    seed_library(store, "sql", SQL)
+    for pid in [r["id"] for r in store.rows("SELECT id FROM prompt")]:
+        store.insert("decomp", {"prompt": pid, "status": "done", "model": "m", "coverage": 1.0, "material_share": 0, "calls": 1, "seconds": 1, "reasks": 0, "flags": "[]", "failures": "[]", "error": None, "at": "now"})
+    c = I.corpora(store)[0]
+    assert c["alone"] and c["stages"] == ["done", "done", "none"] and not c["pending"]
+    order = []
+    import fx.decompose as D
+    import fx.library as L
+    import fx.align as A
+    monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
+    monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
+    monkeypatch.setattr(A, "run_round", lambda *a, **k: order.append("align") or {"steps": [], "stopped_because": "settled"})
+    jid = jobs.start(store, ws, "profile", "sql", "m", {"profile": "default"}, 0)
+    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE) == "done" and order == ["codebook"]
+    assert "stage align guidance: skipped" in ws.job_log(jid).read_text()

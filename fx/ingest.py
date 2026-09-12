@@ -88,6 +88,7 @@ def close_job(store: Store, jid: int, why: str = "closed by hand: no progress, t
 def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
     running = {j["corpus"]: j["kind"] for j in running_jobs(store, ws) if j["live"]}
     seed = store.one("SELECT c.id FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE k.name=? AND c.kind=?", (SEED, kind))
+    n_libs = int(store.one("SELECT COUNT(DISTINCT c.corpus) n FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.kind=? AND k.name != ?", (kind, SEED))["n"])   # alignment needs two
     out = []
     for c in store.rows("SELECT id, name, source, at FROM corpus WHERE name != ? ORDER BY name", (SEED,)):
         cid = int(c["id"])
@@ -123,7 +124,8 @@ def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
             elif k.startswith("align") or k == "profile":
                 st_a = "running"
         row["stages"] = [st_d, st_c, st_a]
-        row["pending"] = "done" not in (st_d,) or st_c != "done" or st_a != "done"
+        row["alone"] = n_libs < 2
+        row["pending"] = st_d != "done" or st_c != "done" or (st_a != "done" and n_libs >= 2)
         out.append(row)
     return out
 
