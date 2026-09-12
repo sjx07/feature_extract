@@ -1,10 +1,10 @@
 :root{--ground:#F6F6F3;--panel:#FFFFFF;--ink:#1B201D;--ink2:#3C4440;--muted:#727B76;--rule:#DCE0DC;--rule2:#EBEEEB;
---req:#1F7A5C;--req-soft:#DDF0E7;--for:#B8452B;--for-soft:#F6E3DC;--accent:#2B5DA8;--accent-soft:#E4ECF8;--mat:#8A8F8B;--mat-soft:#ECEDEA;--gap:#B8741F;--gap-soft:#F6ECD9;--rule-atom:#6B4FBB;
+--req:#3B4FB8;--req-soft:#E4E7F8;--for:#7E3F8F;--for-soft:#EFE3F3;--err:#B8452B;--err-soft:#F6E3DC;--accent:#2B5DA8;--accent-soft:#E4ECF8;--mat:#8A8F8B;--mat-soft:#ECEDEA;--gap:#B8741F;--gap-soft:#F6ECD9;--rule-atom:#6B4FBB;
 --serif:'IBM Plex Serif',Georgia,serif;--sans:'IBM Plex Sans','Helvetica Neue',Arial,sans-serif;--mono:'IBM Plex Mono',Menlo,Consolas,monospace}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ground:#16191B;--panel:#1D2124;--ink:#E9ECE9;--ink2:#C9CFCA;--muted:#98A29C;--rule:#30373A;--rule2:#272D30;
---req:#5FC79E;--req-soft:#1E3A30;--for:#E58A6E;--for-soft:#3E251E;--accent:#82AAEA;--accent-soft:#213656;--mat:#9AA39D;--mat-soft:#262B2E;--gap:#E0B24A;--gap-soft:#33290F;--rule-atom:#A98BEE}}
+--req:#8FA0F0;--req-soft:#232B4F;--for:#CB93DA;--for-soft:#33223A;--err:#E58A6E;--err-soft:#3E251E;--accent:#82AAEA;--accent-soft:#213656;--mat:#9AA39D;--mat-soft:#262B2E;--gap:#E0B24A;--gap-soft:#33290F;--rule-atom:#A98BEE}}
 :root[data-theme="dark"]{--ground:#16191B;--panel:#1D2124;--ink:#E9ECE9;--ink2:#C9CFCA;--muted:#98A29C;--rule:#30373A;--rule2:#272D30;
---req:#5FC79E;--req-soft:#1E3A30;--for:#E58A6E;--for-soft:#3E251E;--accent:#82AAEA;--accent-soft:#213656;--mat:#9AA39D;--mat-soft:#262B2E;--gap:#E0B24A;--gap-soft:#33290F;--rule-atom:#A98BEE}
+--req:#8FA0F0;--req-soft:#232B4F;--for:#CB93DA;--for-soft:#33223A;--err:#E58A6E;--err-soft:#3E251E;--accent:#82AAEA;--accent-soft:#213656;--mat:#9AA39D;--mat-soft:#262B2E;--gap:#E0B24A;--gap-soft:#33290F;--rule-atom:#A98BEE}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans)}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
@@ -40,7 +40,7 @@ table.list td.n{text-align:right;white-space:nowrap;color:var(--muted)}
 .prev{display:flex;gap:30px;flex-wrap:wrap;font-size:13px}.prev b{display:block;font:500 20px var(--serif)}
 .rawtext{font:12.5px/1.75 var(--mono);white-space:pre-wrap;word-break:break-word;background:var(--panel);border:1px solid var(--rule);padding:16px 18px;max-height:78vh;overflow:auto}
 .rawtext mark{background:var(--req-soft);color:inherit;border-bottom:1.5px solid var(--req);padding:1px 0;box-decoration-break:clone;cursor:pointer}
-.rawtext mark.forbid{background:var(--for-soft);border-color:var(--for)}
+.rawtext mark.forbid{background:var(--for-soft);border-color:var(--for);border-bottom-style:double}
 .rawtext mark.material{background:var(--mat-soft);border-bottom:0;color:var(--mat);cursor:default}
 .rawtext mark.gap{background:var(--gap-soft);border-bottom:1.5px dashed var(--gap)}
 .rawtext mark.hot,.atom.hot{outline:2px solid var(--accent)}
@@ -59,5 +59,12 @@ table.list td.n{text-align:right;white-space:nowrap;color:var(--muted)}
 .atom.forbid .read{color:var(--for)}.atom .tag{font:11px var(--mono);color:var(--muted);margin-left:8px}
 .atom.material .read{color:var(--mat);font-style:italic}
 .legend{display:flex;gap:18px;font-size:12px;color:var(--muted);margin:6px 0 10px}.legend i{display:inline-block;width:12px;height:10px;margin-right:5px;vertical-align:-1px;border-radius:2px}
-.loading{color:var(--muted);padding:20px 0}.err{color:var(--for)}
+.loading{color:var(--muted);padding:20px 0}.err{color:var(--err)}
 .recent{font-size:12.5px;color:var(--muted)}
+
+.pol{display:inline-block;font:600 10.5px/1.6 var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:0 6px;border-radius:3px;background:var(--req-soft);color:var(--req);vertical-align:1px}
+.pol.forbid{background:var(--for-soft);color:var(--for)}
+.pol.forbid::before{content:'⊘ '}
+.members details{border-top:1px solid var(--rule2)}.members summary{display:grid;grid-template-columns:minmax(0,1fr) 70px 70px 90px;gap:10px;padding:7px 0;cursor:pointer;list-style:none;font-size:13.5px}
+.members summary::-webkit-details-marker{display:none}.members summary .n{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.members .quotes{padding:2px 0 10px 18px;border-left:2px solid var(--rule);margin:0 0 8px 6px}.members .quote{font-size:13px;padding:4px 0}.members .quote .serif{color:var(--ink2)}
