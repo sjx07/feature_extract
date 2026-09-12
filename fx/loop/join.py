@@ -71,7 +71,7 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
     unplaced = [f for g in tr if g["id"] is None for f in g["features"]]
     pairs = indistinct_pairs(store, lv, features) if lv.prompt_join else []
     summary = {"codebook": lv.codebook, "round": round_, "proposals": len(proposals), "calls": 0, "unparsed": 0, "variants": 0, "features": 0,
-               "into_existing": 0, "duplicates": 0, "assigned": 0, "unplaced": 0, "placed": 0, "groups": 0, "still_unplaced": 0,
+               "into_existing": 0, "duplicates": 0, "topics": 0, "assigned": 0, "unplaced": 0, "placed": 0, "groups": 0, "still_unplaced": 0,
                "pairs": len(pairs), "folded": 0, "narrowed": 0, "kept_apart": 0}
     verdict = {k: ("new", None) for k in range(len(proposals))}
     place: dict = {}
@@ -136,6 +136,8 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                     of = parse_id(v.get("of"), pids)
                     if of is not None and of != j and proposals[local[of - 1]]["polarity"] == proposals[k]["polarity"]:
                         verdict[k] = ("duplicate", local[of - 1])
+                elif v.get("verdict") == "topic":
+                    verdict[k] = ("topic", None)                     # a topic, not an instruction: dropped, members stay open
             for pl in obj.get("place") or []:
                 if isinstance(pl, dict) and gkey(pl.get("id")):
                     place[gkey(pl.get("id"))] = parse_id(pl.get("group"), set(groups))
@@ -172,6 +174,8 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 node_of[k] = target; summary["into_existing"] += 1
             elif kind == "duplicate":
                 continue
+            elif kind == "topic":
+                summary["topics"] += 1; continue
             else:
                 row = {"codebook": lv.codebook, "prev": None, "aspect": None, "name": p["name"], "definition": p["definition"], "polarity": p["polarity"],
                        "examples": p["examples"], "round": round_}
