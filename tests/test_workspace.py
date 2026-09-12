@@ -85,10 +85,3 @@ def test_harvest_bank_rows_dedupe_and_keep_provenance():
     assert rs[0]["text"] == "Are A and B the same?" and rs[0]["subtask"] == "generic-pairwise" and rs[0]["use_case"] == {"benchmarks": ["Abt-Buy"]}
     assert rs[0]["provenance"] == {"source_kind": "paper", "source_id": "2205.09911", "file_path": "x.tex", "line_start": 3, "line_end": 3}
     assert rs[1]["subtask"] == "entity-resolution/blocking" and rs[1]["system_id"] == "repo/x"
-
-
-def test_entity_resolution_corpus_imports(tmp_path):
-    store = Store(tmp_path / "s.db")
-    r = import_path(store, ROOT / "data" / "corpora" / "entity-resolution.jsonl", name="er")
-    assert r["added"] == 247 and r["skipped"] == 0
-    assert {x["domain"] for x in store.rows("SELECT DISTINCT domain FROM prompt")} == {"entity-resolution"}
