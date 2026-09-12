@@ -4,7 +4,7 @@ Branch `stage3-align` against `main`. 59 tests (3 new, in `tests/test_align.py`,
 
 ## One loop, two levels
 
-Stage 2 and stage 3 ran the same algorithm on two unit types, so the loop is now written once, in `fx/loop/engine.py`,
+Stage 2 and stage 3 ran the same algorithm on two unit types, so the loop is now written once, in `fx/loop`,
 against a `Level` (`fx/loop/level.py`) that says what differs: the units (a corpus's wordings, or every corpus's
 features as cards), how they group for support (prompts, or corpora), how a node's vector is formed (its anchors, or
 its members), the prompt texts, and the naming minimums. `fx/library` keeps collapse and the cold start and defines the

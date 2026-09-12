@@ -1,4 +1,4 @@
-"""Stage 3, the seed library: the per-corpus libraries aligned into global features, the loop of fx.loop.engine on the
+"""Stage 3, the seed library: the per-corpus libraries aligned into global features, the loop of fx.loop on the
 feature level (fx.align.level). This package adds the cards (the units) and the seed codebook, and keeps the kind-only
 signatures the CLI, the site and the tests use."""
 from __future__ import annotations
