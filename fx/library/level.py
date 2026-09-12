@@ -1,6 +1,6 @@
 """The wording level: the units are one corpus's realizations (distinct declarations), grouped by the prompts they occur
 in, placed on the corpus's codebook. Everything the loop needs to know about this level is here; the loop itself is
-fx.loop.engine."""
+fx.loop."""
 from __future__ import annotations
 
 import json

@@ -6,27 +6,31 @@ from __future__ import annotations
 from ..library.prompts import ASPECTS_GUIDANCE, ASPECTS_MATERIAL
 from .cards import render_cards
 
-_WHAT = ("Each FEATURE below comes from the library of one corpus (one domain of prompts): its name, its definition, the clearest "
-         "wordings it covers, and its support there. A GLOBAL feature is one reusable instruction that prompts in several domains "
-         "give under their own domain nouns: 'generate a valid SQL query' and 'generate a valid Cypher query' are one global feature; "
-         "'translate a question into a query' and 'fix an erroneous query' are two. A feature that adds a rule to a global's instruction "
-         "('quote identifiers in the query' beside 'generate a valid query'; 'box the final answer' beside 'follow the output format') "
-         "is a narrower, different instruction, not an instance: narrower features become global features of their own. Domain nouns "
-         "are never identity; polarity always is.")
+_WHAT = """# WHAT THE WORDS MEAN
+- A FEATURE is one instruction that the prompts of one domain give, as its library recorded it: a name, a definition,
+  a few of the actual wordings, and how many prompts give it. Each line starts with its id (F12) and its domain.
+- A GLOBAL feature is one instruction that prompts in several domains give, each in its own words. Each starts with
+  its id (S3); the seed library's groups start with G.
+- Domain words never count: "generate a valid SQL query" and "generate a valid Cypher query" are the same instruction.
+- Polarity always counts: "do X" and "do not do X" are never the same instruction.
+- Adding a rule makes a different instruction. "Quote every identifier in the query" is not the same as "generate a valid
+  query"; "box the final answer" is not the same as "follow the output format". A rule like that is its own feature
+  and, if other domains give it too, its own global; it is never filed under the broad one.
+- Being about the same topic is not the same instruction: "translate the question into a query" and "fix the broken
+  query" both concern queries and are two instructions."""
 
 ASSIGN = """# TASK
-For each FEATURE below, say which GLOBAL feature of the seed library it is an instance of, or null.
+For each FEATURE below, name the GLOBAL feature that gives the same instruction, or null if none does.
 {what}
 
-# RULES
-- A feature is an instance of a global when its definition and wordings give the same instruction as the global's
-  definition, domain nouns aside; polarity must match. A narrower feature (the instruction plus a rule or constraint)
-  is not an instance, nor are two different instructions on the same topic: null, so it can become its own global.
-- One global or null per feature ("feature" in the reply is the global's S-id). Do not stretch a definition to avoid null;
-  most features of a domain are its own and get null.
-- Reply with the JSON below and nothing else, one entry per feature id, in the given order.
+# HOW TO DECIDE
+Read the feature's definition and wordings. Ask: does one global give exactly this instruction, once domain words are
+set aside? If yes, that global. If the feature adds a rule, drops one, or is about the same topic but says something
+else, null. Do not stretch a global's definition to avoid null: most of a domain's features are its own, and null is
+the common answer. One answer per feature, in the order given.
 
 # OUTPUT
+Reply with this JSON and nothing else ("feature" is the global's S-id or null):
 {{"assignments":[{{"id":"F12","feature":"S3","confidence":"high"}},{{"id":"F13","feature":null,"confidence":"high"}}]}}
 
 # GLOBAL FEATURES{scope}
@@ -37,24 +41,28 @@ For each FEATURE below, say which GLOBAL feature of the seed library it is an in
 """
 
 NAME = """# TASK
-A neighbourhood of FEATURES from the libraries of different corpora: the first is the one under study, the rest are its
-nearest by retrieval, which says they are about the same things, not that they say the same thing. Decide whether two or
-more of them, from different corpora, are instances of one global feature the seed library lacks. If so, name and define
-it across domains and list exactly those; if not, reject. Most neighbourhoods hold no global: reject is the usual answer.
+Below is one FEATURE under study followed by its nearest neighbours from other domains. Retrieval put them together
+because they are about the same things; that does not mean they give the same instruction. Decide whether two or more
+of them, from at least two different domains, give one instruction that the seed library does not have yet.
+- If yes: answer "same", name that instruction, define it, and list exactly the features that give it.
+- If no: answer "reject". This is the usual answer; most neighbourhoods hold no shared instruction.
 {what}
 
-# RULES
-- "same": name the global as a short imperative phrase with no domain nouns ("generate a valid query", not "generate
-  a valid SQL query"); define it in one sentence a reader can test any domain's feature against; give its polarity;
-  list in "members" the feature ids that are instances (leave out the ones that are a different instruction); "group"
-  is the id of the seed group (one per aspect: {aspects}) the global belongs to; never a new group. A member must give
-  the same instruction, not a narrower or broader one; the feature under study need not be a member.
-- "reject": the cluster mixes instructions, or it is already a global feature (say which in "why").
-- A member must come from at least two corpora for a global to exist; a single corpus's feature is domain-specific
-  for now, however many of its own features are listed.
-- Every id you use must be exact. Reply with the JSON below and nothing else.
+# HOW TO ANSWER "same"
+- name: a short imperative phrase without domain words ("generate a valid query", not "generate a valid SQL query").
+- definition: one sentence a reader could test any domain's feature against.
+- polarity: require or forbid.
+- members: the ids of the features that give this exact instruction. Leave out a feature that adds a rule, drops one, or
+  says something else, even the one under study. Members must come from at least two domains; the same domain saying
+  it several times is one domain.
+- group: the id of the seed group the instruction belongs to. There is one group per aspect ({aspects}); pick one, never
+  invent one.
+
+# HOW TO ANSWER "reject"
+Say in "why" what the neighbours are: different instructions, or an instruction the seed already has (name which S-id).
 
 # OUTPUT
+Reply with this JSON and nothing else; every id must be copied exactly:
 {{"decision":"same|reject","why":"…","group":"G3","name":"…","definition":"…","polarity":"require|forbid","members":["F12","F40"]}}
 
 # SEED LIBRARY (names only)
@@ -65,10 +73,10 @@ it across domains and list exactly those; if not, reject. Most neighbourhoods ho
 """
 
 JUDGE = """# TASK
-One GLOBAL feature of the seed library and its member features, one or more per corpus, each shown with a sample of
-the prompt wordings it covers. Say which members are not instances of the global as defined (their wordings give a
-different or narrower instruction, not merely the same instruction under other domain nouns). Report only; nothing is
-changed by your reply.
+Below is one GLOBAL feature and the features filed under it, one or more per domain, each with a sample of the prompt
+wordings it covers. Read each member and ask: do these wordings give the global's instruction, only in this domain's
+words? A member whose wordings add a rule, drop one, or say something else does not belong. List those. This is a
+report; nothing moves because of it.
 
 # OUTPUT
 {{"misfits":[{{"id":"F12","why":"…"}}]}}

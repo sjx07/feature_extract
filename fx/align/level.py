@@ -1,5 +1,5 @@
 """The feature level: the units are the per-corpus features of every library of a kind (their cards), grouped by corpus,
-placed on the seed codebook. The loop itself is fx.loop.engine."""
+placed on the seed codebook. The loop itself is fx.loop."""
 from __future__ import annotations
 
 from ..loop import Level

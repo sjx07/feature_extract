@@ -67,7 +67,7 @@ def regroup_by_aspect(store: Store, kind: str) -> dict:
 
 
 def globals_(store: Store, kind: str) -> list[dict]:
-    """The seed tree with each global's members (cards) per corpus; see fx.loop.engine.tree for the rest."""
+    """The seed tree with each global's members (cards) per corpus; see fx.loop.tree for the rest."""
     from ..loop import tree
     from .level import feature_level
     lv = feature_level(store, kind)

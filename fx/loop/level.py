@@ -1,4 +1,4 @@
-"""What differs between the two library levels, in one object; the engine in fx.loop.engine is written against it.
+"""What differs between the two library levels, in one object; the loop in fx.loop is written against it.
 
 A Level says what the units are (wordings of one corpus, or the features of every corpus), how a unit is shown to the
 model, how units group for support (a wording's prompts; a card's corpus), how a node's vector is formed, which

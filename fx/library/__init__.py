@@ -1,5 +1,5 @@
 """Stage 2, the feature library of a corpus, one per kind (guidance, material): a tree that only grows. The loop is
-fx.loop.engine on the wording level (fx.library.level); this package adds what only the wording level has, collapse
+fx.loop on the wording level (fx.library.level); this package adds what only the wording level has, collapse
 and the cold start, and keeps the corpus-and-kind signatures the CLI, the site and the tests use.
 
     collapse(store, corpus, kind)                     readings -> realizations, no calls

@@ -132,7 +132,7 @@ PYTHONPATH=. python -m fx.cli -w runs/dev library status --corpus text2sql --kin
 
 ## Stage 3: the seed library
 
-Stages 2 and 3 are one loop, `fx/loop/engine.py`, run on two levels: the wordings of a corpus (`fx/library`)
+Stages 2 and 3 are one loop, `fx/loop`, run on two levels: the wordings of a corpus (`fx/library`)
 and the features of every corpus (`fx/align`). A `Level` carries what differs; the engine carries assign,
 judge, reopen, cluster, name and the settle loop.
 

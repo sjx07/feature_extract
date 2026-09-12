@@ -91,7 +91,7 @@ def anchors(store: Store, cb: int) -> Optional[float]:
 
 
 def groups(store: Store, cb: int) -> list[dict]:
-    """The codebook tree with support from membership; see fx.loop.engine.tree."""
+    """The codebook tree with support from membership; see fx.loop.tree."""
     from ..loop import tree
     from .level import wording_level
     return tree(store, wording_level(store, cb))
