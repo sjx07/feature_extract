@@ -43,9 +43,11 @@ then the seed; budget $40; a granularity read at every step. Site for this works
   wordings ("determine necessary joins", "detect hidden constraints including temporal windows", "understand the user's
   intention"), "validate the query before answering" 196, "identify relevant tables and columns" 177 ("retain the top 10
   to 15 most relevant columns", "use the standings tables for cumulative seasonal totals"). The judge raised no misfit
-  and no split on them: the definitions are wide and the judge prompt called a split rare. Fixed in a7f7233 (a split is
-  the report for a bucket) and the reopen keeps the largest part on the node; two more rounds on text2sql and math with
-  that judge run before the seed.
+  and no split on them. Two causes, both fixed: the judge prompt called a split rare (a7f7233: a split is the report for
+  a bucket, and the reopen keeps the largest part on the node), and the judge saw only a node's sixty best-supported
+  members, the generic centre of a bucket, never the one-prompt tail where the other instructions sit (6116ccc: the
+  sample spreads across the support range). A first pair of extra rounds with only the prompt fix split 17 small
+  features and none of the three buckets; the pair with both fixes runs before the seed.
 - 138 standing misfits; the sample reads as real disagreements.
 
 ## Over- and under-clustering, so far
