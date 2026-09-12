@@ -24,6 +24,7 @@ from .. import align as A
 from .. import cube as C
 from .. import settings as S
 from .. import ingest as I
+from .. import history as H
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -340,11 +341,55 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
                 if stop.is_set():
                     jobs.finish(store, ws, jid, "stopped"); running.pop(jid, None); continue
                 client = Client(store, budget=budget, base_url=prof.get("base_url") or None, max_connections=int(prof.get("workers") or 128) + 64)
+                try:
+                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM corpus WHERE name='seed'") else None
+                except Exception as e:  # noqa: BLE001  a checkpoint failure must not stop the run
+                    logging.getLogger("fx").warning("checkpoint before job %d failed: %s", jid, e)
                 jobs.run_profile(store, ws, client, jid, n, prof, kind=kind, stop=stop)
                 running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()
         return {"ids": jids, "corpora": names}
+
+    # ---- history: checkpoints per corpus, restore, diff, branch
+    @app.get("/api/history")
+    def api_history(corpus: str = ""):
+        return {"checkpoints": H.checkpoints(store, corpus or None), "objects": str(H.objects_dir(ws)), "workspace": str(ws.root)}
+
+    @app.post("/api/history/checkpoint")
+    def api_history_checkpoint(body: dict):
+        try:
+            return H.checkpoint(store, ws, str(body.get("corpus") or ""), note=body.get("note") or "by hand")
+        except KeyError:
+            raise HTTPException(404, "no such corpus")
+
+    @app.get("/api/history/{cid}/diff")
+    def api_history_diff(cid: int):
+        try:
+            return H.diff(store, cid, ws)
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+
+    @app.post("/api/history/{cid}/restore")
+    def api_history_restore(cid: int):
+        live = {j["corpus"] for j in I.running_jobs(store, ws) if j["live"]}
+        try:
+            r = H.restore(store, ws, cid, live_corpora=live)
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        C._cache.clear()
+        return r
+
+    @app.post("/api/history/{cid}/branch")
+    def api_history_branch(cid: int, body: dict):
+        try:
+            return H.branch(store, ws, cid, str(body.get("name") or ""))
+        except KeyError:
+            raise HTTPException(404, "no such checkpoint")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.get("/api/jobs/{jid}/stages")
     def api_job_stages(jid: int):

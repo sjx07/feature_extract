@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS fvector (
 CREATE TABLE IF NOT EXISTS profile (
     name TEXT PRIMARY KEY, params TEXT NOT NULL, at TEXT NOT NULL);
 
+-- history: a checkpoint of one corpus (or the seed line) as content-addressed blobs under runs/history/objects
+CREATE TABLE IF NOT EXISTS checkpoint (
+    id INTEGER PRIMARY KEY, corpus TEXT NOT NULL, job INTEGER, at TEXT NOT NULL, note TEXT, tree TEXT NOT NULL, counts TEXT NOT NULL, bytes INTEGER);
+
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, corpus TEXT, model TEXT, params TEXT, status TEXT NOT NULL,

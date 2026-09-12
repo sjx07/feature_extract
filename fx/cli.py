@@ -74,6 +74,11 @@ def main(argv=None) -> int:
         p.add_argument("--workers", type=int, default=64); p.add_argument("--effort", default="low", choices=("low", "default"))
         p.add_argument("--rounds", type=int, default=5)
         p.add_argument("--base-url", default=None); p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
+    hist = sub.add_parser("history", help="git for the store, per corpus: checkpoints as shared blobs, restore, diff, branch").add_subparsers(dest="sub", required=True)
+    for name in ("checkpoint", "list", "restore", "diff", "branch"):
+        p = hist.add_parser(name)
+        p.add_argument("--corpus", default=None); p.add_argument("--id", type=int, default=None, help="a checkpoint id (restore, diff, branch)")
+        p.add_argument("--name", default=None, help="the branch's workspace name (branch)"); p.add_argument("--note", default=None)
     srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args(argv)
 
@@ -152,6 +157,20 @@ def main(argv=None) -> int:
                            workers=a.workers, effort=a.effort, rounds=a.rounds, echo=lambda line: print("  " + line, flush=True))
         print(status)
         return 0 if status == "done" else 1
+    if a.cmd == "history":
+        from . import history as H
+        if a.sub == "checkpoint":
+            print(json.dumps(H.checkpoint(store, ws, a.corpus or "seed", note=a.note or "by hand"), indent=1))
+        elif a.sub == "list":
+            for c in H.checkpoints(store, a.corpus):
+                print(f"#{c['id']:<4} {c['corpus']:<22} {c['at']}  before job {c['job'] or '-':<5} {c['note'] or '':<16} {json.dumps(c['counts'])}")
+        elif a.sub == "diff":
+            print(json.dumps(H.diff(store, a.id, ws), indent=1))
+        elif a.sub == "restore":
+            print(json.dumps(H.restore(store, ws, a.id), indent=1))
+        elif a.sub == "branch":
+            print(json.dumps(H.branch(store, ws, a.id, a.name or f"branch-{a.id}"), indent=1))
+        return 0
     if a.cmd == "serve":
         from .gui.server import serve
         serve(ws, a.host, a.port)
