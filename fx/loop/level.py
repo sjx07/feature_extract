@@ -28,17 +28,12 @@ class Level:
     node_vector: str = "anchors"                # 'anchors': mean of the node's example units; 'members': mean of its members
     unit_prefix: str = "R"                      # how the unit id is written in prompts
     node_prefix: str = "F"
-    min_members: int = 3                        # a candidate cluster needs this many units ...
-    min_groups: int = 2                         # ... from this many distinct groups (prompts, or corpora)
-    tau: float = 0.78                           # the neighbour threshold when none is measured or given
-    measure_tau: Optional[Callable[[], Optional[float]]] = None   # e.g. from the anchors; None -> use tau
     named_min_members: int = 2                  # a named node needs this many accepted members ...
     named_min_groups: int = 1                   # ... from this many groups
     allow_variant: bool = True                  # may the namer place a cluster under a feature as a variant
     allow_new_group: bool = True                # may the namer create a group (the seed's groups are the aspects, fixed at birth)
     batch: int = 20
     shortlist_k: int = 4
-    neighbourhood: int = 0                      # >0: candidates are neighbourhoods (a seed unit and its k nearest from other groups),
-                                                # no threshold; the namer decides and a rejected seed is specific. 0: threshold clusters
+    neighbourhood: int = 5                      # a candidate is a seed unit and its k nearest open units from other groups; no threshold
     aspects: tuple = ()
     label: str = ""                             # for logs and notes: 'text2sql guidance', 'seed guidance'

@@ -117,10 +117,11 @@ declarations into realizations and `embed` gives each one a vector from a local 
 the codebook in one whole-corpus call (groups with an aspect, features with a testable definition, polarity
 and example wordings, the anchors); `assign` puts every wording on a node or leaves it open, first against
 the whole codebook and then, for the open ones, against the few nodes nearest by retrieval; `judge` reports
-misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` groups the open
-wordings that neighbour each other in the corpus and marks the neighbourless ones specific; `name` reads
-each candidate cluster and adds it as a variant under a feature, as a new feature, or rejects it; assign
-runs again over the open wordings; until no candidate is left. Nothing written is ever rewritten. The
+misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` gives every open
+wording not yet looked at its neighbourhood, itself and its nearest open wordings from other prompts (no
+threshold: retrieval orders, the model decides); `name` reads each neighbourhood and adds a variant under a
+feature, a new feature, or rejects it, and a rejected seed is marked specific; assign runs again over the open
+wordings; until every open wording has had its look. Nothing written is ever rewritten. The
 site's Library page runs each step with a cost preview and shows the tree, the open wordings and the flags.
 
 ```
@@ -138,9 +139,9 @@ judge, reopen, cluster, name and the settle loop.
 The stage 2 loop one level up. The units are the per-corpus features of every library of a kind, read as cards
 (name, definition, anchors, corpus, support); a global feature is one instruction several corpora give under
 their own domain nouns. `embed` vectors the cards; `assign` puts open cards on the nearest globals or none;
-`cluster` groups open cards that neighbour cards from other corpora and marks the rest domain-specific; `name`
-reads each candidate and either creates a global feature (named without domain nouns, defined across domains,
-members from two or more corpora) or rejects it; `judge` flags members whose wordings give another instruction,
+`cluster` gives every open card not yet looked at its neighbourhood, itself and its nearest open cards from other
+corpora; `name` reads it and either creates a global feature (named without domain nouns, defined across domains,
+members from two or more corpora) or rejects it, and a rejected card is domain-specific; `judge` flags members whose wordings give another instruction,
 and reopen sends first-time flags back with the reason. The Seed page shows the globals with their members per
 corpus. Variants stay under their features: global → per-corpus feature → variant.
 

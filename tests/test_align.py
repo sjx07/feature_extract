@@ -54,8 +54,6 @@ def test_cards_vectors_and_cross_corpus_candidates(store):
     cs = A.cards(store, "guidance")
     assert len(cs) == 6 and {c["corpus"] for c in cs} == {"sql", "cypher"} and all(c["anchors"] and c["support"] == 3 for c in cs)
     assert A.embed(store, "guidance", enc=fake_encoder)["embedded"] == 6 and A.embed(store, "guidance", enc=fake_encoder)["embedded"] == 0
-    tau, pairs = A.threshold(store, "guidance")
-    assert pairs == 1 and tau == 0.84
     c = A.candidates(store, "guidance")
     # neighbourhoods, no threshold: a seed card and its nearest cards from the other corpus, each card in one cluster a round
     assert c["seeds"] == 6 and c["specific"] == 0 and c["clusters"]
