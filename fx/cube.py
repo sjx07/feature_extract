@@ -159,7 +159,7 @@ def slice(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
 
     groups: dict[int, dict] = {}
     for gid, ps in g_prompts.items():
-        g = nodes[gid]; grp = nodes.get(g["parent"]) or {"id": 0, "name": "other", "aspect": "other", "definition": ""}
+        g = nodes[gid]; grp = nodes.get(g["parent"]) or {"id": 0, "name": f"unplaced · {g.get('aspect') or 'other'}", "aspect": g.get("aspect") or "other", "definition": "features not yet under a group"}
         members = sorted((feat_row(f) for f, gl in h["to_global"].items() if gl == gid and f in f_prompts), key=lambda d: -d["prompts"])
         row = {"id": gid, "name": g["name"], "definition": g["definition"] or "", "polarity": g["polarity"] or "require", "round": g["round"], "prompts": len(ps), "readings": g_read[gid], "share": round(len(ps) / n, 4),
                "corpora": sorted({m["corpus"] for m in members}), "members": members}
@@ -171,7 +171,7 @@ def slice(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
     for fid, ps in f_prompts.items():
         if fid in h["to_global"]:
             continue
-        f = nodes[fid]; grp = nodes.get(f["parent"]) or {"name": "other", "aspect": "other"}
+        f = nodes[fid]; grp = nodes.get(f["parent"]) or {"name": f"unplaced · {f.get('aspect') or 'other'}", "aspect": f.get("aspect") or "other"}
         lib = local.setdefault(f["corpus"], {"corpus": f["corpus"], "prompts": set(), "groups": {}})
         lib["prompts"] |= ps
         gr = lib["groups"].setdefault(grp["name"], {"name": grp["name"], "aspect": grp.get("aspect"), "prompts": set(), "features": []})
@@ -205,10 +205,18 @@ def node(store: Store, kind: str, filters: dict[str, set[str]], fid: int, limit:
     for i in range(0, len(rids), 500):
         chunk = rids[i:i + 500]
         text |= {int(r["id"]): dict(r) for r in store.rows(f"SELECT id, declaration, polarity, prompts, n FROM realization WHERE id IN ({','.join('?' * len(chunk))})", chunk)}
+    # the quotes: each wording's span in the selected prompts, a dozen per wording
+    quotes: dict[int, list[dict]] = defaultdict(list)
+    for i in range(0, len(rids), 400):
+        chunk = rids[i:i + 400]
+        for r in store.rows(f"SELECT r.realization, r.prompt, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 320)) text, s.hi-s.lo chars FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
+                            f"WHERE r.realization IN ({','.join('?' * len(chunk))}) ORDER BY r.prompt", chunk):
+            if r["prompt"] in selected and len(quotes[int(r["realization"])]) < 12:
+                quotes[int(r["realization"])].append({"prompt": r["prompt"], "text": r["text"], "chars": int(r["chars"])})
     members = []
     for feat, d in sorted(by_feat.items(), key=lambda kv: -len(set().union(*kv[1].values()))):
         x = nodes[feat]
-        ws = sorted(({"id": r, "declaration": text[r]["declaration"], "polarity": text[r]["polarity"], "prompts": len(ps), "corpus_prompts": text[r]["prompts"], "sample": sorted(ps)[:3]} for r, ps in d.items() if r in text), key=lambda w: -w["prompts"])
+        ws = sorted(({"id": r, "declaration": text[r]["declaration"], "polarity": text[r]["polarity"], "prompts": len(ps), "corpus_prompts": text[r]["prompts"], "quotes": quotes.get(r, [])} for r, ps in d.items() if r in text), key=lambda w: -w["prompts"])
         members.append({"id": feat, "corpus": x["corpus"], "name": x["name"], "definition": x["definition"] or "", "polarity": x["polarity"] or "require", "group": nodes.get(x["parent"], {}).get("name"),
                         "prompts": len(set().union(*d.values())), "wordings": ws})
     ps = sorted(prompts, key=lambda p: -prompts[p])[:limit]
