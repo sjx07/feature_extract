@@ -119,7 +119,7 @@ def test_site_seed_endpoint_and_cli_status(tmp_path):
     seed_library(store, "sql", SQL); seed_library(store, "cypher", CYPHER)
     c = TestClient(make_app(ws, store))
     s = c.get("/api/seed?kind=guidance").json()
-    assert s["cards"] == 6 and s["globals"] == 0 and set(s["per_corpus"]) == {"sql", "cypher"} and len(s["libraries"]) == 2
+    assert s["status"]["cards"] == 6 and s["status"]["globals"] == 0 and set(s["status"]["per_corpus"]) == {"sql", "cypher"} and len(s["libraries"]) == 2 and isinstance(s["status"]["open"], int)
     assert main(["-w", str(ws.root), "align", "status"]) == 0
 
 

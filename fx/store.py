@@ -139,9 +139,17 @@ class Store:
             for col, typ in cols:
                 if col not in have:
                     self.con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-        self.con.execute("INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) SELECT 'realization', realization, codebook, feature, confidence, note, at FROM assignment")
-        self.con.execute("INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'realization', realization, model, dim, vec FROM vector")
-        self.con.execute("INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'feature', feature, model, dim, vec FROM fvector")
+        self.con.execute("CREATE INDEX IF NOT EXISTS reading_realization ON reading(realization)")   # after the column exists
+        # the legacy copies write only when the legacy table holds rows the new table lacks, so a reader opening a store
+        # beside a running job does not queue behind its write lock for nothing
+        for legacy, kind, target, copy in (
+                ("assignment", "realization", "membership", "INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) SELECT 'realization', realization, codebook, feature, confidence, note, at FROM assignment"),
+                ("vector", "realization", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'realization', realization, model, dim, vec FROM vector"),
+                ("fvector", "feature", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'feature', feature, model, dim, vec FROM fvector")):
+            n_legacy = self.con.execute(f"SELECT COUNT(*) FROM {legacy}").fetchone()[0]
+            n_have = self.con.execute(f"SELECT COUNT(*) FROM {target} WHERE kind=?", (kind,)).fetchone()[0] if n_legacy else 0
+            if n_legacy > n_have:
+                self.con.execute(copy)
         self.con.commit()                        # called under self.lock from migrate()
 
     def insert(self, table: str, row: dict[str, Any]) -> int:

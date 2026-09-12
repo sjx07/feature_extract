@@ -245,7 +245,7 @@ async function viewFeature(main, fid) {
 async function viewSeed(main, q) {
   const kind = q.kind || 'guidance';
   const [s, jobs] = await Promise.all([api(`/api/seed?kind=${kind}`), api('/api/jobs')]);
-  const corpora = Object.entries(s.per_corpus);
+  const st = s.status, corpora = Object.entries(st.per_corpus);
   const flagsBy = {}; for (const f of s.flags) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
   const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect)} · ${g.features.length} global features · ${fmt(g.support)} prompts</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">
       ${g.features.map(f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${f.corpora}</span><span class="read"><span class="verb">${esc(f.polarity)}</span> ${esc(f.name)}<span class="tag">${f.corpora} corpora · ${fmt(f.support)} prompts · round ${f.round}${(flagsBy[f.id] || []).length ? ` · <span class="err">${(flagsBy[f.id] || []).length} flags</span>` : ''}</span><br><span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>
@@ -253,7 +253,7 @@ async function viewSeed(main, q) {
   main.innerHTML = `<div class="split"><div>
     <h1>Seed library</h1>
     <p class="lede">${['guidance', 'material'].map(k => `<a href="${href('/seed', { kind: k })}" style="margin-right:10px;${k === kind ? 'font-weight:600;color:var(--ink)' : ''}">${k}</a>`).join('')}</p>
-    <div class="block"><div class="t">${s.globals} global features in ${s.groups.length} groups · ${s.aligned} of ${s.cards} per-corpus features aligned · ${s.domain_specific} domain-specific · ${s.open} open · ${s.flags} flags (${s.standing} standing) · ${s.rounds} rounds</div>
+    <div class="block"><div class="t">${st.globals} global features in ${st.groups} groups · ${st.aligned} of ${st.cards} per-corpus features aligned · ${st.domain_specific} domain-specific · ${st.open} open · ${st.flags} flags (${st.standing} standing) · ${st.rounds} rounds</div>
       <table class="list"><tr><th>corpus</th><th class="n">features</th><th class="n">aligned</th><th class="n">domain-specific</th><th class="n">prompts under aligned features</th></tr>
       ${corpora.map(([c, d]) => `<tr><td><a href="${href('/library', { corpus: c, kind })}">${esc(c)}</a></td><td class="n">${d.features}</td><td class="n">${d.aligned} <span class="muted">(${pct(d.aligned / Math.max(d.features, 1))})</span></td><td class="n">${d.domain_specific}</td><td class="n">${pct(d.aligned_support / Math.max(d.support, 1))}</td></tr>`).join('')}</table></div>
     <div class="block"><div class="t">global features, with their members per corpus</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none yet: run a round</span>'}</div></div>
