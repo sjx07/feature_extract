@@ -25,7 +25,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from ..llm import Client
-from ..llm.pool import _sem, run_many
+from ..llm.pool import _sem
 from ..llm.registry import reasoning_low, resolve
 from ..store import Store, now
 from ..util.ids import parse_id, parse_ids
@@ -45,6 +45,21 @@ NAME_SCHEMA = {"type": "object", "properties": {
 
 class Stopped(Exception):
     pass
+
+
+def _stream(client: Client, prompts: list[str], model: str, workers: int, note: str, system: str, schema=None, extra=None):
+    """Yield (index, reply) as the calls land, under the endpoint's admission; a denial raises."""
+    sem = _sem(resolve(model, client.base_url).base_url, max(workers, 1))
+
+    def one(k):
+        with sem:
+            return k, client.complete(prompts[k], model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=note, system=system, schema=schema)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+        for fut in as_completed([ex.submit(one, k) for k in range(len(prompts))]):
+            k, r = fut.result()
+            if r.error and r.error.startswith("denied"):
+                raise RuntimeError(r.error)
+            yield k, r
 
 
 # ---- vectors
@@ -320,10 +335,11 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
         store.con.execute("DELETE FROM flag WHERE codebook=?", (lv.codebook,)); store.con.commit()
     if not jobs:
         return summary
-    replies = run_many(client, jobs, model=model, workers=workers, max_inflight=workers, stage="library", note=f"{lv.label}:judge", system=lv.system, max_tokens=MAX_TOKENS,
-                       extra_body=reasoning_low(model, client.base_url) if effort == "low" else None)
     member_col = "realization" if lv.kind == "realization" else "other"
-    for (what, node, valid), r in zip(meta, replies):
+    done = 0
+    for k, r in _stream(client, jobs, model, workers, f"{lv.label}:judge", lv.system, extra=reasoning_low(model, client.base_url) if effort == "low" else None):
+        what, node, valid = meta[k]
+        done += 1
         obj = extract_object(r.text) if r and r.text else None
         if obj is None:
             summary["unparsed"] += 1; continue
@@ -350,7 +366,7 @@ def judge(store: Store, client: Client, lv: Level, model: str, workers: int = 12
             summary["standing" if row["standing"] else "new"] += 1
             store.insert("flag", row)
         if progress:
-            progress(summary["calls"], len(jobs), {"what": what, "id": node["id"]})
+            progress(done, len(jobs), {"what": what, "id": node["id"], "misfits": summary["misfits"], "cost": r.cost, "calls": 1})
     return summary
 
 
@@ -431,9 +447,11 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
     summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "groups": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
     if not clusters:
         return summary
-    replies = run_many(client, [lv.prompt_name(tr, c["members"]) for c in clusters], model=model, workers=workers, max_inflight=workers, stage="library",
-                       note=f"{lv.label}:name:r{round_}", system=lv.system, max_tokens=MAX_TOKENS, schema=NAME_SCHEMA)
-    for k, (c, r) in enumerate(zip(clusters, replies)):
+    prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
+    done = 0
+    for k, r in _stream(client, prompts, model, workers, f"{lv.label}:name:r{round_}", lv.system, schema=NAME_SCHEMA):
+        c = clusters[k]
+        done += 1
         obj = extract_object(r.text) if r and r.text else None
         member_ids = {u["id"] for u in c["members"]}
         by_id = {u["id"]: u for u in c["members"]}
@@ -445,7 +463,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
         if decision == "reject" or len(kept) < lv.named_min_members or ngroups < lv.named_min_groups or not str(obj.get("name") or "").strip():
             summary["rejected"] += 1
             if progress:
-                progress(k + 1, len(clusters), {"cluster": k, "decision": "reject"})
+                progress(done, len(clusters), {"cluster": k, "decision": "reject", "cost": r.cost, "calls": 1})
             continue
         pol = str(obj.get("polarity") or "require").lower()
         row = {"codebook": lv.codebook, "prev": None, "aspect": None, "name": str(obj["name"]).strip(), "definition": str(obj.get("definition") or "").strip(),
@@ -476,7 +494,7 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
             store.con.commit()
         summary["assigned"] += len(kept)
         if progress:
-            progress(k + 1, len(clusters), {"cluster": k, "decision": row["level"], "name": row["name"]})
+            progress(done, len(clusters), {"cluster": k, "decision": row["level"], "name": row["name"], "cost": r.cost, "calls": 1})
     return summary
 
 
