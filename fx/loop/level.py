@@ -33,6 +33,7 @@ class Level:
     named_min_members: int = 2                  # a named node needs this many accepted members ...
     named_min_groups: int = 1                   # ... from this many groups
     group_min_features: int = 3                 # a new group needs this many unplaced features that share one purpose
+    join_batch: int = 40                        # proposals per join call (one call per aspect, sliced at this size)
     allow_variant: bool = True                  # may the namer place a cluster under a feature as a variant
     batch: int = 20
     shortlist_k: int = 4
