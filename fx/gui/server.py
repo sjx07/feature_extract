@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import decompose, jobs
+from .. import library as L
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -144,6 +145,62 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         threading.Thread(target=work, daemon=True).start()
         return {"id": jid, "total": total, "log": str(ws.job_log(jid))}
 
+    # ---- stage 2: the library
+    @app.get("/api/library")
+    def api_library(corpus: str, kind: str = "guidance", version: Optional[int] = None):
+        st = L.status(store, corpus, kind)
+        cb = L.latest(store, corpus, kind, version)
+        tree = L.groups(store, int(cb["id"])) if cb else []
+        fl = L.flags(store, int(cb["id"])) if cb else []
+        return st | {"codebook": cb, "groups": tree, "flags": fl, "leftover": L.leftovers(store, int(cb["id"]), corpus, kind)[:300] if cb else []}
+
+    @app.get("/api/feature/{fid}")
+    def api_feature(fid: int):
+        f = store.one("SELECT * FROM feature WHERE id=?", (fid,))
+        if not f:
+            raise HTTPException(404, "no such feature")
+        f = dict(f) | {"examples": json.loads(f["examples"] or "[]")}
+        cb = dict(store.one("SELECT c.*, k.name corpus_name FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.id=?", (f["codebook"],)))
+        group = dict(store.one("SELECT * FROM feature WHERE id=?", (f["parent"],))) if f["parent"] else None
+        ms = L.members(store, f["codebook"], fid, 500)
+        readings = [dict(r) for r in store.rows("SELECT r.id, r.prompt, r.declaration, r.condition, s.lo, s.hi, SUBSTR(p.text, s.lo+1, MIN(s.hi-s.lo, 200)) text, r.realization FROM reading r JOIN span s ON s.id=r.span JOIN prompt p ON p.id=r.prompt "
+                                                "WHERE r.realization IN (SELECT realization FROM assignment WHERE codebook=? AND feature=?) ORDER BY r.prompt LIMIT 300", (f["codebook"], fid))]
+        fl = [x for x in L.flags(store, f["codebook"]) if x["feature"] == fid or x["other"] == fid]
+        lineage = []
+        prev = f["prev"]
+        while prev:
+            r = store.one("SELECT id, prev, name, codebook FROM feature WHERE id=?", (prev,))
+            if not r:
+                break
+            lineage.append(dict(r)); prev = r["prev"]
+        return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage}
+
+    @app.get("/api/library/preview")
+    def api_library_preview(corpus: str, kind: str = "guidance", step: str = "assign", model: str = ""):
+        return L.preview(store, corpus, kind, step, model or None)
+
+    @app.post("/api/library/jobs")
+    def api_library_job(body: dict):
+        corpus_name, kind, step = body["corpus"], body.get("kind") or "guidance", body.get("step") or "assign"
+        model = body.get("model") or (L.COLDSTART_MODEL if step == "coldstart" else DEFAULT_MODEL)
+        workers = int(body.get("workers") or 128)
+        version = int(body["version"]) if body.get("version") else None
+        effort = body.get("effort") or "low"
+        rounds, codebook_model = int(body.get("rounds") or 5), body.get("codebook_model") or None
+        params = {"kind": kind, "version": version, "workers": workers, "effort": effort, "rounds": rounds, "codebook_model": codebook_model, "from": "gui"}
+        jid = jobs.start(store, ws, f"library:{step}", corpus_name, model, params, 0)
+        stop = threading.Event()
+        running[jid] = stop
+        budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else float("inf")
+        client = Client(store, base_url=body.get("base_url") or None, max_connections=workers + 64, budget=budget)
+
+        def work():
+            jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, rounds=rounds, codebook_model=codebook_model, stop=stop)
+            running.pop(jid, None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"id": jid, "log": str(ws.job_log(jid))}
+
     @app.post("/api/jobs/{jid}/stop")
     def api_job_stop(jid: int):
         ev = running.get(jid)
@@ -189,6 +246,14 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         return {"total": store.spent(), "by_model": store.spend_by_model(), "workspace": str(ws.root)}
 
     app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
+
+    @app.middleware("http")
+    async def no_cache(request, call_next):
+        """The script, style and index are re-read on every load, so a restart on new code is never hidden by the browser's cache."""
+        resp = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
 
     @app.get("/")
     def index():

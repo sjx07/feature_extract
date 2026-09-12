@@ -217,3 +217,15 @@ def test_ledger_keeps_the_upstream_and_the_billed_cost(store):
         assert r.provider == "Wafer" and r.billed == 0.0042
         row = store.one("SELECT provider, billed, cost FROM call")
         assert row["provider"] == "Wafer" and row["billed"] == 0.0042 and abs(store.spent() - 0.0042) < 1e-9        # spend is what was billed, not the list price
+
+
+def test_client_sends_the_upstream_routing_for_every_call(tmp_path, monkeypatch):
+    """The routing body is the endpoint's, not the caller's: every call carries it, and a caller's extra_body wins on overlap."""
+    import fx.llm.client as cl
+    monkeypatch.setattr(cl, "provider_body", lambda model, base_url=None: {"provider": {"only": ["Wafer"], "allow_fallbacks": False}, "reasoning": {"effort": "high"}})
+    store = Store(tmp_path / "s.db")
+    with FakeServer() as srv:
+        srv.script = [reply("ok")]
+        Client(store, base_url=srv.url).complete("hi", model="m", stage="t", extra_body={"reasoning": {"effort": "low"}})
+        body = srv.requests[-1]
+        assert body["provider"] == {"only": ["Wafer"], "allow_fallbacks": False} and body["reasoning"] == {"effort": "low"}

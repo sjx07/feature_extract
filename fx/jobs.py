@@ -13,6 +13,7 @@ import threading
 import traceback
 from typing import Optional
 
+from .llm.registry import DEFAULT_MODEL
 from .paths import Workspace
 from .store import Store, now
 
@@ -45,10 +46,11 @@ def progress_writer(store: Store, ws: Workspace, jid: int, stop: threading.Event
         r = store.one("SELECT recent FROM job WHERE id=?", (jid,))
         recent = (json.loads(r["recent"] or "[]") + [{k: info.get(k) for k in ("id", "coverage", "n_atoms", "calls", "error")}])[-5:]
         with store.lock:
-            store.con.execute("UPDATE job SET done=?, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
-                              (done, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))
+            store.con.execute("UPDATE job SET done=?, total=CASE WHEN ?>0 THEN ? ELSE total END, calls=calls+?, spent=spent+?, recent=? WHERE id=?",
+                              (done, total, total, info.get("calls") or 0, info.get("cost") or 0.0, json.dumps(recent), jid))   # a step that learns its total (batches) reports it
             store.con.commit()
-        line = f"{now()} {done}/{total} {info.get('id')} coverage={info.get('coverage')} atoms={info.get('n_atoms')} calls={info.get('calls')}" + (f" ERROR {info['error']}" if info.get("error") else "")
+        shown = {k: v for k, v in info.items() if k not in ("error", "cost") and v is not None}          # a decomposition names its prompt; a library step its batch
+        line = f"{now()} {done}/{total} " + " ".join(f"{k}={v}" for k, v in shown.items()) + (f" ERROR {info['error']}" if info.get("error") else "")
         with open(ws.job_log(jid), "a") as fh:
             fh.write(line + "\n")
         if echo:
@@ -66,6 +68,55 @@ def run_decompose(store: Store, ws: Workspace, client, jid: int, corpus: Optiona
         s = decompose.run(store, client, corpus, model=model, workers=workers, ids=ids, redo=redo, limit=limit,
                           progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
         status = "stopped" if s["stopped"] else ("done" if not s["failed"] else "done_with_failures")
+        finish(store, ws, jid, status)
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        status = "failed"
+    return status
+
+
+def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind: str, step: str, *, model: Optional[str] = None, workers: int = 128,
+                version: Optional[int] = None, effort: str = "low", rounds: int = 5, codebook_model: Optional[str] = None, tau: Optional[float] = None,
+                stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One library step as a job: coldstart, assign, judge, cluster, name, or the whole round loop (collapse and embed run inline before
+    coldstart and assign). `model` is the batch model (assign, judge); `codebook_model` the cold-start and naming model."""
+    from . import library as L
+    stop = stop or threading.Event()
+    try:
+        if step in ("coldstart", "assign", "cluster", "name"):
+            L.collapse(store, corpus, kind); L.embed(store, corpus, kind)
+        if step == "coldstart":
+            r = L.coldstart(store, client, corpus, kind, model=model or L.COLDSTART_MODEL)
+        elif step == "assign":
+            r = L.assign(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+        elif step == "judge":
+            r = L.judge(store, client, corpus, kind, model=model or DEFAULT_MODEL, version=version, workers=workers, effort=effort, progress=progress_writer(store, ws, jid, stop, echo))
+        elif step == "reopen":
+            r = L.reopen(store, int(L.latest(store, corpus, kind)["id"]))
+        elif step in ("cluster", "name"):
+            cb = int(L.latest(store, corpus, kind)["id"])
+            r = L.candidates(store, cb, corpus, kind)
+            if step == "name":
+                rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (cb,))["r"]) + 1
+                r = L.name(store, client, corpus, kind, cb, r["clusters"], rnd, model=codebook_model or L.COLDSTART_MODEL, workers=min(workers, 16), progress=progress_writer(store, ws, jid, stop, echo))
+            else:
+                r = {k: v for k, v in r.items() if k != "clusters"} | {"largest": [[d["declaration"][:60] for d in c["members"][:4]] for c in r["clusters"][:5]]}
+        elif step == "round":
+            def log_step(name, res):
+                with open(ws.job_log(jid), "a") as fh:
+                    fh.write(f"{now()} step {name} result {json.dumps(res)}\n")
+                if echo:
+                    echo(f"step {name}: {json.dumps(res)[:300]}")
+            r = L.run_round(store, client, corpus, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or L.COLDSTART_MODEL, workers=workers, effort=effort,
+                            rounds=rounds, tau=tau, log=log_step, progress=progress_writer(store, ws, jid, stop, echo), stop=stop)
+            r["stopped"] = r["stopped_because"] == "stopped"
+        else:
+            raise ValueError(step)
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} result {json.dumps(r)}\n")
+        status = "stopped" if r.get("stopped") else "done"
         finish(store, ws, jid, status)
     except Exception as e:
         with open(ws.job_log(jid), "a") as fh:

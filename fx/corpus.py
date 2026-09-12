@@ -29,6 +29,19 @@ def sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def corpus_id(store: Store, name: str) -> int:
+    """The id of an existing corpus; KeyError when there is none (nothing is created)."""
+    r = store.one("SELECT id FROM corpus WHERE name=?", (name,))
+    if not r:
+        raise KeyError(f"no corpus {name!r}")
+    return int(r["id"])
+
+
+def corpus_domain(store: Store, cid: int, default: str) -> str:
+    r = store.one("SELECT domain FROM prompt WHERE corpus=? AND domain IS NOT NULL", (cid,))
+    return (r["domain"] if r else None) or default
+
+
 def get_corpus(store: Store, name: str, source: str = "") -> int:
     r = store.one("SELECT id FROM corpus WHERE name=?", (name,))
     if r:

@@ -11,12 +11,12 @@ Stages, in the order the data flows:
 |---|---|---|
 | 0 | `fx llm ...` | `call`: every model call with tokens, cost, latency, and a cache |
 | 1 | `fx decompose` | `span` (the tree: sections, atoms, material, declined gaps), `reading` (an atom's facets), `decomp` (the run per prompt) |
-| 2 | `fx coldstart`, `fx assign` | features, assignments, the leftover rounds, coherence |
+| 2 | `fx library round` (coldstart, assign, judge, cluster, name) | `realization`, `vector`, `codebook`, `feature` (the tree: groups, features, variants), `assignment`, `flag` |
 | 3 | `fx align` | folds into the seed library, decisions |
 | 4 | `fx refine` | splits, edges, reversions, as rules with parameters |
 | 5 | `fx serve` | the GUI |
 
-Stages 0 and 1 are in place; the others follow in that order.
+Stages 0, 1 and 2 are in place; the others follow in that order.
 
 ## Stage 0: models, ledger, cache
 
@@ -109,6 +109,25 @@ Every unowned stretch of a sentence or more is refined once as a gap and its out
 Coverage is atom characters over instruction characters, instruction being what the model did
 not call material. Reasoning is off by default (the registry knows how to say that to each
 endpoint) and replies are constrained to the components schema where the server supports it.
+
+## Stage 2: the feature library
+
+One library per corpus and kind (guidance, material), a tree that only grows. `collapse` folds identical
+declarations into realizations and `embed` gives each one a vector from a local model; `coldstart` writes
+the codebook in one whole-corpus call (groups with an aspect, features with a testable definition, polarity
+and example wordings, the anchors); `assign` puts every wording on a node or leaves it open, first against
+the whole codebook and then, for the open ones, against the few nodes nearest by retrieval; `judge` reports
+misfits, splits and indistinct siblings without moving anything. Then the loop: `cluster` groups the open
+wordings that neighbour each other in the corpus and marks the neighbourless ones specific; `name` reads
+each candidate cluster and adds it as a variant under a feature, as a new feature, or rejects it; assign
+runs again over the open wordings; until no candidate is left. Nothing written is ever rewritten. The
+site's Library page runs each step with a cost preview and shows the tree, the open wordings and the flags.
+
+```
+export HF_HOME=/data/users/$USER/.cache/huggingface     # the embedding model downloads here, not into the home quota
+PYTHONPATH=. python -m fx.cli -w runs/dev library round  --corpus text2sql --kind guidance --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
+PYTHONPATH=. python -m fx.cli -w runs/dev library status --corpus text2sql --kind guidance
+```
 
 ## Tests
 

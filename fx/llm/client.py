@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence, Union
 
 from ..store import Store, now
-from .registry import Endpoint, cost as price_of, resolve
+from .registry import provider_body, Endpoint, cost as price_of, resolve
 
 Messages = Union[str, Sequence[dict[str, str]]]
 
@@ -134,9 +134,10 @@ class Client:
         return self.store.spent() if self.store else self.spent_session
 
     def check_budget(self) -> None:
-        s = self.spent()
+        """The budget bounds what this client spends (its session), so a job's budget means the job, not the store's history."""
+        s = self.spent_session
         if s >= self.budget:
-            raise BudgetExceeded(f"spent ${s:.2f} of the ${self.budget:.2f} budget")
+            raise BudgetExceeded(f"spent ${s:.2f} of the ${self.budget:.2f} budget in this run")
 
     # ---- the call
     def complete(self, messages: Messages, *, model: str, max_tokens: Optional[int] = 8192, temperature: float = 0.0,
@@ -148,6 +149,10 @@ class Client:
         msgs = _to_messages(messages)
         if system:
             msgs = [{"role": "system", "content": system}] + msgs
+        # upstream routing for hosted routers belongs to the endpoint, not the caller: every stage's call gets it, the caller's extra_body wins on overlap
+        routing = provider_body(model, self.base_url)
+        if routing:
+            extra_body = routing | (extra_body or {})
         params = {"max_tokens": max_tokens, "temperature": temperature, "extra_body": extra_body or None, "schema": schema}
         sha = sha_of(model, msgs, params)
         ep = resolve(model, self.base_url)
@@ -268,6 +273,14 @@ class Client:
             "cost": 0.0 if r.cached else r.cost, "latency": r.latency, "finish_reason": r.finish_reason,
             "cached": int(r.cached), "error": r.error, "reply": r.text if self.log_replies else None,
             "provider": r.provider, "billed": r.billed})
+
+
+def ask(client: "Client", prompt: str, *, model: str, stage: str, note: str, system: Optional[str] = None, schema=None, max_tokens: int = 32768) -> str:
+    """One call whose reply text the caller will parse: a denial stops the run (raised), any other failure is an empty string."""
+    r = client.complete(prompt, model=model, max_tokens=max_tokens, stage=stage, note=note, system=system, schema=schema)
+    if r.error and r.error.startswith("denied"):
+        raise RuntimeError(r.error)
+    return r.text
 
 
 def with_fallback(client: Client, primary: dict, *fallbacks: dict):

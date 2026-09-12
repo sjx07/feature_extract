@@ -56,6 +56,43 @@ CREATE TABLE IF NOT EXISTS decomp (
     prompt TEXT PRIMARY KEY REFERENCES prompt(id), status TEXT NOT NULL, model TEXT, coverage REAL, material_share REAL,
     calls INTEGER, seconds REAL, reasks INTEGER, flags TEXT, failures TEXT, error TEXT, at TEXT NOT NULL);
 
+-- stage 2: the feature library of a corpus, one per kind (guidance readings, material readings).
+-- realization: one distinct declaration (polarity + normalised wording); reading.realization points at it, so
+--   support is a join. Assignment works on realizations, never on single readings.
+-- feature: the codebook as a tree in one table: level 'group', 'feature' and 'variant' rows, parent = the row above
+--   (a variant is a feature narrowed by a constraint). The tree only grows: a node is never rewritten, and `round`
+--   says when it was added. Realizations are assigned to features and variants; a group's support is the union.
+-- vector: one embedding per realization, the retrieval that sorts the leftovers (see fx.library.cluster).
+-- assignment: realization -> node (NULL = open) under one codebook, with the model's confidence; note says
+--   'specific' (no other prompt says the same thing yet) or 'named' (placed by the naming call that made its node).
+-- flag: what the read-only coherence judge reported: a misfit member, a split, or two siblings it could not tell
+--   apart. A flag raised for the first time is actionable (reopen sends the member open); one raised again on the
+--   same member and node after that is standing: the member stays and the flag is the report.
+-- codebook: the version record: which model wrote it, from which round, and the anchor agreement measured on it.
+CREATE TABLE IF NOT EXISTS realization (
+    id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, key TEXT NOT NULL,
+    polarity TEXT NOT NULL, declaration TEXT NOT NULL, n INTEGER NOT NULL, prompts INTEGER NOT NULL, conditions TEXT, head TEXT,
+    sample TEXT, domain_terms TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS realization_key ON realization(corpus, kind, key);
+CREATE TABLE IF NOT EXISTS codebook (
+    id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL,
+    model TEXT, round INTEGER NOT NULL, notes TEXT, anchor_agreement REAL, at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS codebook_version ON codebook(corpus, kind, version);
+CREATE TABLE IF NOT EXISTS feature (
+    id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), level TEXT NOT NULL, parent INTEGER REFERENCES feature(id),
+    prev INTEGER REFERENCES feature(id), aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT, round INTEGER);
+CREATE INDEX IF NOT EXISTS feature_codebook ON feature(codebook);
+CREATE TABLE IF NOT EXISTS assignment (
+    realization INTEGER NOT NULL REFERENCES realization(id), codebook INTEGER NOT NULL REFERENCES codebook(id),
+    feature INTEGER REFERENCES feature(id), confidence TEXT, at TEXT NOT NULL, note TEXT, PRIMARY KEY (realization, codebook));
+CREATE TABLE IF NOT EXISTS vector (
+    realization INTEGER PRIMARY KEY REFERENCES realization(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+CREATE INDEX IF NOT EXISTS assignment_feature ON assignment(feature);
+CREATE TABLE IF NOT EXISTS flag (
+    id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), feature INTEGER NOT NULL REFERENCES feature(id),
+    realization INTEGER REFERENCES realization(id), other INTEGER REFERENCES feature(id), verdict TEXT NOT NULL, note TEXT, standing INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS flag_codebook ON flag(codebook);
+
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, corpus TEXT, model TEXT, params TEXT, status TEXT NOT NULL,
@@ -81,11 +118,12 @@ class Store:
             self._migrate()
 
     def _migrate(self) -> None:
-        """Columns added after a store was created: provider and billed on call (2026-09-10)."""
-        have = {r[1] for r in self.con.execute("PRAGMA table_info(call)")}
-        for col, typ in (("provider", "TEXT"), ("billed", "REAL")):
-            if col not in have:
-                self.con.execute(f"ALTER TABLE call ADD COLUMN {col} {typ}")
+        """Columns added after a store was created: provider and billed on call (2026-09-10), realization on reading and head on realization (stage 2)."""
+        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)), ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT"))), ("assignment", (("note", "TEXT"),)), ("feature", (("round", "INTEGER"),)), ("flag", (("standing", "INTEGER DEFAULT 0"),))):
+            have = {r[1] for r in self.con.execute(f"PRAGMA table_info({table})")}
+            for col, typ in cols:
+                if col not in have:
+                    self.con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         self.con.commit()                        # called under self.lock from migrate()
 
     def insert(self, table: str, row: dict[str, Any]) -> int:
