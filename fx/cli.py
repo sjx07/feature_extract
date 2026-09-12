@@ -51,7 +51,7 @@ def main(argv=None) -> int:
         if name == "decompose":
             p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
     lib = sub.add_parser("library", help="stage 2: the feature library of a corpus").add_subparsers(dest="sub", required=True)
-    for name in ("round", "collapse", "coldstart", "assign", "judge", "reopen", "cluster", "name", "status", "preview"):
+    for name in ("round", "collapse", "coldstart", "assign", "judge", "reopen", "cluster", "name", "status", "preview", "relook"):
         p = lib.add_parser(name)
         p.add_argument("--corpus", required=True); p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
         p.add_argument("--model", default=None, help="default: the decomposition model for assign and judge; --codebook-model for coldstart and name")
@@ -117,6 +117,8 @@ def main(argv=None) -> int:
             print(json.dumps(L.collapse(store, a.corpus, a.kind))); return 0
         if a.sub == "status":
             print(json.dumps(L.status(store, a.corpus, a.kind), indent=1)); return 0
+        if a.sub == "relook":
+            print(json.dumps(L.relook(store, a.corpus, a.kind, a.version))); return 0
         if a.sub == "preview":
             print(json.dumps(L.preview(store, a.corpus, a.kind, a.step, a.model), indent=1)); return 0
         from .jobs import run_library, setup_logging, start

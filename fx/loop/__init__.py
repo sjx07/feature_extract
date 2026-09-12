@@ -22,6 +22,6 @@ from .judge import judge, reopen
 from .level import Level
 from .name import candidates, name
 from .round import run_round
-from .state import anchors, embed, members, nodes, open_units, tree, vectors
+from .state import anchors, embed, members, node_vectors, nodes, open_units, tree, vectors
 
-__all__ = ["Level", "Stopped", "anchors", "assign", "candidates", "embed", "judge", "members", "name", "nodes", "open_units", "reopen", "run_round", "tree", "vectors"]
+__all__ = ["Level", "Stopped", "anchors", "assign", "candidates", "embed", "judge", "members", "name", "node_vectors", "nodes", "open_units", "reopen", "run_round", "tree", "vectors"]
