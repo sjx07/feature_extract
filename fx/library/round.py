@@ -57,9 +57,9 @@ def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_mod
         cb = int(latest(store, corpus, kind)["id"])
         step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress, stop=stop))
         step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
-        step("reopen", lambda: reopen(store, cb))
         first = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (cb,))["r"]) + 1
         for rnd in range(first, first + rounds):
+            step("reopen", lambda: reopen(store, cb))                                       # the previous judge's flags, now that a round follows
             c = step("cluster", lambda: candidates(store, cb, corpus, kind, tau=tau))     # tau None: measured from the anchors
             if not c["clusters"]:
                 why = f"no candidate clusters left ({c['specific']} specific, {c['unclustered']} unclustered open wordings)"; break
@@ -68,7 +68,6 @@ def run_round(store: Store, client: Client, corpus: str, kind: str, *, batch_mod
                 why = f"round {rnd} named only {n['variants'] + n['features']} nodes from {n['clusters']} candidates (< {min_yield}): growth is done"; break
             step("assign", lambda: assign(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, only_open=True, progress=progress, stop=stop))
             step("judge", lambda: judge(store, client, corpus, kind, model=batch_model, workers=workers, effort=effort, progress=progress))
-            step("reopen", lambda: reopen(store, cb))
     except Stopped:
         why = "stopped"
     return {"corpus": corpus, "kind": kind, "steps": steps, "versions": status(store, corpus, kind)["versions"], "stopped_because": why}
