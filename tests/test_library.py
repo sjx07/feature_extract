@@ -170,6 +170,16 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         j = L.name(store, c, "c", "guidance", cb, [{"members": m}], round_=4, model="m", workers=1)["join"]
         assert j["into_existing"] == 1 and j["features"] == 0
         assert store.one("SELECT node FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["node"] == new[0]["id"]
+        # the judge's indistinct pair: the join rules "same", and the younger node folds into the older with its members
+        store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": None, "other": new[0]["id"], "verdict": "indistinct", "note": "one instruction", "standing": 0})
+        answers["join"] = {"proposals": [], "pairs": [{"id": "Q1", "verdict": "same"}]}
+        j = L.name(store, c, "c", "guidance", cb, [], round_=5, model="m", workers=1)["join"]
+        assert j["pairs"] == 1 and j["folded"] == 1 and j["kept_apart"] == 0
+        assert store.one("SELECT node FROM membership WHERE kind='realization' AND unit=?", (m[0]["id"],))["node"] == f_think["id"]
+        gone = store.one("SELECT level, prev FROM feature WHERE id=?", (new[0]["id"],))
+        assert gone["level"] == "retired" and gone["prev"] == f_think["id"]
+        assert all(f["id"] != new[0]["id"] for g in L.groups(store, cb) for f in g["features"])                 # the tree hides it
+        assert store.one("SELECT COUNT(*) k FROM flag WHERE other=?", (new[0]["id"],))["k"] == 0
 
 
 def test_round_runs_the_growing_loop(store):

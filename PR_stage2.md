@@ -29,8 +29,10 @@ command, a button on the site, and a job with a log.
 - **join**: one call a round that sees every proposal beside the tree and decides what the round adds: a proposal is
   *new*, or *existing* (the same instruction as a feature already there, so its members go onto it), or a *duplicate*
   of another proposal (the two become one node). It files unplaced features under a group where one fits and founds a
-  group only when three unplaced features share a purpose, the same support rule a feature needs. Then the round
-  writes once. A naming call never founds a group or a duplicate: v3 of text2cypher, where 108 parallel calls invented
+  group only when three unplaced features share a purpose, the same support rule a feature needs. It also rules on the
+  pairs the sibling judge reported as indistinct: *same* folds the younger node into the older (members move, the
+  younger is retired with a pointer), *two* dismisses the report; a pair of the cold start's own features is never
+  folded, it is shown to a person. Then the round writes once. A naming call never founds a group or a duplicate: v3 of text2cypher, where 108 parallel calls invented
   15 groups (13 with one feature) and named the same feature twice, is why.
 - **round**: collapse, embed, cold start if none, assign, judge, then cluster → name → join → assign the open → judge,
   until every open wording has had its look. Every step is one line in the job log; a re-run resumes.

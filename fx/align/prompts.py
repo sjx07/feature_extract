@@ -83,21 +83,27 @@ feature without seeing the others. You see them all, beside the SEED LIBRARY. De
   members go onto S and no global is made. A narrower instruction (S plus a rule) is not the same: it stays new.
 - "duplicate": it gives the same instruction as another proposal P. Give "of": that proposal must be "new"; the two
   become one global under P's name with the members of both.
+# THE JUDGE'S PAIRS
+The judge reported the PAIRS below as globals it cannot tell apart. For each, "same" (one instruction: the younger
+folds into the older) or "two" (two instructions; the report is dismissed).
 Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"S12","of":"P3"}}]}}
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"S12","of":"P3"}}],"pairs":[{{"id":"Q1","verdict":"same|two"}}]}}
 
 # SEED LIBRARY
 {globals}
 
 # PROPOSALS
 {proposals}
+
+# PAIRS
+{pairs}
 """
 
 
-def join_prompt(groups: list[dict], proposals_text: str) -> str:
-    return JOIN.format(what=_WHAT, globals=render_globals(groups), proposals=proposals_text)
+def join_prompt(groups: list[dict], proposals_text: str, pairs_text: str = "(none)") -> str:
+    return JOIN.format(what=_WHAT, globals=render_globals(groups), proposals=proposals_text, pairs=pairs_text)
 
 
 JUDGE = """# TASK
