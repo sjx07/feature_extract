@@ -58,9 +58,9 @@ def _neighbourhoods(store: Store, lv: Level, ids: list[int], m: np.ndarray, by_i
     with store.lock:
         store.con.executemany("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", [(lv.kind, lv.codebook, u) for u in alone])
         store.con.commit()
-    specific = sum(1 for u in by_id.values() if u["note"] == "specific") + len(alone)
-    in_cluster = {u["id"] for c in clusters for u in c["members"]}
-    return {"open": n, "specific": specific, "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - specific - len(in_cluster)}
+    marked = {u["id"] for u in by_id.values() if u["note"] == "specific"} | set(alone)
+    in_cluster = {u["id"] for c in clusters for u in c["members"]}          # specific units sit in clusters too, as neighbours
+    return {"open": n, "specific": len(marked), "seeds": len(seeds), "waiting": waiting, "clusters": clusters, "in_clusters": len(in_cluster), "unclustered": n - len(marked | in_cluster)}
 
 
 def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
