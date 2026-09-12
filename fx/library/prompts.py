@@ -179,14 +179,16 @@ round adds.
   than three stay unplaced; later rounds may bring them company.
 
 # THE JUDGE'S PAIRS
-The judge, reading members, reported the PAIRS below as features it cannot tell apart. For each say "same" (one
-instruction under two names: the younger folds into the older, members and all) or "two" (two instructions; the
-report is dismissed). Read both definitions and ask whether a reader could file a new declaration under one and not
-the other.
+The judge, reading members, reported the PAIRS below as features it cannot tell apart. For each, one of:
+- "same": one instruction under two names; the younger folds into the older, members and all.
+- "narrower": the younger gives the older's instruction plus a rule ("quote column names with double quotes" beside
+  "wrap column names in delimiters"); the younger becomes a variant under the older.
+- "two": two instructions; the report is dismissed.
+Read both definitions and ask whether a reader could file a new declaration under one and not the other.
 Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"F12","of":"P3"}}],"place":[{{"id":"P2","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","ids":["P4","F41","P7"]}}],"pairs":[{{"id":"Q1","verdict":"same|two"}}]}}
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"F12","of":"P3"}}],"place":[{{"id":"P2","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","ids":["P4","F41","P7"]}}],"pairs":[{{"id":"Q1","verdict":"same|narrower|two"}}]}}
 
 # CODEBOOK (every feature by name; the ones nearest to the proposals with their definitions)
 {codebook}

@@ -23,7 +23,7 @@ def indistinct_pairs(store: Store, lv: Level, features: dict) -> list[dict]:
     """The sibling judge's current indistinct reports, as pairs the join may rule on: at least one node of the pair was born
     in the loop (round > 0); a pair of the cold start's own features is trusted and left to a person."""
     out = []
-    for r in store.rows("SELECT feature a, other b, note FROM flag WHERE codebook=? AND verdict='indistinct'", (lv.codebook,)):
+    for r in store.rows("SELECT feature a, other b, note FROM flag WHERE codebook=? AND verdict='indistinct' AND standing=0", (lv.codebook,)):   # a pair ruled 'two' and raised again is standing: a report, not a question
         a, b = features.get(int(r["a"])), features.get(int(r["b"]))
         if a and b and a["polarity"] == b["polarity"] and max(a.get("round") or 0, b.get("round") or 0) > 0:
             older, younger = sorted([a, b], key=lambda f: (f.get("round") or 0, f["id"]))
@@ -72,11 +72,12 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
     pairs = indistinct_pairs(store, lv, features) if lv.prompt_join else []
     summary = {"codebook": lv.codebook, "round": round_, "proposals": len(proposals), "calls": 0, "unparsed": 0, "variants": 0, "features": 0,
                "into_existing": 0, "duplicates": 0, "assigned": 0, "unplaced": 0, "placed": 0, "groups": 0, "still_unplaced": 0,
-               "pairs": len(pairs), "folded": 0, "kept_apart": 0}
+               "pairs": len(pairs), "folded": 0, "narrowed": 0, "kept_apart": 0}
     verdict = {k: ("new", None) for k in range(len(proposals))}
     place: dict = {}
     founded: list = []
     folds: list[tuple[int, int]] = []
+    narrows: list[tuple[int, int]] = []
     cost = 0.0
     if lv.prompt_join and (proposals or pairs or (unplaced and not lv.groups_fixed)):
         # one call per aspect, and per slice of join_batch proposals within an aspect: a single call over a whole round
@@ -149,6 +150,8 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 pr = pairs[qlocal[j - 1]]
                 if v.get("verdict") == "same":
                     folds.append((pr["younger"]["id"], pr["older"]["id"]))
+                elif v.get("verdict") == "narrower" and lv.allow_variant and pr["younger"]["level"] == "feature" and pr["older"]["level"] == "feature":
+                    narrows.append((pr["younger"]["id"], pr["older"]["id"]))
                 elif v.get("verdict") == "two":
                     summary["kept_apart"] += 1
     # duplicates chain to a surviving proposal that is itself new
@@ -218,11 +221,19 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
             if younger in retired or older in retired or younger == older:
                 continue
             _fold(store, lv, younger, older); retired.add(younger); summary["folded"] += 1
+        # the younger of a pair that gives the older's instruction plus a rule becomes its variant: the hierarchy the tree has for that
+        for younger, older in narrows:
+            if younger in retired or older in retired:
+                continue
+            store.con.execute("UPDATE feature SET level='variant', parent=?, aspect=NULL WHERE id=? AND level='feature'", (older, younger))
+            store.con.execute("UPDATE feature SET parent=? WHERE parent=? AND level='variant' AND id!=?", (older, younger, younger))   # a variant's variants move up
+            store.con.execute("DELETE FROM flag WHERE codebook=? AND verdict='indistinct' AND (feature=? OR other=?)", (lv.codebook, younger, younger))
+            summary["narrowed"] += 1
         # a neighbourhood whose seed was not placed has had its look
         for p in proposals:
             if p.get("seed") is not None and p["seed"] not in placed_units:
                 store.con.execute("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", (lv.kind, lv.codebook, p["seed"]))
         store.con.commit()
     if progress and summary["calls"]:
-        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "folded": summary["folded"], "cost": cost, "calls": summary["calls"]})
+        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "folded": summary["folded"], "narrowed": summary["narrowed"], "cost": cost, "calls": summary["calls"]})
     return summary

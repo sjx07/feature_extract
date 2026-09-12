@@ -180,6 +180,22 @@ def test_cluster_marks_specific_and_name_grows_the_tree(store):
         assert gone["level"] == "retired" and gone["prev"] == f_think["id"]
         assert all(f["id"] != new[0]["id"] for g in L.groups(store, cb) for f in g["features"])                 # the tree hides it
         assert store.one("SELECT COUNT(*) k FROM flag WHERE other=?", (new[0]["id"],))["k"] == 0
+        # "narrower": the younger of a reported pair becomes a variant under the older; a standing report is not asked again
+        answers["name"] = {"decision": "feature", "why": "", "parent": None, "group": f"G{gid_out}", "name": "keep the answer very short", "definition": "at most one line", "polarity": "require", "examples": [], "members": [f"R{d['id']}" for d in m]}
+        answers["join"] = {"proposals": [{"id": "P1", "verdict": "new"}]}
+        with store.lock:
+            store.con.execute("UPDATE membership SET node=NULL, note=NULL WHERE kind='realization' AND codebook=? AND note='named'", (cb,)); store.con.commit()
+        j = L.name(store, c, "c", "guidance", cb, [{"members": m}], round_=6, model="m", workers=1)["join"]
+        young = store.one("SELECT id FROM feature WHERE codebook=? AND name='keep the answer very short'", (cb,))["id"]
+        store.insert("flag", {"codebook": cb, "feature": f_think["id"], "realization": None, "other": young, "verdict": "indistinct", "note": "close", "standing": 1})
+        assert L.name(store, c, "c", "guidance", cb, [], round_=7, model="m", workers=1)["join"]["pairs"] == 0          # standing: not asked
+        with store.lock:
+            store.con.execute("UPDATE flag SET standing=0 WHERE other=?", (young,)); store.con.commit()
+        answers["join"] = {"proposals": [], "pairs": [{"id": "Q1", "verdict": "narrower"}]}
+        j = L.name(store, c, "c", "guidance", cb, [], round_=8, model="m", workers=1)["join"]
+        assert j["pairs"] == 1 and j["narrowed"] == 1 and j["folded"] == 0
+        row = store.one("SELECT level, parent FROM feature WHERE id=?", (young,))
+        assert row["level"] == "variant" and row["parent"] == f_think["id"]
 
 
 def test_round_runs_the_growing_loop(store):

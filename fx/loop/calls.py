@@ -25,7 +25,7 @@ JOIN_SCHEMA = {"type": "object", "properties": {
     "place": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "group": {"type": "string"}}, "required": ["id", "group"]}},
     "groups": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"},
                                                                           "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "definition", "aspect", "ids"]}},
-    "pairs": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["same", "two"]}}, "required": ["id", "verdict"]}}},
+    "pairs": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["same", "narrower", "two"]}}, "required": ["id", "verdict"]}}},
     "required": ["proposals"]}
 
 
