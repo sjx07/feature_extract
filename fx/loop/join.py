@@ -1,8 +1,10 @@
 """Step: join. The naming calls of a round ran in parallel, each over one neighbourhood, and could not see each other; the
 join is one call that sees every proposal beside the tree and decides what the round adds: a proposal is new, or the same
 instruction as an existing feature (its members go there), or a duplicate of another proposal (the two become one node).
-It also places what has no group and founds a group where three unplaced features share a purpose. Then the round writes,
-once. Nothing older than the round is touched: definitions never change, and no node is retired after it was born."""
+It also places what has no group and founds a group where three unplaced features share a purpose, and it rules on the
+pairs the sibling judge reported as indistinct: "same" folds the younger node into the older (members move, the younger
+is retired with a pointer to where it went), "two" dismisses the report. The cold start's own pairs are never folded: they
+are shown to a person. Then the round writes, once. Definitions never change."""
 from __future__ import annotations
 
 from typing import Callable, Optional
@@ -17,21 +19,53 @@ from .level import Level
 from .state import nodes, tree
 
 
+def indistinct_pairs(store: Store, lv: Level, features: dict) -> list[dict]:
+    """The sibling judge's current indistinct reports, as pairs the join may rule on: at least one node of the pair was born
+    in the loop (round > 0); a pair of the cold start's own features is trusted and left to a person."""
+    out = []
+    for r in store.rows("SELECT feature a, other b, note FROM flag WHERE codebook=? AND verdict='indistinct'", (lv.codebook,)):
+        a, b = features.get(int(r["a"])), features.get(int(r["b"]))
+        if a and b and a["polarity"] == b["polarity"] and max(a.get("round") or 0, b.get("round") or 0) > 0:
+            older, younger = sorted([a, b], key=lambda f: (f.get("round") or 0, f["id"]))
+            out.append({"older": older, "younger": younger, "why": r["note"] or ""})
+    return out
+
+
+def render_pairs(pairs: list[dict], node_prefix: str) -> str:
+    out = []
+    for q, p in enumerate(pairs, 1):
+        o, y = p["older"], p["younger"]
+        out.append(f"Q{q}: {node_prefix}{o['id']} (round {o.get('round') or 0}) {o['name']}: {o.get('definition') or ''}\n     ~ {node_prefix}{y['id']} (round {y.get('round') or 0}) {y['name']}: {y.get('definition') or ''}\n     the judge: {p['why'][:200]}")
+    return "\n".join(out) if out else "(none)"
+
+
+def _fold(store: Store, lv: Level, younger: int, older: int) -> int:
+    """Fold node `younger` into `older`: its members and variants move, its flags go, and it is retired with a pointer."""
+    n = store.con.execute("UPDATE membership SET node=? WHERE kind=? AND codebook=? AND node=?", (older, lv.kind, lv.codebook, younger)).rowcount
+    store.con.execute("UPDATE feature SET parent=? WHERE parent=? AND level='variant'", (older, younger))
+    store.con.execute("DELETE FROM flag WHERE codebook=? AND (feature=? OR other=?)", (lv.codebook, younger, younger))
+    store.con.execute("UPDATE feature SET level='retired', prev=? WHERE id=?", (older, younger))
+    return n
+
+
 def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_: int, model: str, effort: str = "low",
          progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
     groups = {g["id"]: g for g in tr if g["id"] is not None}
     unplaced = [f for g in tr if g["id"] is None for f in g["features"]]
+    pairs = indistinct_pairs(store, lv, features) if lv.prompt_join else []
     summary = {"codebook": lv.codebook, "round": round_, "proposals": len(proposals), "calls": 0, "unparsed": 0, "variants": 0, "features": 0,
-               "into_existing": 0, "duplicates": 0, "assigned": 0, "unplaced": 0, "placed": 0, "groups": 0, "still_unplaced": 0}
+               "into_existing": 0, "duplicates": 0, "assigned": 0, "unplaced": 0, "placed": 0, "groups": 0, "still_unplaced": 0,
+               "pairs": len(pairs), "folded": 0, "kept_apart": 0}
     verdict = {k: ("new", None) for k in range(len(proposals))}
     place: dict = {}
     founded: list = []
-    if proposals or (unplaced and not lv.groups_fixed):
+    folds: list[tuple[int, int]] = []
+    if proposals or pairs or (unplaced and not lv.groups_fixed):
         if lv.prompt_join:
             extra = reasoning_low(model, client.base_url) if effort == "low" else None
-            r = client.complete(lv.prompt_join(tr, proposals, unplaced), model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=f"{lv.label}:join:r{round_}", system=lv.system, schema=JOIN_SCHEMA)
+            r = client.complete(lv.prompt_join(tr, proposals, unplaced, render_pairs(pairs, lv.node_prefix)), model=model, max_tokens=MAX_TOKENS, extra_body=extra, stage="library", note=f"{lv.label}:join:r{round_}", system=lv.system, schema=JOIN_SCHEMA)
             summary["calls"] = 1
             if r.error and r.error.startswith("denied"):
                 raise RuntimeError(r.error)
@@ -57,6 +91,15 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 if isinstance(p, dict):
                     place[str(p.get("id") or "")] = parse_id(p.get("group"), set(groups))
             founded = [g for g in obj.get("groups") or [] if isinstance(g, dict) and str(g.get("name") or "").strip()]
+            qids = set(range(1, len(pairs) + 1))
+            for v in obj.get("pairs") or []:
+                q = parse_id(v.get("id"), qids) if isinstance(v, dict) else None
+                if q is None:
+                    continue
+                if v.get("verdict") == "same":
+                    folds.append((pairs[q - 1]["younger"]["id"], pairs[q - 1]["older"]["id"]))
+                elif v.get("verdict") == "two":
+                    summary["kept_apart"] += 1
     # duplicates chain to a surviving proposal that is itself new
     def survivor(k: int) -> int:
         seen = set()
@@ -118,11 +161,17 @@ def join(store: Store, client: Client, lv: Level, proposals: list[dict], round_:
                 store.con.execute("UPDATE feature SET parent=?, aspect=NULL WHERE id=? AND parent IS NULL", (cur.lastrowid, fid))
             taken.update(ids); summary["groups"] += 1
         summary["still_unplaced"] = len(pending) - len(taken) if not lv.groups_fixed else 0
+        # the judge's indistinct pairs the join called the same: the younger folds into the older
+        retired: set[int] = set()
+        for younger, older in folds:
+            if younger in retired or older in retired or younger == older:
+                continue
+            _fold(store, lv, younger, older); retired.add(younger); summary["folded"] += 1
         # a neighbourhood whose seed was not placed has had its look
         for p in proposals:
             if p.get("seed") is not None and p["seed"] not in placed_units:
                 store.con.execute("UPDATE membership SET note='specific' WHERE kind=? AND codebook=? AND unit=? AND node IS NULL AND (note IS NULL OR note='specific')", (lv.kind, lv.codebook, p["seed"]))
         store.con.commit()
     if progress and summary["calls"]:
-        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "cost": r.cost, "calls": 1})
+        progress(1, 1, {"join": True, "features": summary["features"], "variants": summary["variants"], "into_existing": summary["into_existing"], "duplicates": summary["duplicates"], "groups": summary["groups"], "folded": summary["folded"], "cost": r.cost, "calls": 1})
     return summary

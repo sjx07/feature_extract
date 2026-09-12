@@ -25,7 +25,7 @@ class Level:
     prompt_siblings: Optional[Callable[..., str]]   # (group, samples) -> str, or None to skip the sibling check
     system: str
     member_samples: Callable[[dict], list[str]]     # what the judge sees of a member beyond its line
-    prompt_join: Optional[Callable[..., str]] = None    # (tree, proposals, unplaced features) -> str: the round's join call
+    prompt_join: Optional[Callable[..., str]] = None    # (tree, proposals, unplaced features, pairs text) -> str: the round's join call
     groups_fixed: bool = False                  # True: every feature goes under the group of its aspect (the seed); no unplaced, no founding
     node_vector: str = "anchors"                # 'anchors': mean of the node's example units; 'members': mean of its members
     unit_prefix: str = "R"                      # how the unit id is written in prompts

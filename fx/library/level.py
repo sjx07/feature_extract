@@ -44,7 +44,7 @@ def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional
         prompt_name=lambda tr, ms: P.name(kind, domain, tr, ms, near=_near(store, lv_ref[0], tr, ms)),
         prompt_judge=lambda node, ms, samples: P.judge_members(node, ms),
         prompt_siblings=P.judge_siblings, system=P.SYSTEM, member_samples=lambda u: [],
-        prompt_join=lambda tr, ps, us: P.join_prompt(kind, domain, tr, render_proposals(ps, "R"), us, near=_near_all(store, lv_ref[0], tr, ps)),
+        prompt_join=lambda tr, ps, us, qs: P.join_prompt(kind, domain, tr, render_proposals(ps, "R"), us, qs, near=_near_all(store, lv_ref[0], tr, ps)),
         node_vector="anchors", unit_prefix="R", node_prefix="F",
         named_min_members=MIN_SUPPORT, named_min_groups=2, allow_variant=True, batch=BATCH, shortlist_k=4,     # a feature: three wordings from two prompts
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"{corpus}:{kind}")

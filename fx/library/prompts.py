@@ -85,9 +85,21 @@ Assign each {kind} declaration below to the one feature of the CODEBOOK it carri
 """
 
 JUDGE_MEMBERS = """# TASK
-One feature of a codebook and the declarations assigned to it. Read the definition, then say which members do
-not carry the feature as defined (misfits), and whether the members that do fit fall into two or more distinct
-features that the definition currently covers together (a split). Report only; nothing is changed by your reply.
+Below is one FEATURE of a codebook and the declarations filed under it. Read the definition, then read each member
+and ask: does this declaration give the feature's instruction? Report the ones that do not (misfits), and say whether
+the ones that do fall into two or more distinct instructions the definition covers together (a split). This is a
+report; nothing moves because of it.
+
+# WHAT COUNTS
+- The same instruction in other words is a fit: "construct the query inside triple backticks" carries "enclose the
+  query in a code fence"; "be concise yet thorough" carries "answer concisely". Domain nouns and phrasing are never
+  the difference.
+- A declaration that gives the instruction plus a detail (a manner, a scope, a condition) still carries it; it is a
+  fit, not a misfit. A variant may be born from such members later; that is not your call here.
+- A misfit gives another instruction: a different verb on the same topic, the opposite polarity, or a rule about
+  something else entirely. Say in "why" which instruction it gives instead.
+- A split is rare: name it only when the members clearly form two or more instructions that a reader would never
+  file together, and list every member under one part.
 
 # OUTPUT
 {{"misfits":[{{"id":"R12","why":"…"}}],"split":null}}
@@ -165,10 +177,16 @@ round adds.
 - "groups": found a new group only when three or more of the unplaced (proposals or earlier features) share one purpose
   no group serves: a name (noun phrase), a one-sentence definition, an aspect (one of {aspects}), and their ids. Fewer
   than three stay unplaced; later rounds may bring them company.
+
+# THE JUDGE'S PAIRS
+The judge, reading members, reported the PAIRS below as features it cannot tell apart. For each say "same" (one
+instruction under two names: the younger folds into the older, members and all) or "two" (two instructions; the
+report is dismissed). Read both definitions and ask whether a reader could file a new declaration under one and not
+the other.
 Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"F12","of":"P3"}}],"place":[{{"id":"P2","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","ids":["P4","F41","P7"]}}]}}
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"F12","of":"P3"}}],"place":[{{"id":"P2","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","ids":["P4","F41","P7"]}}],"pairs":[{{"id":"Q1","verdict":"same|two"}}]}}
 
 # CODEBOOK (every feature by name; the ones nearest to the proposals with their definitions)
 {codebook}
@@ -178,14 +196,17 @@ Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # PROPOSALS
 {proposals}
+
+# PAIRS
+{pairs}
 """
 
 
-def join_prompt(kind: str, domain: str, groups: list[dict], proposals_text: str, unplaced: list[dict], near: Optional[set] = None) -> str:
+def join_prompt(kind: str, domain: str, groups: list[dict], proposals_text: str, unplaced: list[dict], pairs_text: str = "(none)", near: Optional[set] = None) -> str:
     lines = [f"F{f['id']} ({f['polarity']}) [{f.get('aspect') or 'other'}] {f['name']}: {f.get('definition') or ''} [{f.get('support', 0)} prompts]" for f in unplaced]
     return JOIN.format(kind=kind, domain=domain, aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
                        codebook=render_codebook([g for g in groups if g["id"] is not None], detail=near if near is not None else set()),
-                       unplaced="\n".join(lines) or "(none)", proposals=proposals_text)
+                       unplaced="\n".join(lines) or "(none)", proposals=proposals_text, pairs=pairs_text)
 
 
 def render_codebook(groups: list[dict], anchors: bool = False, detail: Optional[set] = None) -> str:

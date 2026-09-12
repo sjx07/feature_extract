@@ -20,7 +20,7 @@ the judge's flag reopens it, and only the open units are ever looked at again.
 """
 from .assign import assign
 from .calls import Stopped
-from .join import join
+from .join import indistinct_pairs, join, render_pairs
 from .judge import judge, reopen
 from .level import Level
 from .name import candidates, name, render_proposals
