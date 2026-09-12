@@ -22,6 +22,23 @@ from .llm.registry import DEFAULT_MODEL
 from .library.codebook import COLDSTART_MODEL as L_COLDSTART
 
 
+def _detach() -> None:
+    """A model run keeps going when the terminal that started it goes away: hang-ups are ignored and the job log is the
+    record; a dead stdout only silences the echo."""
+    import signal
+    try:
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    except (AttributeError, ValueError, OSError):
+        pass
+
+
+def _echo(line: str) -> None:
+    try:
+        print("  " + line, flush=True)
+    except (OSError, ValueError):
+        pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="fx")
     ap.add_argument("--workspace", "-w", default=None, help="runs/<name>; default FX_WORKSPACE or runs/dev")
@@ -106,11 +123,12 @@ def main(argv=None) -> int:
         from .llm import Client
         ids = a.ids.split(",") if a.ids else None
         total = len(prompt_ids(store, a.corpus, ids, a.redo, a.limit))
+        _detach()
         jid = jobs.start(store, ws, "decompose", a.corpus, a.model, {"workers": a.workers, "limit": a.limit, "redo": a.redo, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, total)
         print(f"job {jid}: {total} prompts, log {ws.job_log(jid)}", flush=True)
         c = Client(store, budget=a.budget, base_url=a.base_url, max_connections=a.workers + 64)
         status = jobs.run_decompose(store, ws, c, jid, a.corpus, model=a.model, workers=a.workers, ids=ids, redo=a.redo, limit=a.limit,
-                                    echo=lambda line: print("  " + line, flush=True))
+                                    echo=_echo)
         print(f"job {jid} {status}")
         return 0 if status == "done" else 1
     if a.cmd == "library":
@@ -128,9 +146,10 @@ def main(argv=None) -> int:
         setup_logging(ws)
         model = a.model or (L.COLDSTART_MODEL if a.sub == "coldstart" else DEFAULT_MODEL)
         rounds, codebook_model = getattr(a, "rounds", 5), getattr(a, "codebook_model", None)
+        _detach()
         jid = start(store, ws, f"library:{a.sub}", a.corpus, model, {"kind": a.kind, "version": a.version, "workers": a.workers, "effort": a.effort, "rounds": rounds, "codebook_model": codebook_model, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, 0)
         print(f"job {jid}: {a.sub} {a.kind} on {a.corpus}, log {ws.job_log(jid)}")
-        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, fresh=getattr(a, "fresh", False), echo=lambda line: print("  " + line, flush=True))
+        status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, fresh=getattr(a, "fresh", False), echo=_echo)
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
         return 0 if status == "done" else 1
     if a.cmd == "align":
@@ -146,10 +165,11 @@ def main(argv=None) -> int:
         from .llm import Client
         setup_logging(ws)
         model = a.model or DEFAULT_MODEL
+        _detach()
         jid = start(store, ws, f"align:{a.sub}", "seed", model, {"kind": a.kind, "workers": a.workers, "effort": a.effort, "rounds": a.rounds, "codebook_model": a.codebook_model, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, 0)
         print(f"job {jid}: align {a.sub} {a.kind}, log {ws.job_log(jid)}")
         status = run_align(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.kind, a.sub, model=model, codebook_model=a.codebook_model,
-                           workers=a.workers, effort=a.effort, rounds=a.rounds, echo=lambda line: print("  " + line, flush=True))
+                           workers=a.workers, effort=a.effort, rounds=a.rounds, echo=_echo)
         print(status)
         return 0 if status == "done" else 1
     if a.cmd == "serve":

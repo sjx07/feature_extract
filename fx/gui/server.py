@@ -121,6 +121,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def api_jobs():
+        from ..jobs import reap
+        reap(store)
         return [dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT * FROM job ORDER BY id DESC LIMIT 50")]
 
     @app.post("/api/jobs")
