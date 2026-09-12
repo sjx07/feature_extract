@@ -63,6 +63,15 @@ def main(argv=None) -> int:
         p.add_argument("--codebook-model", default=None, help=f"cold start and naming model (default {L_COLDSTART})")
         if name == "preview":
             p.add_argument("--step", default="assign", choices=("coldstart", "assign", "judge", "name"))
+    al = sub.add_parser("align", help="stage 3: the seed library, per-corpus features aligned into global features").add_subparsers(dest="sub", required=True)
+    for name in ("round", "embed", "assign", "judge", "reopen", "cluster", "name", "status"):
+        p = al.add_parser(name)
+        p.add_argument("--kind", default="guidance", choices=("guidance", "material"))
+        p.add_argument("--model", default=None, help="batch model for assign and judge (default: the decomposition model)")
+        p.add_argument("--codebook-model", default=None, help=f"naming model (default {L_COLDSTART})")
+        p.add_argument("--workers", type=int, default=64); p.add_argument("--effort", default="low", choices=("low", "default"))
+        p.add_argument("--rounds", type=int, default=5); p.add_argument("--tau", type=float, default=None, help="neighbour threshold (default: measured from same-name pairs, else 0.86)")
+        p.add_argument("--base-url", default=None); p.add_argument("--budget", type=float, default=float(os.environ.get("FX_BUDGET", "inf")))
     srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args(argv)
 
@@ -119,6 +128,20 @@ def main(argv=None) -> int:
         print(f"job {jid}: {a.sub} {a.kind} on {a.corpus}, log {ws.job_log(jid)}")
         status = run_library(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.corpus, a.kind, a.sub, model=model, workers=a.workers, version=a.version, effort=a.effort, rounds=rounds, codebook_model=codebook_model, tau=tau, echo=lambda line: print("  " + line, flush=True))
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
+        return 0 if status == "done" else 1
+    if a.cmd == "align":
+        from . import align as A
+        if a.sub == "status":
+            print(json.dumps(A.status(store, a.kind), indent=1)); return 0
+        from .jobs import run_align, setup_logging, start
+        from .llm import Client
+        setup_logging(ws)
+        model = a.model or DEFAULT_MODEL
+        jid = start(store, ws, f"align:{a.sub}", "seed", model, {"kind": a.kind, "workers": a.workers, "effort": a.effort, "rounds": a.rounds, "codebook_model": a.codebook_model, "budget": a.budget if a.budget != float("inf") else None, "from": "cli"}, 0)
+        print(f"job {jid}: align {a.sub} {a.kind}, log {ws.job_log(jid)}")
+        status = run_align(store, ws, Client(store, base_url=a.base_url, max_connections=a.workers + 64, budget=a.budget), jid, a.kind, a.sub, model=model, codebook_model=a.codebook_model,
+                           workers=a.workers, effort=a.effort, rounds=a.rounds, tau=a.tau, echo=lambda line: print("  " + line, flush=True))
+        print(status)
         return 0 if status == "done" else 1
     if a.cmd == "serve":
         from .gui.server import serve

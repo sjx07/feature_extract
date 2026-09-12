@@ -13,7 +13,7 @@ let ES = null;
 function parseHash() { const h = location.hash.slice(1) || '/corpora'; const [path, qs] = h.split('?'); return { parts: path.split('/').filter(Boolean), q: Object.fromEntries(new URLSearchParams(qs || '')) }; }
 async function route() {
   const { parts, q } = parseHash(); const view = parts[0] || 'corpora';
-  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library']].map(([k, l]) => `<a href="${href('/' + k, { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') ? 'on' : ''}">${l}</a>`).join('');
+  $('#nav').innerHTML = [['corpora', 'Corpora'], ['prompts', 'Prompts'], ['queues', 'Queues'], ['library', 'Library'], ['seed', 'Seed']].map(([k, l]) => `<a href="${href('/' + k, { corpus: q.corpus })}" class="${view === k || (k === 'prompts' && view === 'prompt') || (k === 'library' && view === 'feature') ? 'on' : ''}">${l}</a>`).join('');
   if (ES) { ES.close(); ES = null; }
   const main = $('#main'); main.innerHTML = '<div class="loading">loading</div>'; window.scrollTo(0, 0);
   try {
@@ -24,6 +24,7 @@ async function route() {
     else if (view === 'queues') await viewQueues(main, q);
     else if (view === 'job') await viewJob(main, +parts[1]);
     else if (view === 'library') await viewLibrary(main, q);
+    else if (view === 'seed') await viewSeed(main, q);
     else if (view === 'feature') await viewFeature(main, +parts[1]);
     else main.innerHTML = '<p>No such page.</p>';
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; console.error(e); }
@@ -88,10 +89,10 @@ const fmtSec = s => s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s /
 async function viewJob(main, jid) {
   const j = await api('/api/jobs/' + jid);
   main.innerHTML = `<h1>Job #${jid} · ${esc(j.corpus || 'all corpora')}</h1><p class="lede">${esc(j.model)} · ${j.params.workers} workers${j.params.limit ? ` · pilot of ${j.params.limit}` : ''}</p>
-    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> ${j.kind.startsWith('library') ? `<a href="${href('/library', { corpus: j.corpus, kind: j.params.kind })}" style="margin-left:14px">library →</a>` : `<a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a>`} <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
+    <div id="jbody"></div><details style="margin-top:12px;font-size:12.5px"><summary class="muted">log · <span class="mono">${esc(j.log || '')}</span></summary><pre class="mono" id="jlog" style="font-size:11.5px;white-space:pre-wrap;max-height:40vh;overflow:auto"></pre></details><p style="margin-top:14px"><button class="btn quiet" id="stop">stop</button> ${j.kind.startsWith('align') ? `<a href="${href('/seed', { kind: j.params.kind })}" style="margin-left:14px">seed →</a>` : j.kind.startsWith('library') ? `<a href="${href('/library', { corpus: j.corpus, kind: j.params.kind })}" style="margin-left:14px">library →</a>` : `<a href="${href('/prompts', { corpus: j.corpus, status: 'done' })}" style="margin-left:14px">decomposed prompts →</a>`} <a href="${href('/queues', { corpus: j.corpus })}" style="margin-left:14px">queues →</a></p>`;
   const render = d => { const share = d.total ? d.done / d.total : 0; const rate = d.elapsed && d.done ? d.elapsed / d.done : null;
     $('#jbody').innerHTML = `<div class="bar" style="max-width:720px"><i style="width:${(100 * share).toFixed(1)}%"></i></div>
-      <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)}${d.total ? ' / ' + fmt(d.total) : ''}</b>${j.kind.startsWith('library') ? 'batches' : 'prompts'}</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${d.status !== 'running' ? d.status : (rate && d.total > d.done ? fmtSec(rate * (d.total - d.done)) : 'running')}</b>${d.status === 'running' && rate && d.total > d.done ? 'remaining, projected' : 'status'}</span></div>
+      <div class="prev" style="margin-top:12px"><span><b>${fmt(d.done)}${d.total ? ' / ' + fmt(d.total) : ''}</b>${j.kind.startsWith('library') || j.kind.startsWith('align') ? 'batches' : 'prompts'}</span><span><b>${fmt(d.calls)}</b>calls</span><span><b>$${(d.spent || 0).toFixed(2)}</b>spent</span><span><b>${d.elapsed == null ? '' : fmtSec(d.elapsed)}</b>elapsed</span><span><b>${d.status !== 'running' ? d.status : (rate && d.total > d.done ? fmtSec(rate * (d.total - d.done)) : 'running')}</b>${d.status === 'running' && rate && d.total > d.done ? 'remaining, projected' : 'status'}</span></div>
       <div class="recent" style="margin-top:12px">${(d.recent || []).map(r => `<div><a href="${href('/prompt/' + encodeURIComponent(r.id))}">${esc(r.id)}</a> · coverage ${pct(r.coverage)} · ${r.n_atoms} atoms · ${r.calls} calls${r.error ? ` · <span class="err">${esc(r.error)}</span>` : ''}</div>`).join('')}</div>${d.error ? `<p class="err">${esc(d.error)}</p>` : ''}`; };
   render(j);
   document.querySelector('details').addEventListener('toggle', async e => { if (e.target.open) { const l = await api(`/api/jobs/${jid}/log`); $('#jlog').textContent = l.lines.join('\n'); } });
@@ -226,9 +227,44 @@ async function viewFeature(main, fid) {
       <span class="k">group</span><span>${r.group ? esc(r.group.name) + ' <span class="muted">· ' + esc(r.group.aspect) + ' · ' + esc(r.group.definition) + '</span>' : ''}</span>
       <span class="k">support</span><span>${fmt(r.members.reduce((s, m) => s + m.prompts, 0))} prompts · ${fmt(r.members.reduce((s, m) => s + m.n, 0))} readings · ${r.members.length} distinct wordings</span>
       <span class="k">anchors</span><span>${f.examples.map(id => byR[id] ? `<span style="color:var(--req)">✓ ${esc(byR[id].declaration)}</span>` : `<span class="err">✗ R${id} not on this feature</span>`).join(' · ') || '<span class="muted">none</span>'}</span>
+      ${r.aligned ? `<span class="k">seed</span><span>${r.aligned.global ? 'aligned to <b>' + esc(r.aligned.global_name) + '</b>' : (r.aligned.note === 'domain-specific' ? '<span class="muted">domain-specific: no other corpus says this yet</span>' : '<span class="muted">open: ' + esc(r.aligned.note || 'not aligned yet') + '</span>')}</span>` : ''}
       ${r.lineage.length ? `<span class="k">lineage</span><span>${r.lineage.map(l => `<a href="${href('/feature/' + l.id)}">${esc(l.name)}</a>`).join(' ← ')}</span>` : ''}
       ${r.flags.length ? `<span class="k">flags</span><span>${r.flags.map(x => `<div><span class="err">${esc(x.verdict)}</span> ${x.verdict === 'indistinct' ? 'with <a href="' + href('/feature/' + (x.feature === f.id ? x.other : x.feature)) + '">' + esc(x.feature === f.id ? x.other_name : x.feature_name) + '</a>' : esc(x.declaration || '')} <span class="muted">${esc(x.verdict === 'split' ? JSON.parse(x.note || '{}').why || '' : x.note || '')}</span></div>`).join('')}</span>` : ''}</div>
     <div class="cols2"><div><div class="block"><div class="t">members, by support</div><table class="list"><tr><th>declaration</th><th class="n">prompts</th><th class="n">readings</th><th class="n">confidence</th></tr>
       ${r.members.map(m => `<tr><td class="serif">${esc(m.declaration)}${m.conditions.filter(c => c !== 'always').length ? ` <span class="muted" style="font-size:12px">when: ${esc(m.conditions.filter(c => c !== 'always').slice(0, 2).join('; '))}</span>` : ''}</td><td class="n">${m.prompts}</td><td class="n">${m.n}</td><td class="n">${esc(m.confidence)}</td></tr>`).join('')}</table></div></div>
     <div><div class="block"><div class="t">in the prompts</div><table class="list">${r.readings.map(x => `<tr><td><a href="${href('/prompt/' + encodeURIComponent(x.prompt))}" class="mono" style="font-size:11.5px">${esc(x.prompt)}</a><div class="serif">${esc(x.text)}</div></td></tr>`).join('')}</table></div></div></div>`;
+}
+
+/* ---------- seed: the per-corpus libraries aligned into global features ---------- */
+async function viewSeed(main, q) {
+  const kind = q.kind || 'guidance';
+  const [s, jobs] = await Promise.all([api(`/api/seed?kind=${kind}`), api('/api/jobs')]);
+  const corpora = Object.entries(s.per_corpus);
+  const flagsBy = {}; for (const f of s.flags) (flagsBy[f.feature] = flagsBy[f.feature] || []).push(f);
+  const tree = s.groups.map(g => `<details class="tnode section" open><summary><b>${esc(g.name)}</b> <span class="tag">${esc(g.aspect)} · ${g.features.length} global features · ${fmt(g.support)} prompts</span> <span class="muted" style="font-size:12.5px">${esc(g.definition)}</span></summary><div class="kids">
+      ${g.features.map(f => `<div class="tnode leaf ${f.polarity === 'forbid' ? 'forbid' : ''}"><span class="path">${f.corpora}</span><span class="read"><span class="verb">${esc(f.polarity)}</span> ${esc(f.name)}<span class="tag">${f.corpora} corpora · ${fmt(f.support)} prompts · round ${f.round}${(flagsBy[f.id] || []).length ? ` · <span class="err">${(flagsBy[f.id] || []).length} flags</span>` : ''}</span><br><span class="muted" style="font-size:12.5px">${esc(f.definition)}</span>
+        <div style="margin-top:4px;font-size:12.5px">${f.members.map(m => `<div><span class="mono" style="font-size:11px;color:var(--muted)">${esc(m.corpus)}</span> <a href="${href('/feature/' + m.id)}">${esc(m.name)}</a> <span class="muted">· ${m.support} prompts${m.note === 'named' ? '' : ' · ' + esc(m.confidence || '')}</span>${(flagsBy[f.id] || []).some(x => x.other === m.id) ? ' <span class="err">flagged</span>' : ''}</div>`).join('')}</div></span></div>`).join('')}</div></details>`).join('');
+  main.innerHTML = `<div class="split"><div>
+    <h1>Seed library</h1>
+    <p class="lede">${['guidance', 'material'].map(k => `<a href="${href('/seed', { kind: k })}" style="margin-right:10px;${k === kind ? 'font-weight:600;color:var(--ink)' : ''}">${k}</a>`).join('')}</p>
+    <div class="block"><div class="t">${s.globals} global features in ${s.groups.length} groups · ${s.aligned} of ${s.cards} per-corpus features aligned · ${s.domain_specific} domain-specific · ${s.open} open · ${s.flags} flags (${s.standing} standing) · ${s.rounds} rounds</div>
+      <table class="list"><tr><th>corpus</th><th class="n">features</th><th class="n">aligned</th><th class="n">domain-specific</th><th class="n">prompts under aligned features</th></tr>
+      ${corpora.map(([c, d]) => `<tr><td><a href="${href('/library', { corpus: c, kind })}">${esc(c)}</a></td><td class="n">${d.features}</td><td class="n">${d.aligned} <span class="muted">(${pct(d.aligned / Math.max(d.features, 1))})</span></td><td class="n">${d.domain_specific}</td><td class="n">${pct(d.aligned_support / Math.max(d.support, 1))}</td></tr>`).join('')}</table></div>
+    <div class="block"><div class="t">global features, with their members per corpus</div><div class="tree" style="max-height:none">${tree || '<span class="muted">none yet: run a round</span>'}</div></div>
+    <div class="block"><div class="t">open and domain-specific features</div>${s.open_cards_note || ''}${s.open.length ? `<table class="list">${s.open.slice(0, 120).map(c => `<tr><td><span class="mono" style="font-size:11px;color:var(--muted)">${esc(c.corpus)}</span> <a href="${href('/feature/' + c.id)}">${esc(c.name)}</a></td><td class="muted" style="font-size:12.5px">${esc(c.definition.slice(0, 120))}</td><td class="n">${c.support}</td><td class="n">${esc(c.note || '')}</td></tr>`).join('')}</table>${s.open.length > 120 ? `<div class="muted">and ${s.open.length - 120} more</div>` : ''}` : '<span class="muted">none</span>'}</div>
+  </div><div>
+    <h1 style="font-size:22px">Run</h1>
+    <form id="aform" class="form" style="grid-template-columns:90px minmax(0,1fr)">
+      <label>step</label><select name="step"><option value="round" selected>round loop: embed, assign, judge, then reopen → cluster → name → assign until settled</option><option value="embed">embed the cards (no calls)</option><option value="assign">assign (open cards onto the globals)</option><option value="judge">judge (read-only)</option><option value="reopen">reopen the flagged members (no calls)</option><option value="cluster">cluster the open cards (no calls)</option><option value="name">name the candidate clusters</option></select>
+      <label>batch model</label><input type="text" name="model" placeholder="assign and judge; default: the decomposition model" style="width:100%">
+      <label>naming model</label><input type="text" name="codebook_model" placeholder="default gpt-5.6-sol" style="width:100%">
+      <label>rounds</label><input type="number" name="rounds" value="5" min="1" max="20">
+      <label>workers</label><input type="number" name="workers" value="64" min="1" max="512">
+      <label>budget $</label><input type="number" name="budget" value="" placeholder="none" step="1">
+      <span></span><span><button class="btn" type="button" id="arun">run</button> <span id="astatus" class="muted"></span></span></form>
+    <p class="muted" style="font-size:12.5px">Units are the per-corpus features of every library of this kind. A global feature is one instruction several corpora give under their own domain nouns; a feature no other corpus echoes is domain-specific until a corpus arrives that does. Variants stay under their feature, so the hierarchy is global → per-corpus feature → variant.</p>
+    <div class="block"><div class="t">align jobs</div>${jobs.filter(j => j.kind.startsWith('align')).length ? `<table class="list">${jobs.filter(j => j.kind.startsWith('align')).slice(0, 10).map(j => `<tr><td><a href="${href('/job/' + j.id)}">#${j.id}</a> ${esc(j.kind.slice(6))} ${esc(j.params.kind)}</td><td class="n">${esc(j.status)}</td></tr>`).join('')}</table>` : '<span class="muted">none yet</span>'}</div>
+  </div></div>`;
+  $('#arun').onclick = async () => { const d = Object.fromEntries(new FormData($('#aform'))); $('#astatus').textContent = 'starting';
+    try { const r = await post('/api/align/jobs', { kind, step: d.step, model: d.model, codebook_model: d.codebook_model, rounds: +d.rounds, workers: +d.workers, budget: d.budget || null }); location.hash = href('/job/' + r.id); } catch (e) { $('#astatus').textContent = e.message; } };
 }

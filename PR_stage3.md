@@ -1,0 +1,64 @@
+# Stage 3: the seed library (alignment across corpora)
+
+Branch `stage3-align` against `main`. 59 tests (3 new, in `tests/test_align.py`, on two seeded libraries and the scripted server).
+
+## What it does
+
+The stage 2 loop one level up. The units are the per-corpus features of every library of a kind, each read as a
+card: name, definition, polarity, anchors, corpus, support. A global feature is one instruction that several
+corpora give under their own domain nouns; the seed library is a codebook on the corpus named `seed` whose feature
+rows are the globals, and `alignment` maps each per-corpus feature to one global or none. Variants are not aligned:
+they stay under their feature, so the hierarchy is global → per-corpus feature → variant, and support rolls up.
+
+- **embed**: one vector per card (the same local model as the wordings; table `fvector`).
+- **assign**: open cards against the few globals nearest by retrieval (a global's vector is the mean of its members'),
+  in batches sharing a nearest global; one global or null per card. A card the judge removed from a global carries
+  the reason and that global is offered back; putting it back settles the flag.
+- **cluster**, no calls: open cards that neighbour cards from *other* corpora form candidates (same-corpus neighbours
+  are not cross-corpus support; polarity is identity); a card with no such neighbour is *domain-specific* for now,
+  reversibly. The threshold comes from same-name pairs across corpora when there are ten or more, else 0.86.
+- **name**: one call per candidate: the same global feature, named without domain nouns and defined across domains,
+  under an existing or new seed group, with the member ids it accepts (from at least two corpora), or a rejection.
+- **judge**, read-only: per global, the members with a sample of the wordings each covers; members whose wordings
+  give another instruction are flagged (feature = the global, other = the member). Flags repeated after being acted
+  on are standing.
+- **round**: embed, assign, judge, then reopen → cluster → name → assign → judge until settled (no new flag, no
+  candidate) or the round limit.
+
+Nothing in a corpus library changes. The FACET v5 library is not the root: it enters as one more library to align
+when imported, which keeps the held-out comparison (how many v5 features find a counterpart, and which new features
+v5 never had).
+
+## Store
+
+`alignment` (feature → global, note: domain-specific / named / reopened:S<id>|why), `fvector`; the seed codebook and
+its globals in `codebook` and `feature`; flags on globals in `flag` with `other` = the member.
+
+## Site
+
+Seed page per kind: the summary (globals, aligned cards, domain-specific, open, flags), a per-corpus table (features,
+aligned share, prompts under aligned features), the globals as a tree with members per corpus and their flags, the
+open and domain-specific cards, and the run panel. A feature page says which global it is aligned to.
+
+## How to check
+
+```
+cd ~/Documents/feature_extract && git checkout stage3-align
+python -m pytest -q
+export HF_HOME=/data/users/jsu323/.cache/huggingface CUDA_VISIBLE_DEVICES=1
+set -a; source ~/FACET/.env; set +a
+PYTHONPATH=. python -m fx.cli -w runs/full align cluster          # no calls: the candidates across text2sql, math, entity-resolution, text2cypher
+PYTHONPATH=. python -m fx.cli -w runs/full align round --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol --rounds 5 --budget 5
+```
+
+`runs/full` holds four guidance libraries (text2sql 224 features, math 225, entity-resolution 87, text2cypher 73):
+about 600 cards, so a round is a few hundred short calls; naming is the cost, about 2 cents a cluster.
+
+## Open
+
+- Only 4 same-name pairs exist across the four libraries, so the threshold is the default until a read of the
+  first cluster step says otherwise.
+- Granularity mismatches (a variant in one corpus, a feature in another) surface as domain-specific features; a
+  variant-to-feature pass is the fix.
+- Importing the FACET v5 library as a corpus library (features with definitions and example wordings) is the step
+  that makes the held-out comparison.

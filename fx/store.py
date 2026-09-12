@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS flag (
     realization INTEGER REFERENCES realization(id), other INTEGER REFERENCES feature(id), verdict TEXT NOT NULL, note TEXT, standing INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS flag_codebook ON flag(codebook);
 
+-- stage 3: alignment across corpora into the seed library. The seed is a codebook on the corpus named 'seed'; its
+-- feature rows are the global features (groups above them as in any codebook). alignment maps a per-corpus feature
+-- to a global feature (NULL = open), with the same notes as assignment: 'domain-specific' (no neighbour in any other
+-- corpus yet), 'named', or 'reopened:S<id>|<why>'. fvector holds one embedding per per-corpus feature (its card:
+-- name, definition, anchors). Flags on a global feature use the flag table with other = the member feature.
+CREATE TABLE IF NOT EXISTS alignment (
+    feature INTEGER PRIMARY KEY REFERENCES feature(id), global INTEGER REFERENCES feature(id), confidence TEXT, note TEXT, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS alignment_global ON alignment(global);
+CREATE TABLE IF NOT EXISTS fvector (
+    feature INTEGER PRIMARY KEY REFERENCES feature(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
     id INTEGER PRIMARY KEY, kind TEXT NOT NULL, corpus TEXT, model TEXT, params TEXT, status TEXT NOT NULL,

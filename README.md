@@ -12,11 +12,11 @@ Stages, in the order the data flows:
 | 0 | `fx llm ...` | `call`: every model call with tokens, cost, latency, and a cache |
 | 1 | `fx decompose` | `span` (the tree: sections, atoms, material, declined gaps), `reading` (an atom's facets), `decomp` (the run per prompt) |
 | 2 | `fx library round` (coldstart, assign, judge, cluster, name) | `realization`, `vector`, `codebook`, `feature` (the tree: groups, features, variants), `assignment`, `flag` |
-| 3 | `fx align` | folds into the seed library, decisions |
+| 3 | `fx align round` (embed, assign, judge, cluster, name) | `alignment`, `fvector`; the seed codebook's global features in `feature` |
 | 4 | `fx refine` | splits, edges, reversions, as rules with parameters |
 | 5 | `fx serve` | the GUI |
 
-Stages 0, 1 and 2 are in place; the others follow in that order.
+Stages 0 to 3 are in place; the others follow in that order.
 
 ## Stage 0: models, ledger, cache
 
@@ -127,6 +127,23 @@ site's Library page runs each step with a cost preview and shows the tree, the o
 export HF_HOME=/data/users/$USER/.cache/huggingface     # the embedding model downloads here, not into the home quota
 PYTHONPATH=. python -m fx.cli -w runs/dev library round  --corpus text2sql --kind guidance --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
 PYTHONPATH=. python -m fx.cli -w runs/dev library status --corpus text2sql --kind guidance
+```
+
+## Stage 3: the seed library
+
+The stage 2 loop one level up. The units are the per-corpus features of every library of a kind, read as cards
+(name, definition, anchors, corpus, support); a global feature is one instruction several corpora give under
+their own domain nouns. `embed` vectors the cards; `assign` puts open cards on the nearest globals or none;
+`cluster` groups open cards that neighbour cards from other corpora and marks the rest domain-specific; `name`
+reads each candidate and either creates a global feature (named without domain nouns, defined across domains,
+members from two or more corpora) or rejects it; `judge` flags members whose wordings give another instruction,
+and reopen sends first-time flags back with the reason. The Seed page shows the globals with their members per
+corpus. Variants stay under their features: global → per-corpus feature → variant.
+
+```
+PYTHONPATH=. python -m fx.cli -w runs/full align cluster
+PYTHONPATH=. python -m fx.cli -w runs/full align round --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
+PYTHONPATH=. python -m fx.cli -w runs/full align status
 ```
 
 ## Tests

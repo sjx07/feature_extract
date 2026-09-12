@@ -126,6 +126,50 @@ def run_library(store: Store, ws: Workspace, client, jid: int, corpus: str, kind
     return status
 
 
+def run_align(store: Store, ws: Workspace, client, jid: int, kind: str, step: str, *, model: Optional[str] = None, codebook_model: Optional[str] = None, workers: int = 64,
+              effort: str = "low", rounds: int = 5, tau: Optional[float] = None, stop: Optional[threading.Event] = None, echo=None) -> str:
+    """One align step as a job: embed, assign, judge, reopen, cluster, name, or the round loop. `model` is the batch model (assign, judge);
+    `codebook_model` the naming model."""
+    from . import align as A
+    from .library.codebook import COLDSTART_MODEL
+    stop = stop or threading.Event()
+    prog = progress_writer(store, ws, jid, stop, echo)
+    try:
+        if step == "round":
+            def log_step(name, res):
+                with open(ws.job_log(jid), "a") as fh:
+                    fh.write(f"{now()} step {name} result {json.dumps(res)}\n")
+                if echo:
+                    echo(f"step {name}: {json.dumps(res)[:300]}")
+            r = A.run_round(store, client, kind, batch_model=model or DEFAULT_MODEL, codebook_model=codebook_model or COLDSTART_MODEL, workers=workers, effort=effort, rounds=rounds, tau=tau, log=log_step, progress=prog, stop=stop)
+        elif step == "embed":
+            r = A.embed(store, kind)
+        elif step == "assign":
+            A.embed(store, kind); r = A.assign(store, client, kind, model=model or DEFAULT_MODEL, workers=workers, effort=effort, progress=prog)
+        elif step == "judge":
+            r = A.judge(store, client, kind, model=model or DEFAULT_MODEL, workers=workers, effort=effort, progress=prog)
+        elif step == "reopen":
+            r = A.reopen(store, kind)
+        elif step in ("cluster", "name"):
+            A.embed(store, kind); c = A.candidates(store, kind, tau=tau)
+            if step == "name":
+                rnd = int(store.one("SELECT COALESCE(MAX(round), 0) r FROM feature WHERE codebook=?", (A.seed_codebook(store, kind),))["r"]) + 1
+                r = A.name(store, client, kind, c["clusters"], rnd, model=codebook_model or COLDSTART_MODEL, workers=min(workers, 16), progress=prog)
+            else:
+                r = {k: v for k, v in c.items() if k != "clusters"} | {"largest": [[f"[{m['corpus']}] {m['name']}" for m in cl["members"][:5]] for cl in c["clusters"][:6]]}
+        else:
+            raise ValueError(step)
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(f"{now()} result {json.dumps(r)}\n")
+        finish(store, ws, jid, "stopped" if stop.is_set() else "done")
+        return "stopped" if stop.is_set() else "done"
+    except Exception as e:
+        with open(ws.job_log(jid), "a") as fh:
+            fh.write(traceback.format_exc())
+        finish(store, ws, jid, "failed", f"{type(e).__name__}: {str(e)[:300]}")
+        return "failed"
+
+
 def setup_logging(ws: Workspace, level: int = logging.INFO) -> None:
     """The site's log: to the workspace's logs/serve.log (rotated) and to the terminal."""
     from logging.handlers import RotatingFileHandler

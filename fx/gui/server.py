@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import decompose, jobs
 from .. import library as L
+from .. import align as A
 from ..corpus import corpora, import_path, import_text
 from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
 from ..llm import Client
@@ -173,7 +174,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             if not r:
                 break
             lineage.append(dict(r)); prev = r["prev"]
-        return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage}
+        al = store.one("SELECT a.global, a.note, g.name global_name FROM alignment a LEFT JOIN feature g ON g.id=a.global WHERE a.feature=?", (fid,))
+        return {"feature": f, "codebook": cb, "group": group, "members": ms, "readings": readings, "flags": fl, "lineage": lineage, "aligned": dict(al) if al else None}
 
     @app.get("/api/library/preview")
     def api_library_preview(corpus: str, kind: str = "guidance", step: str = "assign", model: str = ""):
@@ -196,6 +198,32 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
         def work():
             jobs.run_library(store, ws, client, jid, corpus_name, kind, step, model=model, workers=workers, version=version, effort=effort, rounds=rounds, codebook_model=codebook_model, stop=stop)
+            running.pop(jid, None)
+
+        threading.Thread(target=work, daemon=True).start()
+        return {"id": jid, "log": str(ws.job_log(jid))}
+
+    # ---- stage 3: the seed library
+    @app.get("/api/seed")
+    def api_seed(kind: str = "guidance"):
+        cb = A.seed_codebook(store, kind)
+        fl = [dict(r) for r in store.rows("SELECT f.*, x.name global_name, y.name member_name FROM flag f JOIN feature x ON x.id=f.feature LEFT JOIN feature y ON y.id=f.other WHERE f.codebook=?", (cb,))]
+        return A.status(store, kind) | {"groups": A.globals_(store, kind), "open": A.open_cards(store, kind), "flags": fl, "libraries": A.libraries(store, kind)}
+
+    @app.post("/api/align/jobs")
+    def api_align_job(body: dict):
+        kind, step = body.get("kind") or "guidance", body.get("step") or "round"
+        model = body.get("model") or DEFAULT_MODEL
+        workers = int(body.get("workers") or 64)
+        params = {"kind": kind, "workers": workers, "effort": body.get("effort") or "low", "rounds": int(body.get("rounds") or 5), "codebook_model": body.get("codebook_model") or None, "from": "gui"}
+        jid = jobs.start(store, ws, f"align:{step}", "seed", model, params, 0)
+        stop = threading.Event()
+        running[jid] = stop
+        budget = float(body["budget"]) if body.get("budget") not in (None, "", 0) else float("inf")
+        client = Client(store, base_url=body.get("base_url") or None, max_connections=workers + 64, budget=budget)
+
+        def work():
+            jobs.run_align(store, ws, client, jid, kind, step, model=model, codebook_model=params["codebook_model"], workers=workers, effort=params["effort"], rounds=params["rounds"], stop=stop)
             running.pop(jid, None)
 
         threading.Thread(target=work, daemon=True).start()
