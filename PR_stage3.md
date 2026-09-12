@@ -30,8 +30,10 @@ they stay under their feature, so the hierarchy is global → per-corpus feature
   cards from *other* corpora with the same polarity (same-corpus neighbours are not cross-corpus support). No threshold:
   a seed of 609 cards born at cosine 0.84 gave 23 globals and then nothing, while two of them absorbed 96 cards. A
   seed the namer does not place is *domain-specific*, reversibly: it stays in the pool as a neighbour for later seeds.
-- **name**: one call per candidate: the same global feature, named without domain nouns and defined across domains,
-  under an existing or new seed group, with the member ids it accepts (from at least two corpora), or a rejection.
+- **name** and **join**: one call per neighbourhood proposes a global feature, named without domain nouns and defined
+  across domains, under one of the seed's aspect groups, with the member ids it accepts (from at least two corpora),
+  or rejects; then one join call a round decides whether each proposal is new, the same as an existing global (its
+  members go there), or a duplicate of another proposal (they become one). The seed's groups are the aspects, fixed.
 - **judge**, read-only: per global, the members with a sample of the wordings each covers; members whose wordings
   give another instruction are flagged (feature = the global, other = the member). Flags repeated after being acted
   on are standing.

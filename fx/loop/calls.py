@@ -19,6 +19,15 @@ NAME_SCHEMA = {"type": "object", "properties": {
     "required": ["decision", "why", "parent", "group", "name", "definition", "polarity", "examples", "members"], "additionalProperties": False}
 
 
+JOIN_SCHEMA = {"type": "object", "properties": {
+    "proposals": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["new", "existing", "duplicate"]},
+                                                                             "feature": {"type": ["string", "null"]}, "of": {"type": ["string", "null"]}}, "required": ["id", "verdict"]}},
+    "place": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "group": {"type": "string"}}, "required": ["id", "group"]}},
+    "groups": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "definition": {"type": "string"}, "aspect": {"type": "string"},
+                                                                          "ids": {"type": "array", "items": {"type": "string"}}}, "required": ["name", "definition", "aspect", "ids"]}}},
+    "required": ["proposals"]}
+
+
 class Stopped(Exception):
     pass
 

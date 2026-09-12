@@ -10,7 +10,7 @@ from typing import Optional
 import numpy as np
 
 from ..corpus import corpus_domain
-from ..loop import Level, vectors
+from ..loop import Level, render_proposals, vectors
 from ..store import Store
 from . import prompts as P
 from .codebook import BATCH, MIN_SUPPORT
@@ -44,7 +44,7 @@ def wording_level(store: Store, codebook: Optional[int] = None, corpus: Optional
         prompt_name=lambda tr, ms: P.name(kind, domain, tr, ms, near=_near(store, lv_ref[0], tr, ms)),
         prompt_judge=lambda node, ms, samples: P.judge_members(node, ms),
         prompt_siblings=P.judge_siblings, system=P.SYSTEM, member_samples=lambda u: [],
-        prompt_group=lambda gs, us: P.group(kind, domain, gs, us),
+        prompt_join=lambda tr, ps, us: P.join_prompt(kind, domain, tr, render_proposals(ps, "R"), us, near=_near_all(store, lv_ref[0], tr, ps)),
         node_vector="anchors", unit_prefix="R", node_prefix="F",
         named_min_members=MIN_SUPPORT, named_min_groups=2, allow_variant=True, batch=BATCH, shortlist_k=4,     # a feature: three wordings from two prompts
         aspects=tuple(P.ASPECTS_GUIDANCE if kind == "guidance" else P.ASPECTS_MATERIAL), label=f"{corpus}:{kind}")
@@ -64,3 +64,11 @@ def _near(store: Store, lv: Level, tr: list[dict], members: list[dict]) -> set:
         return set()
     q = m.mean(axis=0); q = q / max(float(np.linalg.norm(q)), 1e-9)
     return {nid[j] for j in np.argsort(-(nm @ q))[:NEAR]}
+
+
+def _near_all(store: Store, lv: Level, tr: list[dict], proposals: list[dict]) -> set:
+    """For the join: the nodes nearest to any proposal, the union of each proposal's NEAR."""
+    out: set = set()
+    for p in proposals:
+        out |= _near(store, lv, tr, p["members"])
+    return out

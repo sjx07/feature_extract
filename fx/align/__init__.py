@@ -31,7 +31,10 @@ def candidates(store: Store, kind: str, **_) -> dict:
 
 
 def name(store: Store, client, kind: str, clusters: list[dict], round_: int, model: str = COLDSTART_MODEL, workers: int = 16, progress=None) -> dict:
-    return E.name(store, client, feature_level(store, kind), clusters, round_, model, workers=workers, progress=progress)
+    lv = feature_level(store, kind)
+    n = E.name(store, client, lv, clusters, round_, model, workers=workers, progress=progress)
+    j = E.join(store, client, lv, n["proposals"], round_, model, progress=progress)
+    return {k: v for k, v in n.items() if k != "proposals"} | {"join": j}
 
 
 def judge(store: Store, client, kind: str, model: str = DEFAULT_MODEL, workers: int = 64, effort: str = "low", progress=None) -> dict:

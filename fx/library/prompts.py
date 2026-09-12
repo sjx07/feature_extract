@@ -147,30 +147,45 @@ things, not that they say the same thing. Read them and decide what, if anything
 """
 
 
-GROUP = """# TASK
-Below are the GROUPS of a {kind} feature library for one domain ({domain}), each with its features by name, and then
-FEATURES that were named without a group: in the namer's view none fitted. Decide two things.
-1. "place": an unplaced feature that does belong to an existing group after all, with that group's id.
-2. "groups": a new group, only when three or more unplaced features share one purpose that no existing group serves.
-   Give a name (a noun phrase), a one-sentence definition, an aspect (one of {aspects}), and the features it covers.
-   Fewer than three: leave them unplaced; later rounds may bring them company.
-A feature appears at most once across both lists. Every id must be copied exactly. Reply with the JSON below and nothing else.
+JOIN = """# TASK
+This round's naming calls ran in parallel, one per neighbourhood of {kind} declarations from one domain ({domain}), and
+each PROPOSED a feature or variant without seeing the others. You see them all, beside the CODEBOOK. Decide what the
+round adds.
+
+# FOR EACH PROPOSAL, one verdict
+- "new": neither the codebook nor another proposal gives this instruction; it becomes a node as proposed.
+- "existing": it gives the same instruction as codebook feature F (domain nouns aside; same polarity). Give "feature":
+  its members go onto F and no node is made. A narrower instruction (F plus a rule) is not the same: it stays new.
+- "duplicate": it gives the same instruction as another proposal P. Give "of": that proposal must be "new"; the two
+  become one node under P's name with the members of both.
+
+# THEN THE GROUPS
+- "place": a proposal without a group, or an UNPLACED feature from an earlier round, that belongs to an existing group
+  after all: its id and the group's id.
+- "groups": found a new group only when three or more of the unplaced (proposals or earlier features) share one purpose
+  no group serves: a name (noun phrase), a one-sentence definition, an aspect (one of {aspects}), and their ids. Fewer
+  than three stay unplaced; later rounds may bring them company.
+Every id must be copied exactly. Reply with the JSON below and nothing else.
 
 # OUTPUT
-{{"place":[{{"feature":"F12","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","features":["F1","F2","F3"]}}]}}
+{{"proposals":[{{"id":"P1","verdict":"new|existing|duplicate","feature":"F12","of":"P3"}}],"place":[{{"id":"P2","group":"G3"}}],"groups":[{{"name":"…","definition":"…","aspect":"…","ids":["P4","F41","P7"]}}]}}
 
-# GROUPS
-{groups}
+# CODEBOOK (every feature by name; the ones nearest to the proposals with their definitions)
+{codebook}
 
-# UNPLACED FEATURES
+# UNPLACED FEATURES from earlier rounds
 {unplaced}
+
+# PROPOSALS
+{proposals}
 """
 
 
-def group(kind: str, domain: str, groups: list[dict], unplaced: list[dict]) -> str:
+def join_prompt(kind: str, domain: str, groups: list[dict], proposals_text: str, unplaced: list[dict], near: Optional[set] = None) -> str:
     lines = [f"F{f['id']} ({f['polarity']}) [{f.get('aspect') or 'other'}] {f['name']}: {f.get('definition') or ''} [{f.get('support', 0)} prompts]" for f in unplaced]
-    return GROUP.format(kind=kind, domain=domain, aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
-                        groups=render_codebook(groups, detail=set()), unplaced="\n".join(lines))
+    return JOIN.format(kind=kind, domain=domain, aspects=", ".join(ASPECTS_GUIDANCE if kind == "guidance" else ASPECTS_MATERIAL),
+                       codebook=render_codebook([g for g in groups if g["id"] is not None], detail=near if near is not None else set()),
+                       unplaced="\n".join(lines) or "(none)", proposals=proposals_text)
 
 
 def render_codebook(groups: list[dict], anchors: bool = False, detail: Optional[set] = None) -> str:

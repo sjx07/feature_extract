@@ -8,8 +8,9 @@
                   raised again after it was acted on is standing
     reopen        first-time flags send their member open with the reason; anchors never
     candidates    every open unit not yet looked at, with its nearest open units from other groups; a rejected seed is specific
-    name          one call per cluster: a variant under a feature, a new feature under a group (or unplaced), or a rejection
-    group         one call a round: the unplaced features beside every group; file under one, or found a group for three that agree
+    name          the fork: one call per neighbourhood, in parallel, each a proposal (variant, feature, or rejection); nothing written
+    join          one call a round over every proposal beside the tree: new, same as an existing feature, or a duplicate of another
+                  proposal; places the unplaced and founds a group where three agree; then the round writes once
     run_round     assign, judge, then reopen -> cluster -> name -> assign -> judge until settled
 
 calls.py holds what the steps share to talk to the model, state.py what they read and write in the store.
@@ -19,11 +20,11 @@ the judge's flag reopens it, and only the open units are ever looked at again.
 """
 from .assign import assign
 from .calls import Stopped
-from .group import regroup
+from .join import join
 from .judge import judge, reopen
 from .level import Level
-from .name import candidates, name
+from .name import candidates, name, render_proposals
 from .round import run_round
 from .state import anchors, embed, members, node_vectors, nodes, open_units, tree, vectors
 
-__all__ = ["Level", "Stopped", "anchors", "assign", "candidates", "embed", "judge", "members", "name", "node_vectors", "nodes", "open_units", "regroup", "reopen", "run_round", "tree", "vectors"]
+__all__ = ["Level", "Stopped", "anchors", "assign", "candidates", "embed", "judge", "members", "name", "node_vectors", "nodes", "render_proposals", "join", "open_units", "reopen", "run_round", "tree", "vectors"]

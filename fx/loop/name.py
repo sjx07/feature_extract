@@ -72,12 +72,26 @@ def _seed_looked(store: Store, lv: Level, c: dict, kept: list[int]) -> None:
             store.con.commit()
 
 
+def render_proposals(proposals: list[dict], unit_prefix: str) -> str:
+    """The round's proposals as the join call reads them: P<k>, polarity, name, definition, what it proposes to be, its members."""
+    out = []
+    for k, p in enumerate(proposals, 1):
+        where = f"variant of F{p['parent']}" if p["parent"] is not None else (f"feature in group G{p['group']}" if p["group"] is not None else f"feature, no group yet (aspect {p['aspect']})")
+        out.append(f"P{k} ({p['polarity']}) {p['name']}: {p['definition']}\n      proposed as: {where}; {len(p['members'])} members from {p['groups_n']} {'prompts' if unit_prefix == 'R' else 'corpora'}")
+        for u in p["members"][:5]:
+            out.append(f"      - {unit_prefix}{u['id']} {str(u.get('label') or '')[:100]}")
+    return "\n".join(out) if out else "(none)"
+
+
 def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: int, model: str, workers: int = 16, effort: str = "low",
          progress: Optional[Callable[[int, int, dict], None]] = None) -> dict:
+    """The fork: one naming call per neighbourhood, in parallel, each returning a proposal. Nothing is written here; the
+    proposals go to join(), which sees them all beside the tree and decides what the round adds. A rejected neighbourhood
+    marks its seed specific at once."""
     tr = tree(store, lv)
     features = {n["id"]: n for n in nodes(tr) if n["level"] == "feature"}
     group_ids = {g["id"]: g for g in tr if g["id"] is not None}
-    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "variants": 0, "features": 0, "unplaced": 0, "rejected": 0, "unparsed": 0, "assigned": 0}
+    summary = {"codebook": lv.codebook, "round": round_, "clusters": len(clusters), "proposed": 0, "rejected": 0, "unparsed": 0, "proposals": []}
     if not clusters:
         return summary
     prompts = [lv.prompt_name(tr, c["members"]) for c in clusters]
@@ -101,32 +115,15 @@ def name(store: Store, client: Client, lv: Level, clusters: list[dict], round_: 
                 progress(done, len(clusters), {"cluster": k, "decision": "reject", "cost": r.cost, "calls": 1})
             continue
         pol = str(obj.get("polarity") or "require").lower()
-        row = {"codebook": lv.codebook, "prev": None, "aspect": None, "name": str(obj["name"]).strip(), "definition": str(obj.get("definition") or "").strip(),
-               "polarity": pol if pol in ("require", "forbid") else "require", "examples": parse_ids(obj.get("examples"), member_ids) or kept[:3], "round": round_}
         parent = parse_id(obj.get("parent"), set(features)) if decision == "variant" and lv.allow_variant else None
-        if parent is not None:
-            row |= {"level": "variant", "parent": parent}
-        else:
-            # a naming call never creates a group: one neighbourhood is no view of the whole. It picks a group by id; if it
-            # names an aspect or nothing usable, the feature goes to the nearest existing group by vectors (within that aspect
-            # when one was named), so the groups stay the ones the cold start (or the seed's aspects) laid down
-            g = obj.get("group")
-            gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
-            if gid is None:                          # unplaced: the group step (fx.loop.group) sees them all at once
-                aspect = str(obj.get("aspect") or (g.get("aspect") if isinstance(g, dict) else g) or "").lower()
-                summary["unplaced"] += 1
-                row |= {"level": "feature", "parent": None, "aspect": aspect if aspect in lv.aspects else "other"}
-            else:
-                row |= {"level": "feature", "parent": gid}
-        nid = store.insert("feature", row)
-        summary["variants" if row["level"] == "variant" else "features"] += 1
-        with store.lock:
-            for uid in kept:
-                store.con.execute("INSERT INTO membership (kind, unit, codebook, node, confidence, note, at) VALUES (?,?,?,?,'high','named',?) ON CONFLICT(kind, unit, codebook) DO UPDATE SET node=excluded.node, confidence='high', note='named', at=excluded.at WHERE membership.node IS NULL",
-                                  (lv.kind, uid, lv.codebook, nid, now()))
-            store.con.commit()
-        summary["assigned"] += len(kept)
-        _seed_looked(store, lv, c, kept)
+        g = obj.get("group")
+        gid = parse_id(g, set(group_ids)) if isinstance(g, str) else None
+        aspect = str(obj.get("aspect") or (g.get("aspect") if isinstance(g, dict) else g) or "").lower()
+        summary["proposals"].append({"cluster": k, "seed": c.get("seed"), "name": str(obj["name"]).strip(), "definition": str(obj.get("definition") or "").strip(),
+                                     "polarity": pol if pol in ("require", "forbid") else "require", "parent": parent, "group": gid if parent is None else None,
+                                     "aspect": aspect if aspect in lv.aspects else "other", "examples": parse_ids(obj.get("examples"), member_ids) or kept[:3],
+                                     "members": [by_id[u] for u in kept], "groups_n": ngroups})
+        summary["proposed"] += 1
         if progress:
-            progress(done, len(clusters), {"cluster": k, "decision": row["level"], "name": row["name"], "cost": r.cost, "calls": 1})
+            progress(done, len(clusters), {"cluster": k, "decision": "proposed", "name": summary["proposals"][-1]["name"], "cost": r.cost, "calls": 1})
     return summary
