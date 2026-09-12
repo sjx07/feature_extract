@@ -32,6 +32,22 @@ then the seed; budget $40; a granularity read at every step. Site for this works
   of one instruction; the rule that the cold start's pairs are never folded is worth revisiting.
 - Two judge reasons came back in Chinese (DeepSeek); cosmetic.
 
+## text2sql v1 (job 11), settled by the round cap, $4.63
+- 5,639 wordings; 385 features + 38 variants in 16 groups (8 founded by the join); reading coverage 96%; 151 specific.
+- Cold start 64 features over 4,695 of the wordings (944 waited for the loop). Round 1 named 242 features and 22 variants,
+  folded 24 duplicates at birth; rounds 5 to 8 added 3 to 9 each.
+- Join over the run: 133 judge pairs ruled, 27 folded, 21 narrowed into variants, 82 kept apart; 9 proposals sent onto
+  existing features. Variants read right ("use aggregation and GROUP BY when needed" under the GROUP BY feature,
+  "Fix only defective queries" under "fix the erroneous query").
+- The over-clustering finding: three cold-start features are buckets. "understand the question and schema" holds 248
+  wordings ("determine necessary joins", "detect hidden constraints including temporal windows", "understand the user's
+  intention"), "validate the query before answering" 196, "identify relevant tables and columns" 177 ("retain the top 10
+  to 15 most relevant columns", "use the standings tables for cumulative seasonal totals"). The judge raised no misfit
+  and no split on them: the definitions are wide and the judge prompt called a split rare. Fixed in a7f7233 (a split is
+  the report for a bucket) and the reopen keeps the largest part on the node; two more rounds on text2sql and math with
+  that judge run before the seed.
+- 138 standing misfits; the sample reads as real disagreements.
+
 ## Over- and under-clustering, so far
 - No bucket: the largest features are the cold start's and carry one instruction each; loop-born features sit at 3 to 16
   wordings with a median of about 6.
