@@ -54,13 +54,13 @@ async function viewLibrary(main, q) {
       <div class="field"><div class="t"><span>kind</span></div><div class="chips">${['guidance', 'material'].map(k => `<a class="chip ${k === kind ? 'on' : ''}" href="${href('/library', { ...q, kind: k })}"><span>${k}</span></a>`).join('')}</div></div>
       ${facets.map(fieldHtml).join('')}${fieldHtml(polar)}</div>`;
   const seg = `<span class="seg"><a href="${href('/library', { ...q, kind, view: 'prompts' })}" class="${view === 'prompts' ? 'on' : ''}">prompts</a><a href="${href('/library', { ...q, kind, view: 'features' })}" class="${view === 'features' ? 'on' : ''}">features</a></span>`;
-  let right;
+  let right, m = null, ccolor = {}, RX = 600, RY = 420;
   if (view === 'features') {
-    const [m, tr] = await Promise.all([api('/api/cube/map?' + new URLSearchParams({ kind, ring: q.ring || 'name', ...fieldQuery(q) })), api('/api/cube/trees?' + new URLSearchParams({ kind, ...fieldQuery(q), ...(q.tree ? { tree: q.tree } : {}) }))]);
+    const tr = (await Promise.all([api('/api/cube/map?' + new URLSearchParams({ kind, ring: q.ring || 'name', ...fieldQuery(q) })).then(x => { m = x; }), api('/api/cube/trees?' + new URLSearchParams({ kind, ...fieldQuery(q), ...(q.tree ? { tree: q.tree } : {}) }))]))[1];
     const sel = q.tree || '';
     const CPAL = ['#3B4FB8', '#B8741F', '#2E7D4F', '#7E3F8F', '#B8452B', '#2B8A9A', '#8A6D1F', '#C2418F', '#4F7F2B', '#6B6B6B'];
-    const ccolor = Object.fromEntries(m.corpora.map((c, i) => [c.name, CPAL[i % CPAL.length]]));
-    const RX = 600, RY = 420, W = 1300, H = 1000, ax = c => (RX * 1.13 * c.x / m.R).toFixed(1), ay = c => (RY * 1.13 * c.y / m.R).toFixed(1);
+    ccolor = Object.fromEntries(m.corpora.map((c, i) => [c.name, CPAL[i % CPAL.length]]));
+    const W = 1300, H = 1000, ax = c => (RX * 1.13 * c.x / m.R).toFixed(1), ay = c => (RY * 1.13 * c.y / m.R).toFixed(1);
     const autoThr = () => { const mx = m.globals.map(g => Math.max(...Object.values(g.prev))).sort((a, b) => b - a); return Math.max(2, Math.min(40, Math.ceil(100 * (mx[Math.min(44, mx.length - 1)] || 0.12)))); };   // the threshold that shows about 45 features
     const thr0 = q.thr ? +q.thr : autoThr();
     const mapHtml = m.corpora.length ? `<div class="mapwrap"><div class="maptools"><span class="muted" style="font-size:12px">show a feature present in at least</span><input type="range" id="mthr" min="2" max="40" value="${thr0}" style="width:130px"><span id="mthrv" class="muted" style="font-size:12px">${thr0}%</span><span class="muted" style="font-size:12px">of some corpus's prompts</span>
