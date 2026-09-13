@@ -96,6 +96,8 @@ def main(argv=None) -> int:
         p = hist.add_parser(name)
         p.add_argument("--corpus", default=None); p.add_argument("--id", type=int, default=None, help="a checkpoint id (restore, diff, branch)")
         p.add_argument("--name", default=None, help="the branch's workspace name (branch)"); p.add_argument("--note", default=None)
+    st = sub.add_parser("store", help="the store's schema version; migrate = open it, which runs the steps").add_subparsers(dest="sub", required=True)
+    st.add_parser("version"); st.add_parser("migrate")
     srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args(argv)
 
@@ -177,6 +179,10 @@ def main(argv=None) -> int:
                            workers=a.workers, effort=a.effort, rounds=a.rounds, echo=_echo)
         print(status)
         return 0 if status == "done" else 1
+    if a.cmd == "store":
+        from . import migrations
+        print(f"{ws.store_path}: schema version {store.version}, the code knows {migrations.CURRENT}" + (f"; applied now: {store.applied}" if store.applied else ""))
+        return 0
     if a.cmd == "history":
         from . import history as H
         if a.sub == "checkpoint":

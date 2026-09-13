@@ -5,7 +5,7 @@ a Store opens: `CREATE TABLE IF NOT EXISTS`, never a destructive change. The sta
 modules hold only the code that reads and writes them.
 
     from fx.store import Store
-    s = Store("runs/demo/store.db")
+    s = Store("runs/demo/store.db")   # creates the schema, runs the migrations above the store's version (fx.migrations)
     s.spent()                 # dollars so far, all models
     s.spent(model="gpt-5.6")  # one model
 """
@@ -133,32 +133,17 @@ class Store:
         self.migrate(SCHEMA)
 
     def migrate(self, schema: str) -> None:
+        """The current schema (CREATE IF NOT EXISTS), then the numbered steps above the store's version (fx.migrations)."""
+        from . import migrations
         with self.lock:
             self.con.executescript(schema)
-            self._migrate()
+            self.applied = migrations.run(self.con, str(self.path))
 
-    def _migrate(self) -> None:
-        """Columns added after a store was created, and the legacy tables copied into membership and embedding (rows not yet
-        there; the legacy tables stay for older code still writing them)."""
-        for table, cols in (("call", (("provider", "TEXT"), ("billed", "REAL"))), ("reading", (("realization", "INTEGER REFERENCES realization(id)"),)),
-                            ("realization", (("head", "TEXT"), ("sample", "TEXT"), ("domain_terms", "TEXT"))), ("assignment", (("note", "TEXT"),)),
-                            ("feature", (("round", "INTEGER"),)), ("flag", (("standing", "INTEGER DEFAULT 0"),))):
-            have = {r[1] for r in self.con.execute(f"PRAGMA table_info({table})")}
-            for col, typ in cols:
-                if col not in have:
-                    self.con.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-        self.con.execute("CREATE INDEX IF NOT EXISTS reading_realization ON reading(realization)")   # after the column exists
-        # the legacy copies write only when the legacy table holds rows the new table lacks, so a reader opening a store
-        # beside a running job does not queue behind its write lock for nothing
-        for legacy, kind, target, copy in (
-                ("assignment", "realization", "membership", "INSERT OR IGNORE INTO membership (kind, unit, codebook, node, confidence, note, at) SELECT 'realization', realization, codebook, feature, confidence, note, at FROM assignment"),
-                ("vector", "realization", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'realization', realization, model, dim, vec FROM vector"),
-                ("fvector", "feature", "embedding", "INSERT OR IGNORE INTO embedding (kind, unit, model, dim, vec) SELECT 'feature', feature, model, dim, vec FROM fvector")):
-            n_legacy = self.con.execute(f"SELECT COUNT(*) FROM {legacy}").fetchone()[0]
-            n_have = self.con.execute(f"SELECT COUNT(*) FROM {target} WHERE kind=?", (kind,)).fetchone()[0] if n_legacy else 0
-            if n_legacy > n_have:
-                self.con.execute(copy)
-        self.con.commit()                        # called under self.lock from migrate()
+    @property
+    def version(self) -> int:
+        from . import migrations
+        with self.lock:
+            return migrations.version(self.con)
 
     def insert(self, table: str, row: dict[str, Any]) -> int:
         keys = list(row)
