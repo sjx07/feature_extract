@@ -109,13 +109,15 @@ table.list td.n{text-align:right;white-space:nowrap;color:var(--muted)}
 tr.editor td{background:var(--panel)}
 
 /* the library map */
-.mapwrap{max-width:1000px}.map{width:100%;height:auto;display:block;background:var(--panel);border:1px solid var(--rule);border-radius:3px;cursor:grab;user-select:none}.map:active{cursor:grabbing}
-.maptools{display:flex;gap:6px;align-items:center;margin:6px 0}
-.map a.dim .mdot,.map a.dim .mloc{fill:var(--rule2);fill-opacity:1}.map a.dim{pointer-events:none}
+.mapwrap{max-width:1180px}.mapgrid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:0;border:1px solid var(--rule);border-radius:3px;background:var(--panel)}
+@media (max-width:1000px){.mapgrid{grid-template-columns:1fr}}
+.map{width:100%;height:auto;display:block;cursor:grab;user-select:none}.map:active{cursor:grabbing}
+.mapside{border-left:1px solid var(--rule);padding:14px 16px;font-size:13px;overflow:auto;max-height:720px}
+.maptools{display:flex;gap:8px;align-items:center;margin:0 0 8px;flex-wrap:wrap}
 .mring{fill:none;stroke:var(--rule);stroke-width:1}
-.mdot{fill:var(--accent);fill-opacity:.85;stroke:var(--panel);stroke-width:1}.mdot.one{fill:var(--muted)}
-.mloc{fill:var(--muted);fill-opacity:.45}
-.mlab{fill:var(--ink);font-family:var(--sans);pointer-events:none;paint-order:stroke;stroke:var(--panel);stroke-width:2.5px;stroke-linejoin:round}.mlab.loclab{fill:var(--ink2)}
-.mlead{stroke:var(--rule);stroke-width:1}
-.manchor{fill:var(--ink2);font-family:var(--sans);font-weight:600;cursor:pointer}.manchor.on{fill:var(--req)}.manchor .muted{font-weight:400;fill:var(--muted)}.map a:hover .manchor{text-decoration:underline}
-.map a:hover .mdot,.map a:hover .mloc{fill:var(--req);fill-opacity:1}
+.map text{font-family:var(--sans);paint-order:stroke;stroke:var(--panel);stroke-width:3px;stroke-linejoin:round;cursor:pointer}
+.map a.dim{opacity:.12}.map a.mf:hover text{text-decoration:underline}
+.mlink{stroke:var(--ink2);stroke-linecap:round;opacity:.18}
+.manchor{font-weight:600;font-size:15px}.manchor.on{text-decoration:underline}.manchor .muted{font-weight:400;fill:var(--muted)}
+.mrow{display:grid;grid-template-columns:minmax(0,1fr) 60px 40px;gap:8px;align-items:center;height:22px;font-size:12.5px}
+.mrow .lab{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mrow .lab a{color:var(--ink)}.mrow .trk{height:7px;border-radius:0 4px 4px 0;opacity:.75}.mrow .v{text-align:right;font-size:11px}

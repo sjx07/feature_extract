@@ -358,7 +358,8 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
         n = len(set().union(*d.values()))
         g = nodes[gid]
         out_g.append({"id": gid, "name": g["name"], "definition": g["definition"] or "", "group": nodes.get(g["parent"], {}).get("name"), "prompts": n,
-                      "share": {c: round(v, 3) for c, v in sorted(p.items(), key=lambda x: -x[1])}, "n_corpora": len(p), "phi": phi, "r": r,
+                      "share": {c: round(v, 3) for c, v in sorted(p.items(), key=lambda x: -x[1])}, "prev": {c: round(v, 3) for c, v in sorted(w.items(), key=lambda x: -x[1])},
+                      "n_corpora": len(p), "phi": phi, "r": r,
                       "font": round(9 + 15 * math.sqrt(n / gmax), 1), "vec": vec_of(members[gid])})
     out_l = []
     lmax = max((len(ps) for ps in local.values()), default=1)
@@ -366,7 +367,7 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
         f = nodes[fid]
         if f["corpus"] not in theta:
             continue
-        out_l.append({"id": fid, "name": f["name"], "corpus": f["corpus"], "prompts": len(ps), "phi": theta[f["corpus"]], "r": R * 1.06,
+        out_l.append({"id": fid, "name": f["name"], "corpus": f["corpus"], "prompts": len(ps), "prev": round(len(ps) / n_c[f["corpus"]], 3) if n_c.get(f["corpus"]) else 0, "phi": theta[f["corpus"]], "r": R * 1.06,
                       "font": 0, "vec": M[pos[fid]] if fid in pos else None, "size": round(1.5 + 3 * math.sqrt(len(ps) / lmax), 1)})
     # spread the one-corpus items inside their sector by the first principal component of their vectors
     for c in corpora:
