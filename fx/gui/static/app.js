@@ -32,9 +32,6 @@ async function route() {
     else main.innerHTML = '<p>No such page.</p>';
   } catch (e) { main.innerHTML = `<p class="err">${esc(e.message)}</p>`; console.error(e); }
 }
-window.addEventListener('hashchange', route);
-route();
-
 const NOT_FIELDS = new Set(['kind', 'view', 'limit', 'profile']);
 const fieldsOf = q => Object.keys(q).filter(f => !NOT_FIELDS.has(f) && q[f]);
 const fieldQuery = q => Object.fromEntries(fieldsOf(q).map(f => [f, q[f]]));
@@ -408,3 +405,6 @@ async function viewSettings(main) {
   }
   for (const b of main.querySelectorAll('[data-probe]')) b.onclick = async () => { const name = b.dataset.probe, out = $('#probe-' + (name || 'custom')); out.textContent = 'probing'; try { const r = await post('/api/settings/probe', name ? { endpoint: name } : { base_url: $('#purl').value }); out.innerHTML = r.ok ? `<span class="ok">ok</span> · ${r.models} models · ${r.ms} ms${r.sample.length ? ' · e.g. ' + esc(r.sample.slice(0, 4).join(', ')) : ''}` : `<span class="err">failed</span> · ${r.status || ''} ${esc(r.error || '')} · ${r.ms} ms`; } catch (e) { out.textContent = e.message; } };
 }
+
+window.addEventListener('hashchange', route);
+route();                                   // last: every const above is initialised before the first view runs
