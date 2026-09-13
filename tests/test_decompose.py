@@ -8,12 +8,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_server import FakeServer, reply  # noqa: E402
 
-from fx.corpus import import_path, import_text, corpora  # noqa: E402
-from fx.decompose import Tree, metrics, parse_components, profile  # noqa: E402
-from fx.decompose import runner as stage  # noqa: E402
-from fx.decompose.locate import validate_components  # noqa: E402
-from fx.llm import Client  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.data.corpus import import_path, import_text, corpora  # noqa: E402
+from fx.ingest.decompose import Tree, metrics, parse_components, profile  # noqa: E402
+from fx.ingest.decompose import runner as stage  # noqa: E402
+from fx.ingest.decompose.locate import validate_components  # noqa: E402
+from fx.core.llm import Client  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 PROMPT = """You are a query planning optimizer. Your task is to break down complex questions into retrieval steps.
 Key Requirements:
@@ -94,7 +94,7 @@ def test_profile_builds_tree_material_and_checks():
 
 
 def test_gap_policy_skips_bare_slots_but_refines_prose_anywhere():
-    from fx.decompose.profile import gap_worth_refining
+    from fx.ingest.decompose.profile import gap_worth_refining
     text = "```\ncode with several words in it\n```\n{question}\nPlease answer with care and cite the source."
     assert gap_worth_refining(text, 0, 34)
     assert not gap_worth_refining(text, 35, 45)
@@ -154,7 +154,7 @@ def test_stage_records_failure_and_stop(store):
     with FakeServer() as srv:
         srv.script = [reply("not json at all")]
         c = Client(store, base_url=srv.url, empty_retries=0)
-        import fx.llm.client as cl
+        import fx.core.llm.client as cl
         cl.time.sleep = lambda s: None
         s = stage.run(store, c, "many", model="m", workers=2, limit=2)
         assert s["done"] == 2                                                # unparsable replies leave an unrefined leaf, not a failure
@@ -172,7 +172,7 @@ def test_stage_records_failure_and_stop(store):
 def test_gui_api_end_to_end(store, tmp_path):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    from fx.paths import Workspace
+    from fx.core.paths import Workspace
     ws = Workspace(tmp_path / "ws")
     app = make_app(ws, store)
     t = TestClient(app)
@@ -207,8 +207,8 @@ def test_gui_api_end_to_end(store, tmp_path):
 
 
 def test_reask_never_replaces_a_parsed_reply_with_a_refusal():
-    from fx.decompose.profile import _better
-    from fx.decompose.contract import Component
+    from fx.ingest.decompose.profile import _better
+    from fx.ingest.decompose.contract import Component
     good = [Component("a", "b", "atom")]; good[0].span = (0, 3)
     assert not _better(None, ["not json"], good, ["component[1]: not found", "ambiguous"])
     assert _better(good, [], None, ["not json"])
@@ -217,19 +217,19 @@ def test_reask_never_replaces_a_parsed_reply_with_a_refusal():
 
 
 def test_locate_matches_recased_quotes():
-    from fx.decompose.locate import resolve
+    from fx.ingest.decompose.locate import resolve
     assert resolve("I will ask you a question.", "I Will ask", "a question.") == (0, 26)
 
 
 def test_schema_is_sent_and_dropped_when_rejected(store):
-    from fx.decompose.prompts import COMPONENTS_SCHEMA
+    from fx.ingest.decompose.prompts import COMPONENTS_SCHEMA
     with FakeServer() as srv:
         srv.script = [reply("ok")]
         c = Client(store, base_url=srv.url)
         c.complete("q", model="m", schema=COMPONENTS_SCHEMA)
         assert srv.requests[0]["response_format"]["type"] == "json_schema"
         srv.script = [reply("a", reject="response_format"), reply("b"), reply("c")]; srv.calls = 0
-        import fx.llm.client as cl; cl.time.sleep = lambda s: None
+        import fx.core.llm.client as cl; cl.time.sleep = lambda s: None
         r = c.complete("q2", model="m2", schema=COMPONENTS_SCHEMA)
         assert r.text == "b" and "response_format" not in srv.requests[-1]
         c.complete("q3", model="m2", schema=COMPONENTS_SCHEMA)
@@ -302,8 +302,8 @@ def _sequential(monkeypatch):
 
 
 def test_repeated_quotes_resolve_in_order_and_only_a_repeated_end_is_ambiguous():
-    from fx.decompose.locate import validate_components
-    from fx.decompose.contract import Component, Facet
+    from fx.ingest.decompose.locate import validate_components
+    from fx.ingest.decompose.contract import Component, Facet
     text = "- required parameters: a table\n- sim_value: finds values\n- required parameters: a column\n- sim_columns: finds columns\n```\ncode one\n```\nthen\n```\ncode two\n```\nDone."
     f = [Facet("provide", "x")]
     cs = [Component("- required parameters:", "a table", "material", "reference", facets=f), Component("- sim_value:", "finds values", "material", "reference", facets=f),
@@ -316,8 +316,8 @@ def test_repeated_quotes_resolve_in_order_and_only_a_repeated_end_is_ambiguous()
 
 
 def test_think_tags_are_shielded_for_the_model_and_unshielded_in_its_quotes():
-    from fx.decompose.prompts import render_refine
-    from fx.decompose.locate import resolve
+    from fx.ingest.decompose.prompts import render_refine
+    from fx.ingest.decompose.locate import resolve
     text = "Put your reasoning inside <think> </think> tags.\nThen answer."
     assert "⟨think⟩ ⟨/think⟩" in render_refine(text, 0, len(text), None) and "<think>" not in render_refine(text, 0, len(text), None)
     assert resolve(text, "Put your reasoning inside ⟨think⟩", "⟨/think⟩ tags.") == (0, 48)

@@ -18,18 +18,19 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import decompose, jobs
-from .. import library as L
-from .. import align as A
-from .. import cube as C
-from .. import settings as S
-from .. import ingest as I
-from .. import history as H
-from ..corpus import corpora, import_path, import_text
-from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
-from ..llm import Client
-from ..paths import Workspace
-from ..store import Store, now
+from fx.ingest import decompose
+from fx.core import jobs
+from fx.ingest import induce as L
+from fx.ingest import generalize as A
+from fx.views import library as C
+from fx.core import settings as S
+from fx.views import ingest as I
+from fx.data import history as H
+from fx.data.corpus import corpora, import_path, import_text
+from fx.core.llm.registry import DEFAULT_MODEL, LOCAL_URL, models
+from fx.core.llm import Client
+from fx.core.paths import Workspace
+from fx.core.store import Store, now
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -125,7 +126,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def api_jobs():
-        from ..jobs import reap
+        from fx.core.jobs import reap
         reap(store)
         return [dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT * FROM job ORDER BY id DESC LIMIT 50")]
 
@@ -249,8 +250,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         for j in js:
             if j["status"] == "running" and not live.get(j["id"], True):
                 j["status"] = "stale"
-        from ..corpus import imports
-        from ..tags import fields
+        from fx.data.corpus import imports
+        from fx.data.tags import fields
         return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "imports": imports(store, limit=30), "fields": fields(store), "default_model": DEFAULT_MODEL, "models": models()}
 
     @app.post("/api/jobs/{jid}/close")

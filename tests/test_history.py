@@ -8,9 +8,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_cube import two_libraries_and_a_global  # noqa: E402
 
-from fx import history as H  # noqa: E402
-from fx.paths import Workspace  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.data import history as H  # noqa: E402
+from fx.core.paths import Workspace  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -102,8 +102,9 @@ def test_site_history_endpoints(ws, tmp_path):
 
 
 def test_a_checkpoint_from_an_older_schema_restores_with_derived_tags(ws):
-    from fx import history as H, migrations
-    from fx.tags import tags_of
+    from fx.data import history as H
+    from fx.core import migrations
+    from fx.data.tags import tags_of
     store = Store(ws.store_path)
     a, b, g = two_libraries_and_a_global(store)
     pid = store.one("SELECT p.id FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE k.name='sql'")["id"]

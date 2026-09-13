@@ -8,9 +8,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_align import CYPHER, SQL, seed_library  # noqa: E402
 
-from fx import cube, settings  # noqa: E402
-from fx.align.seed import seed_codebook  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.views import library as cube
+from fx.core import settings  # noqa: E402
+from fx.ingest.generalize.seed import seed_codebook  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -84,7 +85,7 @@ def test_settings_file_is_written_blind_and_loaded_where_the_shell_has_nothing(t
     assert k["set"] and k["secret"] and k["length"] == 15 and "value" not in k and k["source"] == "file"
     assert next(x for x in st["settings"] if x["name"] == "FX_LOCAL_URL")["value"] == "http://localhost:8002/v1"
     assert next(e for e in st["endpoints"] if e["name"] == "local")["base_url"] == "http://localhost:8002/v1"
-    from fx.llm.registry import resolve
+    from fx.core.llm.registry import resolve
     assert resolve("openai/gpt-oss-20b").base_url == "http://localhost:8002/v1"
     settings.save("OPENROUTER_API_KEY", "", path=p)
     assert "OPENROUTER_API_KEY" not in os.environ and "OPENROUTER_API_KEY" not in settings.read_file(p)
@@ -100,7 +101,7 @@ def test_settings_file_is_written_blind_and_loaded_where_the_shell_has_nothing(t
 def test_site_cube_and_settings_endpoints(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    from fx.paths import Workspace
+    from fx.core.paths import Workspace
     monkeypatch.setattr(settings, "KEY_FILE", tmp_path / "keys.env")
     ws = Workspace(tmp_path / "ws"); store = Store(ws.store_path)
     a, b, g = two_libraries_and_a_global(store)

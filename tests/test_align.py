@@ -12,10 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_server import FakeServer, reply  # noqa: E402
 from test_library import fake_encoder  # noqa: E402
 
-from fx import align as A  # noqa: E402
-from fx.corpus import import_text  # noqa: E402
-from fx.llm import Client  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.ingest import generalize as A  # noqa: E402
+from fx.data.corpus import import_text  # noqa: E402
+from fx.core.llm import Client  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -120,7 +120,7 @@ def test_name_assign_judge_reopen_and_the_loop(store):
 def test_site_seed_endpoint_and_cli_status(tmp_path):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    from fx.paths import Workspace
+    from fx.core.paths import Workspace
     from fx.cli import main
     ws = Workspace(tmp_path / "w"); store = Store(ws.store_path)
     seed_library(store, "sql", SQL); seed_library(store, "cypher", CYPHER)

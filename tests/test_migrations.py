@@ -7,8 +7,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fx import migrations  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.core import migrations  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 def test_new_store_is_current_and_reopening_applies_nothing(tmp_path):
@@ -42,7 +42,7 @@ def test_a_store_ahead_of_the_code_refuses(tmp_path):
 
 
 def test_imports_are_events_and_old_prompts_get_a_synthetic_one(tmp_path):
-    from fx.corpus import import_text, imports
+    from fx.data.corpus import import_text, imports
     s = Store(tmp_path / "s.db")
     r = import_text(s, "a pasted prompt", name="c1", domain="d")
     assert r["import"] == 1 and r["added"] == 1
@@ -59,8 +59,8 @@ def test_imports_are_events_and_old_prompts_get_a_synthetic_one(tmp_path):
 
 
 def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
-    from fx import tags
-    from fx.corpus import add_prompts, get_corpus
+    from fx.data import tags
+    from fx.data.corpus import add_prompts, get_corpus
     s = Store(tmp_path / "s.db")
     cid = get_corpus(s, "c1")
     add_prompts(s, cid, [{"id": "p1", "text": "one", "domain": "d", "system": "sys", "meta": {"role": "staged", "use_case": {"x": 1}, "pasted": True, "n": 3}}])
@@ -76,7 +76,7 @@ def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
     con.execute("PRAGMA user_version = 2"); con.commit(); con.close()
     s2 = Store(tmp_path / "s.db")
     assert s2.applied == list(range(3, migrations.CURRENT + 1)) and tags.tags_of(s2, ["old"])["old"] == {"task": "qa", "stage": "verify"} and s2.one("SELECT meta FROM prompt WHERE id='old'")["meta"] == '{"provenance": {"a": 1}}'
-    from fx import cube
+    from fx.views import library as cube
     f = cube.prompt_fields(s2)
     assert f["p1"] == {"corpus": "c1", "domain": "e", "system": "sys", "n": "3", "family": "qa"} and cube.field_names(f)[:3] == ["corpus", "domain", "task"]
     assert cube.parse_filters({"family": "qa", "kind": "guidance", "n": "3", "_x": "1"}) == {"family": {"qa"}, "n": {"3"}}
@@ -84,7 +84,7 @@ def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
 
 def test_the_seed_is_a_scope_and_an_old_seed_corpus_migrates(tmp_path):
     from test_align import SQL, seed_library
-    from fx.align.seed import seed_codebook
+    from fx.ingest.generalize.seed import seed_codebook
     s = Store(tmp_path / "s.db")
     seed_library(s, "sql", SQL)
     cb = seed_codebook(s, "guidance")
