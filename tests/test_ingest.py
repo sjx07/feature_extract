@@ -79,7 +79,7 @@ def test_run_profile_runs_the_stages_in_order_and_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda *a, **k: order.append("align") or {"steps": [], "stopped_because": "settled"})
     jid = jobs.start(store, ws, "profile", "c1", "m", {"profile": "default", "stage": "queued"}, 0)
-    assert jobs.run_profile(store, ws, None, jid, "c1", I.DEFAULT_PROFILE) == "done"
+    assert jobs.run_profile(store, ws, None, jid, "c1", I.DEFAULT_PROFILE | {"align": "on"}) == "done"
     assert order == ["decompose", "codebook", "align"]
     j = store.one("SELECT status, params FROM job WHERE id=?", (jid,))
     assert j["status"] == "done" and json.loads(j["params"])["stage"] == "done"
@@ -90,6 +90,13 @@ def test_run_profile_runs_the_stages_in_order_and_stops(tmp_path, monkeypatch):
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "stopped"})
     jid2 = jobs.start(store, ws, "profile", "c1", "m", {"profile": "default"}, 0)
     assert jobs.run_profile(store, ws, None, jid2, "c1", I.DEFAULT_PROFILE, stop=threading.Event()) == "stopped" and order == ["decompose", "codebook"]
+    # stage 3 is opt-in: the default profile stops after the codebook even with two libraries present, and the log says why
+    order.clear()
+    monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
+    jid3 = jobs.start(store, ws, "profile", "c1", "m", {"profile": "default"}, 0)
+    assert jobs.run_profile(store, ws, None, jid3, "c1", I.DEFAULT_PROFILE) == "done" and order == ["decompose", "codebook"]
+    assert "stage align guidance: off in the profile" in ws.job_log(jid3).read_text()
+    assert I.save_profile(store, "al", {"align": "on"})["params"]["align"] == "on" and I.save_profile(store, "al2", {})["params"]["align"] == "off"
 
 
 def test_site_ingest_endpoints(tmp_path, monkeypatch):
@@ -149,8 +156,9 @@ def test_estimate_sums_the_stages_and_a_profile_kind_runs_both_kinds(tmp_path, m
     import_text(store, "a fresh prompt to decompose", name="fresh")
     e = I.estimate(store, "fresh", I.DEFAULT_PROFILE)
     assert e["decompose"] > 0 and e["total"] >= e["decompose"] and any(s["stage"] == "decompose" for s in e["steps"])
-    e2 = I.estimate(store, "sql", I.DEFAULT_PROFILE)
+    e2 = I.estimate(store, "sql", I.DEFAULT_PROFILE | {"align": "on"})
     assert e2["decompose"] == 0 and e2["codebook"] >= 0 and e2["align"] > 0 and e2["total"] == round(e2["decompose"] + e2["codebook"] + e2["align"], 2)
+    assert I.estimate(store, "sql", I.DEFAULT_PROFILE)["align"] == 0            # no alignment cost when the profile does not run it
     order = []
     import fx.ingest.decompose as D
     import fx.ingest.induce as L
@@ -160,7 +168,7 @@ def test_estimate_sums_the_stages_and_a_profile_kind_runs_both_kinds(tmp_path, m
     monkeypatch.setattr(L, "run_round", lambda st, cl, corpus, kind, **k: order.append(("codebook", kind)) or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda st, cl, kind, **k: order.append(("align", kind)) or {"steps": [], "stopped_because": "settled"})
     jid = jobs.start(store, ws, "profile", "sql", "m", {"profile": "default"}, 0)
-    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE | {"kind": "both"}) == "done"
+    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE | {"kind": "both", "align": "on"}) == "done"
     assert order == [("codebook", "guidance"), ("codebook", "material"), ("align", "guidance"), ("align", "material")]
     assert I.save_profile(store, "mat", {"kind": "material"})["params"]["kind"] == "material" and I.save_profile(store, "bad", {"kind": "nope"})["params"]["kind"] == "guidance"
 
@@ -172,7 +180,7 @@ def test_a_lone_corpus_skips_alignment_and_is_not_pending_for_it(tmp_path, monke
     for pid in [r["id"] for r in store.rows("SELECT id FROM prompt")]:
         store.insert("decomp", {"prompt": pid, "status": "done", "model": "m", "coverage": 1.0, "material_share": 0, "calls": 1, "seconds": 1, "reasks": 0, "flags": "[]", "failures": "[]", "error": None, "at": "now"})
     c = I.corpora(store)[0]
-    assert c["alone"] and c["stages"] == ["done", "done", "none"] and not c["pending"]
+    assert c["alone"] and c["stages"] == ["done", "done", "none"] and not c["pending"] and not c["pending_core"]
     order = []
     import fx.ingest.decompose as D
     import fx.ingest.induce as L
@@ -181,5 +189,5 @@ def test_a_lone_corpus_skips_alignment_and_is_not_pending_for_it(tmp_path, monke
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda *a, **k: order.append("align") or {"steps": [], "stopped_because": "settled"})
     jid = jobs.start(store, ws, "profile", "sql", "m", {"profile": "default"}, 0)
-    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE) == "done" and order == ["codebook"]
+    assert jobs.run_profile(store, ws, None, jid, "sql", I.DEFAULT_PROFILE | {"align": "on"}) == "done" and order == ["codebook"]
     assert "stage align guidance: skipped" in ws.job_log(jid).read_text()

@@ -261,7 +261,8 @@ async function viewIngest(main, sub, q) {
   const tabs = ['corpora', 'import', 'profiles', 'jobs', 'history'].map(t => `<a href="#/ingest/${t}" class="${t === sub ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</a>`).join('');
   let body = '';
   if (sub === 'corpora') {
-    const pending = d.corpora.filter(c => c.pending && !c.running).length, kind = q.kind || 'guidance';
+    const prof0 = d.profiles.find(p => p.name === 'default') || d.profiles[0], alignOn = prof0 && prof0.params.align === 'on';
+    const pending = d.corpora.filter(c => (alignOn ? c.pending : c.pending_core) && !c.running).length, kind = q.kind || 'guidance';
     body = `<h1>Corpora</h1><p class="lede">A corpus is kept: edit it, add or remove prompts, and run it to bring its codebook and its alignment current.</p>
       <div class="chips" style="margin-bottom:12px">${['guidance', 'material'].map(k => `<a class="chip ${k === kind ? 'on' : ''}" href="${href('/ingest/corpora', { kind: k })}"><span>${k}</span></a>`).join('')}</div>
       <div class="block"><div class="t">stages: decomposed, codebook, aligned &nbsp;${strip(['done'])} done &nbsp;${strip(['partial'])} partial &nbsp;${strip(['running'])} running &nbsp;${strip(['none'])} not run</div>
@@ -290,6 +291,7 @@ async function viewIngest(main, sub, q) {
         <tr><td>budget</td><td><input type="number" name="budget" value="${esc(cur.params.budget ?? '')}" step="1" placeholder="none"></td><td class="muted" style="font-size:12px">dollars per run; stops the run, keeps what it wrote</td></tr>
         <tr><td>workers</td><td><input type="number" name="workers" value="${esc(cur.params.workers ?? 128)}" min="1" max="512"></td><td class="muted" style="font-size:12px">calls in flight</td></tr>
         <tr><td>effort</td><td><select name="effort"><option ${cur.params.effort === 'low' ? 'selected' : ''}>low</option><option ${cur.params.effort === 'default' ? 'selected' : ''}>default</option></select></td><td class="muted" style="font-size:12px">reasoning effort for assign and judge; decomposition always reasons</td></tr>
+        <tr><td>stage 3</td><td><select name="align"><option value="off" ${cur.params.align !== 'on' ? 'selected' : ''}>off</option><option value="on" ${cur.params.align === 'on' ? 'selected' : ''}>on</option></select></td><td class="muted" style="font-size:12px">align this corpus's features into the global library after its codebook; off by default, and needs a second corpus with a codebook</td></tr>
         <tr><td>kind</td><td><select name="kind">${['guidance', 'material', 'both'].map(k => `<option ${(cur.params.kind || 'guidance') === k ? 'selected' : ''}>${k}</option>`).join('')}</select></td><td class="muted" style="font-size:12px">which library a run builds and aligns: the guidance, the material, or both</td></tr>
         <tr><td>base url</td><td><input type="text" name="base_url" value="${esc(cur.params.base_url ?? '')}" placeholder="optional: another OpenAI-compatible server" style="width:100%"></td><td class="muted" style="font-size:12px">for every role</td></tr></table>
       <datalist id="models">${d.models.map(m => `<option value="${esc(m.model)}">${esc(m.endpoint)}</option>`).join('')}</datalist>

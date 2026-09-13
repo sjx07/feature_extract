@@ -1,0 +1,16 @@
+# core (matches pyproject dependencies)
+openai>=1.30
+httpx>=0.25
+numpy
+
+# the site: fx serve
+fastapi
+uvicorn
+python-multipart      # FastAPI Form/File on /api/import
+
+# stage 2/3 local encoder: fx library embed / round, fx align round (CPU or Apple MPS is fine)
+sentence-transformers
+torch
+
+# tests
+pytest>=7

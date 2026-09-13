@@ -268,7 +268,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         except KeyError:
             raise HTTPException(404, "no such profile")
         kind = prof.get("kind") or "guidance"
-        names = [n for n in corpora.split(",") if n] or [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"]]
+        names = [n for n in corpora.split(",") if n] or [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if I.pending(c, prof)]
         est = {n: I.estimate(store, n, prof, kind) for n in names}
         return {"profile": profile, "kind": kind, "corpora": est, "total": round(sum(e["total"] for e in est.values()), 2)}
 
@@ -329,7 +329,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         kind = body.get("kind") or prof.get("kind") or "guidance"
         names = body.get("corpora") or []
         if names == "pending" or body.get("pending"):
-            names = [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if c["pending"] and not c["running"]]
+            names = [c["name"] for c in I.corpora(store, "guidance" if kind == "both" else kind, ws) if I.pending(c, prof) and not c["running"]]
         names = [n for n in names if n not in running_corpora()]
         if not names:
             raise HTTPException(400, "nothing to run")

@@ -268,8 +268,11 @@ def run_profile(store: Store, ws: Workspace, client, jid: int, corpus: str, prof
             log_line(f"stage codebook {k} result {json.dumps(r)[:800]}")
             if r.get("stopped_because") == "stopped":
                 finish(store, ws, jid, "stopped"); return "stopped"
-        # 3 align, per kind: only once another corpus has a codebook of the kind; alone, a library stands for itself
+        # 3 align, per kind, only when the profile turns it on, and only once another corpus has a codebook of the kind; alone, a library stands for itself
+        from fx.views.ingest import align_on
         for k in kinds:
+            if not align_on(p):
+                log_line(f"stage align {k}: off in the profile; stage 3 is opt-in"); continue
             if len(A.libraries(store, k)) < 2:
                 log_line(f"stage align {k}: skipped, {len(A.libraries(store, k))} corpus with a {k} codebook; alignment needs two"); continue
             set_stage(store, jid, "align" if len(kinds) == 1 else f"align {k}")

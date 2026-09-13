@@ -1,6 +1,7 @@
 """The Ingest side: what is in the library and how to add to it. A corpus is kept (renamed, retagged, added to, pruned,
 deleted) and owns its codebook and its seed memberships; an import is an event that lands prompts in one. A profile is
-the settings a run uses; a run brings one corpus current through the stages: decompose, codebook, align.
+the settings a run uses; a run brings one corpus current through the stages: decompose, codebook, and align when the
+profile turns stage 3 on (it is off by default: a corpus is studied on its own before it is aligned into the global library).
 
     corpora(store)            -> one row per corpus with its stage strip and last job
     profiles(store)           -> the saved profiles, the default first
@@ -16,8 +17,18 @@ from fx.core.llm.registry import DEFAULT_MODEL
 from fx.core.store import Store, now
 
 DEFAULT_PROFILE = {"decompose_model": DEFAULT_MODEL, "codebook_model": "gpt-5.6-sol", "batch_model": DEFAULT_MODEL, "judge_model": "",
-                   "embed_model": "BAAI/bge-large-en-v1.5", "budget": 30.0, "workers": 128, "effort": "low", "base_url": "", "kind": "guidance"}
+                   "embed_model": "BAAI/bge-large-en-v1.5", "budget": 30.0, "workers": 128, "effort": "low", "base_url": "", "kind": "guidance", "align": "off"}
 KINDS = ("guidance", "material", "both")
+
+
+def align_on(prof: dict) -> bool:
+    """Whether a profile runs stage 3; off unless it says so."""
+    return str(prof.get("align", "off")).strip().lower() in ("on", "yes", "true", "1")
+
+
+def pending(row: dict, prof: dict) -> bool:
+    """Whether a corpus row has a stage to do under a profile: stages 1 and 2 always count, 3 only when the profile runs it."""
+    return row["pending_core"] or (align_on(prof) and row["pending"])
 ROLES = ("decompose", "codebook", "batch", "judge", "embed")
 
 
@@ -44,6 +55,7 @@ def save_profile(store: Store, name: str, params: dict) -> dict:
     clean["budget"] = float(clean["budget"] or 0) or None
     clean["workers"] = int(clean["workers"] or 128)
     clean["kind"] = clean["kind"] if clean.get("kind") in KINDS else "guidance"
+    clean["align"] = "on" if align_on(clean) else "off"
     with store.lock:
         store.con.execute("INSERT INTO profile (name, params, at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET params=excluded.params, at=excluded.at", (name, json.dumps(clean), now()))
         store.con.commit()
@@ -127,7 +139,8 @@ def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
                 st_a = "running"
         row["stages"] = [st_d, st_c, st_a]
         row["alone"] = n_libs < 2
-        row["pending"] = st_d != "done" or st_c != "done" or (st_a != "done" and n_libs >= 2)
+        row["pending_core"] = st_d != "done" or st_c != "done"
+        row["pending"] = row["pending_core"] or (st_a != "done" and n_libs >= 2)
         out.append(row)
     return out
 
@@ -284,7 +297,7 @@ def estimate(store: Store, corpus: str, prof: dict, kind: str = "guidance") -> d
             out["steps"].append({"stage": f"codebook {k}", "error": str(e)[:120]})
         # align: the corpus's cards not yet placed at the seed; a batch of 12 per assign call, a naming call per six
         row = next((c for c in corpora(store, k) if c["name"] == corpus), None)
-        open_cards = (row["features"] - row["aligned"] - row["specific"]) if row and row["codebook"] else 0
+        open_cards = (row["features"] - row["aligned"] - row["specific"]) if row and row["codebook"] and align_on(prof) else 0
         if open_cards > 0:
             bm, cm = prof.get("batch_model") or DEFAULT_MODEL, prof.get("codebook_model") or "gpt-5.6-sol"
             pa = price(bm, resolve(bm)); pn = price(cm, resolve(cm))
