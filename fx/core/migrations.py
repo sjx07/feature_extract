@@ -72,11 +72,11 @@ def step3_tags_as_rows(con: sqlite3.Connection) -> None:
         except ValueError:
             continue
         promoted = promotable(meta)
-        if not promoted:
+        if not promoted and not any(v is None for v in meta.values()):
             continue
         for k, v in promoted.items():
             con.execute("INSERT OR IGNORE INTO tag (prompt, field, value) VALUES (?, ?, ?)", (r[0], k, v))
-        rest = {k: v for k, v in meta.items() if k not in promoted}
+        rest = {k: v for k, v in meta.items() if k not in promoted and v is not None}          # a null key says nothing
         con.execute("UPDATE prompt SET meta=? WHERE id=?", (json.dumps(rest, ensure_ascii=False), r[0]))
 
 

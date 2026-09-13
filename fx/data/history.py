@@ -159,7 +159,7 @@ def translate(g: dict[str, dict[str, list[dict]]], schema: int) -> dict[str, dic
             except ValueError:
                 meta = {}
             t |= promotable(meta)
-            p["meta"] = json.dumps({k: v for k, v in meta.items() if k not in t}, ensure_ascii=False)
+            p["meta"] = json.dumps({k: v for k, v in meta.items() if k not in t and v is not None}, ensure_ascii=False)
             tags += [{"prompt": p["id"], "field": k, "value": v} for k, v in t.items()]
         g["prompts"]["tag"] = tags
         g["prompts"].setdefault("import", [])

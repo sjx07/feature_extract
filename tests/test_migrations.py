@@ -72,7 +72,7 @@ def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
     assert [f["field"] for f in tags.fields(s)] == ["domain", "family", "system", "n"]
     # an old store's columns and meta keys become rows when step 3 runs
     con = sqlite3.connect(tmp_path / "s.db")
-    con.execute("INSERT INTO prompt (id, corpus, sha, text, at, task, meta) VALUES ('old', 1, 'x', 'old', 'then', 'qa', '{\"stage\": \"verify\", \"provenance\": {\"a\": 1}}')")
+    con.execute("INSERT INTO prompt (id, corpus, sha, text, at, task, meta) VALUES ('old', 1, 'x', 'old', 'then', 'qa', '{\"stage\": \"verify\", \"family\": null, \"provenance\": {\"a\": 1}}')")
     con.execute("PRAGMA user_version = 2"); con.commit(); con.close()
     s2 = Store(tmp_path / "s.db")
     assert s2.applied == list(range(3, migrations.CURRENT + 1)) and tags.tags_of(s2, ["old"])["old"] == {"task": "qa", "stage": "verify"} and s2.one("SELECT meta FROM prompt WHERE id='old'")["meta"] == '{"provenance": {"a": 1}}'
