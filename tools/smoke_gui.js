@@ -60,6 +60,7 @@ const orig = console.error; console.error = (...a) => { errors.push('console.err
   const views = ['/library', '/library?view=prompts', `/library?tree=${ids.corpus}`, '/library?view=features&role=staged&ring=similarity', `/node/${ids.glob}`, `/node/${ids.local}?corpus=${ids.corpus}`, `/feature/${ids.local}`, `/prompt/${encodeURIComponent(ids.prompt)}`,
                  '/ingest/corpora', '/ingest/import', '/ingest/profiles', '/ingest/jobs', '/ingest/history', `/job/${ids.job}`, '/settings'];
   for (const v of views) {
+    if (/undefined|null/.test(v)) { console.log(v.padEnd(60), 'skipped: nothing of that kind in this store'); continue; }
     window.location.hash = '#' + v; main.innerHTML = '';
     const before = errors.length;
     try { await global.__route(); } catch (e) { errors.push(v + ': threw ' + (e.stack || e)); }
