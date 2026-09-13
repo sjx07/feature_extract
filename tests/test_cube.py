@@ -140,7 +140,7 @@ def test_the_map_places_globals_by_corpus_share_and_the_trees_are_per_corpus(sto
     embed(store, "guidance", enc=fake_encoder)
     m = cube.feature_map(store, "guidance", {})
     assert [c["name"] for c in m["corpora"]] == ["cypher", "sql"] and m["prompts"] == 2
-    assert len(m["globals"]) == 1 and m["globals"][0]["n_corpora"] == 2 and abs(m["globals"][0]["x"]) < 1 and abs(m["globals"][0]["y"]) < 1      # shared evenly: the centre
+    assert len(m["globals"]) == 1 and m["globals"][0]["n_corpora"] == 2 and abs(m["globals"][0]["x"]) < 1 and abs(m["globals"][0]["y"]) < 1 and m["globals"][0]["rank"] == 0 and m["groups"] == ["reasoning"]
     assert {f["corpus"] for f in m["local"]} == {"cypher", "sql"} and len(m["local"]) == 4 and all(abs(math.hypot(f["x"], f["y"]) - cube.R * 1.06) < 1 for f in m["local"])
     one = cube.feature_map(store, "guidance", {"corpus": {"sql"}})
     assert one["globals"][0]["n_corpora"] == 1 and abs(math.hypot(one["globals"][0]["x"], one["globals"][0]["y"]) - cube.R) < 1           # one corpus: the rim
