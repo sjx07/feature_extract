@@ -107,3 +107,13 @@ table.list td.n{text-align:right;white-space:nowrap;color:var(--muted)}
 .log{font:12px/1.7 var(--mono);color:var(--ink2);background:var(--panel);border:1px solid var(--rule);padding:10px 14px;white-space:pre-wrap;max-height:50vh;overflow:auto;margin:0}
 .fchips{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}.fchips .corp{margin:0}
 tr.editor td{background:var(--panel)}
+
+/* the library map */
+.map{width:100%;max-width:1000px;height:auto;display:block;background:var(--panel);border:1px solid var(--rule);border-radius:3px}
+.mring{fill:none;stroke:var(--rule);stroke-width:1}
+.mdot{fill:var(--accent);fill-opacity:.85;stroke:var(--panel);stroke-width:1}.mdot.one{fill:var(--muted)}
+.mloc{fill:var(--muted);fill-opacity:.45}
+.mlab{fill:var(--ink);font-family:var(--sans);pointer-events:none;paint-order:stroke;stroke:var(--panel);stroke-width:3px;stroke-linejoin:round}
+.mlead{stroke:var(--rule);stroke-width:1}
+.manchor{fill:var(--ink2);font:600 15px var(--sans)}.manchor .muted{font-weight:400;fill:var(--muted)}
+.map a:hover .mdot,.map a:hover .mloc{fill:var(--req);fill-opacity:1}
