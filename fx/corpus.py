@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from .store import Store, now
+from .tags import promotable, set_tags
 from .unwrap import unwrap
 
 TEXT_SUFFIXES = {".txt", ".md", ".prompt", ".jinja", ".j2", ".yaml", ".yml", ".json"}
@@ -80,8 +81,12 @@ def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict], imp: Optiona
         pid = r.get("id") or f"{corpus_id}:{h[:16]}"
         if store.one("SELECT 1 FROM prompt WHERE id=?", (pid,)):
             pid = f"{corpus_id}:{h[:16]}"
+        tags = {k: r.get(k) for k in ("domain", "system", "task") if r.get(k) not in (None, "")} | promotable(meta)
+        meta = {k: v for k, v in meta.items() if k not in tags}
         store.insert("prompt", {"id": pid, "corpus": corpus_id, "sha": h, "text": text, "domain": r.get("domain"), "system": r.get("system"),
                                 "task": r.get("task"), "source_id": r.get("source_id"), "meta": meta, "at": now(), "import": imp})
+        if tags:
+            set_tags(store, pid, tags)
         have.add(h)
         added += 1
         unwrapped += bool(how)

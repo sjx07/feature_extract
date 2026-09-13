@@ -64,7 +64,10 @@ def groups(store: Store, corpus: str) -> dict[str, dict[str, list[dict]]]:
             dec["span"] += _rows(store, f"SELECT * FROM span WHERE prompt IN ({q}) ORDER BY id", ch)
             dec["reading"] += _rows(store, f"SELECT * FROM reading WHERE prompt IN ({q}) ORDER BY id", ch)
             dec["decomp"] += _rows(store, f"SELECT * FROM decomp WHERE prompt IN ({q})", ch)
-        out["prompts"] = {"prompt": prompts, "import": _rows(store, "SELECT * FROM import WHERE corpus=? ORDER BY id", (cid,))}
+        tags: list[dict] = []
+        for ch in _chunks(pids):
+            tags += _rows(store, f"SELECT * FROM tag WHERE prompt IN ({_in(ch)}) ORDER BY prompt, field", ch)
+        out["prompts"] = {"prompt": prompts, "import": _rows(store, "SELECT * FROM import WHERE corpus=? ORDER BY id", (cid,)), "tag": tags}
         out["decomposition"] = dec
         out["wordings"] = {"realization": _rows(store, "SELECT * FROM realization WHERE corpus=? ORDER BY id", (cid,))}
     cbs = _rows(store, "SELECT * FROM codebook WHERE corpus=? ORDER BY id", (cid,))
@@ -196,6 +199,9 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
                         skipped += 1; continue
                     _insert_rows(con, "prompt", [p])
                 have = {r[0] for r in con.execute("SELECT id FROM prompt WHERE corpus=?", (cid,)).fetchall()}
+                for t in g["prompts"].get("tag", []):
+                    if t["prompt"] in have:
+                        con.execute("INSERT OR REPLACE INTO tag (prompt, field, value) VALUES (?, ?, ?)", (t["prompt"], t["field"], t["value"]))
                 for s in g["decomposition"]["span"]:
                     if s["prompt"] in have:
                         span_map[int(s["id"])] = _insert_rows(con, "span", [s], drop_id=True)[0]

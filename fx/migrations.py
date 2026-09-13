@@ -57,9 +57,33 @@ def step2_imports_as_events(con: sqlite3.Connection) -> None:
         con.execute("UPDATE prompt SET import=? WHERE corpus=? AND import IS NULL", (cur.lastrowid, c[0]))
 
 
+def step3_tags_as_rows(con: sqlite3.Connection) -> None:
+    """Version 3: the tag table filled from the domain, system and task columns and from the scalar keys of prompt.meta,
+    which lose those keys (provenance, use_case, harvest, file and pasted stay)."""
+    import json
+    from .tags import NOT_TAGS, promotable
+    con.execute("CREATE TABLE IF NOT EXISTS tag (prompt TEXT NOT NULL REFERENCES prompt(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (prompt, field))")
+    con.execute("CREATE INDEX IF NOT EXISTS tag_field ON tag(field, value)")
+    for col in ("domain", "system", "task"):
+        con.execute(f"INSERT OR IGNORE INTO tag (prompt, field, value) SELECT id, '{col}', {col} FROM prompt WHERE {col} IS NOT NULL AND {col} != ''")
+    for r in con.execute("SELECT id, meta FROM prompt WHERE meta IS NOT NULL AND meta != '' AND meta != '{}'").fetchall():
+        try:
+            meta = json.loads(r[1])
+        except ValueError:
+            continue
+        promoted = promotable(meta)
+        if not promoted:
+            continue
+        for k, v in promoted.items():
+            con.execute("INSERT OR IGNORE INTO tag (prompt, field, value) VALUES (?, ?, ?)", (r[0], k, v))
+        rest = {k: v for k, v in meta.items() if k not in promoted}
+        con.execute("UPDATE prompt SET meta=? WHERE id=?", (json.dumps(rest, ensure_ascii=False), r[0]))
+
+
 STEPS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "columns added by stages 1 to 3; legacy tables copied into membership and embedding", step1_columns_and_legacy_copies),
     (2, "imports as events: the import table, prompt.import, one synthetic import per corpus for what was there", step2_imports_as_events),
+    (3, "tags as rows: the tag table from the columns and the meta keys", step3_tags_as_rows),
 ]
 CURRENT = STEPS[-1][0]
 

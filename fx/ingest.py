@@ -108,6 +108,7 @@ def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
                 a = store.one("SELECT SUM(m.node IS NOT NULL) aligned, SUM(m.node IS NULL AND m.note='specific') specific, COUNT(*) k FROM membership m JOIN feature f ON f.id=m.unit "
                               "WHERE m.kind='feature' AND m.codebook=? AND f.codebook=? AND f.level='feature'", (seed["id"], cb["id"]))
                 row |= {"aligned": int(a["aligned"] or 0), "specific": int(a["specific"] or 0), "open_cards": row["features"] - int(a["k"] or 0)}
+        row["tags"] = [{"field": r["field"], "values": int(r["k"])} for r in store.rows("SELECT t.field, COUNT(DISTINCT t.value) k FROM tag t JOIN prompt p ON p.id=t.prompt WHERE p.corpus=? GROUP BY t.field ORDER BY t.field", (cid,))]
         j = store.one("SELECT id, kind, status, spent, finished, started FROM job WHERE corpus=? ORDER BY id DESC", (c["name"],))
         row["last_job"] = dict(j) if j else None
         row["running"] = running.get(c["name"])
@@ -153,19 +154,19 @@ def rename(store: Store, name: str, new: str) -> dict:
 
 
 def retag(store: Store, name: str, domain: Optional[str] = None, tags: Optional[dict] = None) -> dict:
-    """The domain on every prompt of the corpus, and any meta tags given (merged into each prompt's meta)."""
+    """Tags on every prompt of the corpus: the domain, and any field given (an empty value removes that field)."""
+    from .tags import set_tags
     cid = _cid(store, name)
+    all_tags = dict(tags or {})
+    if domain is not None:
+        all_tags["domain"] = domain.strip()
     n = 0
-    with store.lock:
-        if domain is not None:
-            n = store.con.execute("UPDATE prompt SET domain=? WHERE corpus=?", (domain.strip() or None, cid)).rowcount
-        if tags:
-            for r in store.con.execute("SELECT id, meta FROM prompt WHERE corpus=?", (cid,)).fetchall():
-                m = json.loads(r["meta"] or "{}") | {k: v for k, v in tags.items() if v not in (None, "")}
-                store.con.execute("UPDATE prompt SET meta=? WHERE id=?", (json.dumps(m, ensure_ascii=False), r["id"]))
-                n += 1
-        store.con.commit()
-    return {"id": cid, "prompts": n}
+    if all_tags:
+        with store.lock:
+            for r in store.con.execute("SELECT id FROM prompt WHERE corpus=?", (cid,)).fetchall():
+                set_tags(store, r["id"], all_tags, con=store.con); n += 1
+            store.con.commit()
+    return {"id": cid, "prompts": n, "fields": sorted(all_tags)}
 
 
 def delete_prompts(store: Store, ids: list[str]) -> dict:
@@ -174,6 +175,7 @@ def delete_prompts(store: Store, ids: list[str]) -> dict:
         return {"deleted": 0}
     q = ",".join("?" * len(ids))
     with store.lock:
+        store.con.execute(f"DELETE FROM tag WHERE prompt IN ({q})", ids)
         store.con.execute(f"DELETE FROM reading WHERE prompt IN ({q})", ids)
         store.con.execute(f"DELETE FROM span WHERE prompt IN ({q})", ids)
         store.con.execute(f"DELETE FROM decomp WHERE prompt IN ({q})", ids)
@@ -212,6 +214,7 @@ def delete(store: Store, name: str) -> dict:
         ids = [r["id"] for r in store.con.execute("SELECT id FROM prompt WHERE corpus=?", (cid,)).fetchall()]
         for i in range(0, len(ids), 500):
             chunk = ids[i:i + 500]; q = ",".join("?" * len(chunk))
+            store.con.execute(f"DELETE FROM tag WHERE prompt IN ({q})", chunk)
             store.con.execute(f"DELETE FROM reading WHERE prompt IN ({q})", chunk)
             store.con.execute(f"DELETE FROM span WHERE prompt IN ({q})", chunk)
             store.con.execute(f"DELETE FROM decomp WHERE prompt IN ({q})", chunk)

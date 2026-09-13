@@ -39,8 +39,9 @@ def test_rename_retag_delete(store):
     with pytest.raises(ValueError):
         I.rename(store, "text2sql", "cypher")
     I.retag(store, "text2sql", domain="sql", tags={"role": "staged"})
-    p = store.one("SELECT domain, meta FROM prompt p JOIN corpus c ON c.id=p.corpus WHERE c.name='text2sql'")
-    assert p["domain"] == "sql" and json.loads(p["meta"])["role"] == "staged"
+    p = store.one("SELECT p.id, p.domain FROM prompt p JOIN corpus c ON c.id=p.corpus WHERE c.name='text2sql'")
+    from fx.tags import tags_of
+    assert p["domain"] == "sql" and tags_of(store, [p["id"]])[p["id"]] == {"domain": "sql", "role": "staged"}
     before = store.one("SELECT COUNT(*) n FROM membership WHERE kind='feature' AND node IS NOT NULL")["n"]
     r = I.delete(store, "text2sql")
     assert r["prompts"] == 1 and r["codebooks"] == 1 and r["features"] == 4      # three features and their group

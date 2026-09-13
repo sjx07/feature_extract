@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS prompt (
     id TEXT PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), sha TEXT NOT NULL, text TEXT NOT NULL,
     domain TEXT, system TEXT, task TEXT, source_id TEXT, meta TEXT, at TEXT NOT NULL, import INTEGER REFERENCES import(id));
 CREATE INDEX IF NOT EXISTS prompt_corpus ON prompt(corpus);
+-- a prompt's tags, one row per field: the fields are data (a source brings its own); domain, system and task are
+-- also kept as columns on prompt, a cache the decomposition and the prompt page read
+CREATE TABLE IF NOT EXISTS tag (
+    prompt TEXT NOT NULL REFERENCES prompt(id), field TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (prompt, field));
+CREATE INDEX IF NOT EXISTS tag_field ON tag(field, value);
 CREATE INDEX IF NOT EXISTS prompt_sha ON prompt(sha);
 
 -- stage 1: decomposition. span holds every located node of a prompt's tree: sections, atoms, material,

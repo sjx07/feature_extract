@@ -20,16 +20,16 @@ from typing import Optional
 from .align.cards import SEED
 from .store import Store
 
-COLUMNS = ("domain", "system", "task")                                     # prompt columns that are fields
-META = ("collection", "bank_source", "role", "family", "stage", "subtask")  # keys of prompt.meta that are fields
-FIELD_ORDER = ("corpus",) + COLUMNS + META + ("polarity",)
+from .tags import field_order
+
+RESERVED = {"kind", "view", "limit", "polarity", "text"}                    # query keys that are not tag fields
 _cache: dict = {}
 
 
 def _version(store: Store) -> tuple:
     """Changes whenever the induction wrote: the cube's cache key."""
     r = store.one("SELECT (SELECT COUNT(*) FROM membership) m, (SELECT MAX(id) FROM feature) f, (SELECT COUNT(*) FROM feature) fn, (SELECT COUNT(*) FROM reading) r, (SELECT COUNT(*) FROM prompt) p, "
-                  "(SELECT MAX(at) FROM membership) a, (SELECT COUNT(*) FROM codebook) c, (SELECT MAX(at) FROM codebook) ca")      # a seed reset deletes and recreates: counts, ids and times all enter
+                  "(SELECT MAX(at) FROM membership) a, (SELECT COUNT(*) FROM codebook) c, (SELECT MAX(at) FROM codebook) ca, (SELECT COUNT(*) FROM tag) t")      # a seed reset deletes and recreates: counts, ids and times all enter
     return (str(store.path), tuple(r))
 
 
@@ -38,23 +38,18 @@ def prompt_fields(store: Store) -> dict[str, dict[str, str]]:
     key = ("prompts",) + _version(store)
     if key in _cache:
         return _cache[key]
-    out: dict[str, dict[str, str]] = {}
-    for r in store.rows("SELECT p.id, k.name corpus, p.domain, p.system, p.task, p.meta FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE k.name != ?", (SEED,)):
-        f = {"corpus": r["corpus"]}
-        for c in COLUMNS:
-            if r[c] not in (None, ""):
-                f[c] = str(r[c])
-        try:
-            m = json.loads(r["meta"] or "{}")
-        except ValueError:
-            m = {}
-        for c in META:
-            v = m.get(c)
-            if isinstance(v, (str, int, float)) and v != "":
-                f[c] = str(v)
-        out[r["id"]] = f
+    out: dict[str, dict[str, str]] = {r["id"]: {"corpus": r["corpus"]} for r in store.rows("SELECT p.id, k.name corpus FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE k.name != ?", (SEED,))}
+    for r in store.rows("SELECT prompt, field, value FROM tag"):
+        f = out.get(r["prompt"])
+        if f is not None and r["field"] != "corpus":
+            f[r["field"]] = r["value"]
     _cache.clear(); _cache[key] = out
     return out
+
+
+def field_names(fields: dict[str, dict[str, str]]) -> list[str]:
+    """The fields in use across the prompts, corpus first, known ones in their order, the rest by name."""
+    return field_order(k for f in fields.values() for k in f)
 
 
 def libraries(store: Store, kind: str) -> dict[int, int]:
@@ -108,7 +103,9 @@ def facts(store: Store, kind: str) -> tuple[list[tuple], dict]:
 def parse_filters(params: dict) -> dict[str, set[str]]:
     """Query parameters to filters: a field's values comma-separated; values within a field are OR, fields AND. `text` is
     the search box: prompts whose text, or one of whose wordings, contains it."""
-    out = {k: {v for v in str(vs).split(",") if v} for k, vs in params.items() if k in FIELD_ORDER and vs}
+    out = {k: {v for v in str(vs).split(",") if v} for k, vs in params.items() if k not in RESERVED and vs and not k.startswith("_")}
+    if str(params.get("polarity") or "").strip():
+        out["polarity"] = {v for v in str(params["polarity"]).split(",") if v}
     if str(params.get("text") or "").strip():
         out["text"] = {str(params["text"]).strip()}
     return out
@@ -147,7 +144,7 @@ def slice(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
     decomposed = {r["prompt"] for r in store.rows("SELECT prompt FROM decomp WHERE status='done'")} & selected
     # facets
     facets = []
-    for name in FIELD_ORDER[:-1]:
+    for name in field_names(fields):
         base = select(fields, filters, skip=name, store=store) if name in filters else selected
         counts: dict[str, int] = defaultdict(int)
         for pid in base:

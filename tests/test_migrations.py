@@ -53,6 +53,30 @@ def test_imports_are_events_and_old_prompts_get_a_synthetic_one(tmp_path):
     con = sqlite3.connect(tmp_path / "s.db")
     con.execute("INSERT INTO prompt (id, corpus, sha, text, at) VALUES ('old', 1, 'x', 'old text', 'then')"); con.execute("PRAGMA user_version = 1"); con.commit(); con.close()
     s2 = Store(tmp_path / "s.db")
-    assert s2.applied == [2]
+    assert s2.applied == list(range(2, migrations.CURRENT + 1))
     old = s2.one("SELECT i.kind, i.added FROM prompt p JOIN import i ON i.id=p.import WHERE p.id='old'")
     assert old["kind"] == "unrecorded" and old["added"] == 1
+
+
+def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
+    from fx import tags
+    from fx.corpus import add_prompts, get_corpus
+    s = Store(tmp_path / "s.db")
+    cid = get_corpus(s, "c1")
+    add_prompts(s, cid, [{"id": "p1", "text": "one", "domain": "d", "system": "sys", "meta": {"role": "staged", "use_case": {"x": 1}, "pasted": True, "n": 3}}])
+    t = tags.tags_of(s, ["p1"])["p1"]
+    assert t == {"domain": "d", "system": "sys", "role": "staged", "n": "3"}
+    assert s.one("SELECT meta FROM prompt WHERE id='p1'")["meta"] == '{"use_case": {"x": 1}, "pasted": true}'
+    tags.set_tags(s, "p1", {"domain": "e", "role": "", "family": "qa"})
+    assert tags.tags_of(s, ["p1"])["p1"] == {"domain": "e", "system": "sys", "n": "3", "family": "qa"} and s.one("SELECT domain FROM prompt WHERE id='p1'")["domain"] == "e"
+    assert [f["field"] for f in tags.fields(s)] == ["domain", "family", "system", "n"]
+    # an old store's columns and meta keys become rows when step 3 runs
+    con = sqlite3.connect(tmp_path / "s.db")
+    con.execute("INSERT INTO prompt (id, corpus, sha, text, at, task, meta) VALUES ('old', 1, 'x', 'old', 'then', 'qa', '{\"stage\": \"verify\", \"provenance\": {\"a\": 1}}')")
+    con.execute("PRAGMA user_version = 2"); con.commit(); con.close()
+    s2 = Store(tmp_path / "s.db")
+    assert s2.applied == list(range(3, migrations.CURRENT + 1)) and tags.tags_of(s2, ["old"])["old"] == {"task": "qa", "stage": "verify"} and s2.one("SELECT meta FROM prompt WHERE id='old'")["meta"] == '{"provenance": {"a": 1}}'
+    from fx import cube
+    f = cube.prompt_fields(s2)
+    assert f["p1"] == {"corpus": "c1", "domain": "e", "system": "sys", "n": "3", "family": "qa"} and cube.field_names(f)[:3] == ["corpus", "domain", "task"]
+    assert cube.parse_filters({"family": "qa", "kind": "guidance", "n": "3", "_x": "1"}) == {"family": {"qa"}, "n": {"3"}}

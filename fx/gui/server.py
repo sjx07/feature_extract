@@ -250,7 +250,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             if j["status"] == "running" and not live.get(j["id"], True):
                 j["status"] = "stale"
         from ..corpus import imports
-        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "imports": imports(store, limit=30), "default_model": DEFAULT_MODEL, "models": models()}
+        from ..tags import fields
+        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "imports": imports(store, limit=30), "fields": fields(store), "default_model": DEFAULT_MODEL, "models": models()}
 
     @app.post("/api/jobs/{jid}/close")
     def api_job_close(jid: int):
