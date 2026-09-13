@@ -187,7 +187,8 @@ async function viewIngest(main, sub, q) {
         <label>name</label><input type="text" name="name" placeholder="for a new corpus">
         <label>domain</label><input type="text" name="domain" placeholder="tag every prompt with this domain; for a FACET jsonl also keeps only this domain">
         <label>or paste a prompt</label><textarea name="text"></textarea>
-        <span></span><span><button class="btn" type="submit">import</button> <span id="istatus" class="muted"></span></span></form></div>`;
+        <span></span><span><button class="btn" type="submit">import</button> <span id="istatus" class="muted"></span></span></form>
+      ${d.imports && d.imports.length ? `<div class="block" style="margin-top:22px"><div class="t">imports</div><table class="list"><tr><th>when</th><th>corpus</th><th>from</th><th class="n">added</th><th class="n">skipped</th></tr>${d.imports.map(i => `<tr><td class="muted" style="font-size:12.5px">${esc(i.at)}</td><td>${esc(i.corpus_name)}</td><td style="font-size:12.5px">${esc(i.kind)}${i.path ? ` <span class="mono muted">${esc(i.path)}</span>` : ''}${i.domain ? ` <span class="muted">domain ${esc(i.domain)}</span>` : ''}</td><td class="n">${fmt(i.added)}</td><td class="n">${fmt(i.skipped)}</td></tr>`).join('')}</table></div>` : ''}</div>`;
   } else if (sub === 'profiles') {
     const cur = d.profiles.find(p => p.name === (q.profile || 'default')) || d.profiles[0];
     const row = (k, label, hint) => `<tr><td>${label}</td><td><input type="text" name="${k}" value="${esc(cur.params[k] ?? '')}" list="models" style="width:100%"></td><td class="muted" style="font-size:12px">${hint}</td></tr>`;

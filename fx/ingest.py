@@ -216,6 +216,7 @@ def delete(store: Store, name: str) -> dict:
             store.con.execute(f"DELETE FROM span WHERE prompt IN ({q})", chunk)
             store.con.execute(f"DELETE FROM decomp WHERE prompt IN ({q})", chunk)
         store.con.execute("DELETE FROM prompt WHERE corpus=?", (cid,))
+        store.con.execute("DELETE FROM import WHERE corpus=?", (cid,))
         store.con.execute("DELETE FROM corpus WHERE id=?", (cid,))
         store.con.commit()
     return {"id": cid, "name": name, "prompts": len(ids), "codebooks": len(cbs), "features": len(feats)}

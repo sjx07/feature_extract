@@ -47,8 +47,19 @@ def step1_columns_and_legacy_copies(con: sqlite3.Connection) -> None:
             con.execute(copy)
 
 
+def step2_imports_as_events(con: sqlite3.Connection) -> None:
+    """Version 2: the import table; prompt.import; prompts that arrived before imports were recorded get one synthetic
+    import per corpus, dated the corpus's creation, naming the corpus's source."""
+    _add_columns(con, "prompt", (("import", "INTEGER REFERENCES import(id)"),))
+    for c in con.execute("SELECT c.id, c.source, c.at FROM corpus c WHERE EXISTS (SELECT 1 FROM prompt p WHERE p.corpus=c.id AND p.import IS NULL)").fetchall():
+        n = con.execute("SELECT COUNT(*) FROM prompt WHERE corpus=? AND import IS NULL", (c[0],)).fetchone()[0]
+        cur = con.execute("INSERT INTO import (corpus, kind, path, domain, added, skipped, unwrapped, at) VALUES (?, 'unrecorded', ?, NULL, ?, 0, 0, ?)", (c[0], c[1], n, c[2]))
+        con.execute("UPDATE prompt SET import=? WHERE corpus=? AND import IS NULL", (cur.lastrowid, c[0]))
+
+
 STEPS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "columns added by stages 1 to 3; legacy tables copied into membership and embedding", step1_columns_and_legacy_copies),
+    (2, "imports as events: the import table, prompt.import, one synthetic import per corpus for what was there", step2_imports_as_events),
 ]
 CURRENT = STEPS[-1][0]
 

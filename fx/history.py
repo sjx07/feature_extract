@@ -64,7 +64,7 @@ def groups(store: Store, corpus: str) -> dict[str, dict[str, list[dict]]]:
             dec["span"] += _rows(store, f"SELECT * FROM span WHERE prompt IN ({q}) ORDER BY id", ch)
             dec["reading"] += _rows(store, f"SELECT * FROM reading WHERE prompt IN ({q}) ORDER BY id", ch)
             dec["decomp"] += _rows(store, f"SELECT * FROM decomp WHERE prompt IN ({q})", ch)
-        out["prompts"] = {"prompt": prompts}
+        out["prompts"] = {"prompt": prompts, "import": _rows(store, "SELECT * FROM import WHERE corpus=? ORDER BY id", (cid,))}
         out["decomposition"] = dec
         out["wordings"] = {"realization": _rows(store, "SELECT * FROM realization WHERE corpus=? ORDER BY id", (cid,))}
     cbs = _rows(store, "SELECT * FROM codebook WHERE corpus=? ORDER BY id", (cid,))
@@ -187,8 +187,11 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
             skipped = 0
             span_map: dict[int, int] = {}; rz_map: dict[int, int] = {}
             if corpus != SEED:
+                imp_map: dict[int, int] = {}
+                for im in g["prompts"].get("import", []):
+                    imp_map[int(im["id"])] = _insert_rows(con, "import", [dict(im) | {"corpus": cid}], drop_id=True)[0]
                 for p in g["prompts"]["prompt"]:
-                    p = dict(p) | {"corpus": cid}
+                    p = dict(p) | {"corpus": cid, "import": imp_map.get(int(p["import"])) if p.get("import") is not None else None}
                     if con.execute("SELECT 1 FROM prompt WHERE id=?", (p["id"],)).fetchone():
                         skipped += 1; continue
                     _insert_rows(con, "prompt", [p])

@@ -49,8 +49,18 @@ def get_corpus(store: Store, name: str, source: str = "") -> int:
     return store.insert("corpus", {"name": name, "source": source, "at": now()})
 
 
-def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict]) -> dict:
-    """rows: {text, id?, domain?, system?, task?, source_id?, meta?}. Returns counts."""
+def record_import(store: Store, corpus_id: int, kind: str, path: Optional[str], domain: Optional[str] = None) -> int:
+    """The import event, before its prompts land; `add_prompts` fills in the counts."""
+    return store.insert("import", {"corpus": corpus_id, "kind": kind, "path": path, "domain": domain, "at": now()})
+
+
+def imports(store: Store, corpus: Optional[str] = None, limit: int = 50) -> list[dict]:
+    return [dict(r) for r in store.rows("SELECT i.*, k.name corpus_name FROM import i JOIN corpus k ON k.id=i.corpus" + (" WHERE k.name=?" if corpus else "") + " ORDER BY i.id DESC LIMIT ?",
+                                        ([corpus] if corpus else []) + [limit])]
+
+
+def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict], imp: Optional[int] = None) -> dict:
+    """rows: {text, id?, domain?, system?, task?, source_id?, meta?}. Returns counts, written to the import row too."""
     have = {r["sha"] for r in store.rows("SELECT sha FROM prompt WHERE corpus=?", (corpus_id,))}
     elsewhere = {r["sha"] for r in store.rows("SELECT sha FROM prompt WHERE corpus!=?", (corpus_id,))}
     added = skipped = dup = unwrapped = 0
@@ -71,13 +81,16 @@ def add_prompts(store: Store, corpus_id: int, rows: Iterable[dict]) -> dict:
         if store.one("SELECT 1 FROM prompt WHERE id=?", (pid,)):
             pid = f"{corpus_id}:{h[:16]}"
         store.insert("prompt", {"id": pid, "corpus": corpus_id, "sha": h, "text": text, "domain": r.get("domain"), "system": r.get("system"),
-                                "task": r.get("task"), "source_id": r.get("source_id"), "meta": meta, "at": now()})
+                                "task": r.get("task"), "source_id": r.get("source_id"), "meta": meta, "at": now(), "import": imp})
         have.add(h)
         added += 1
         unwrapped += bool(how)
         if h in elsewhere:
             dup += 1
-    return {"added": added, "skipped": skipped, "duplicates_elsewhere": dup, "unwrapped": unwrapped}
+    if imp is not None:
+        with store.lock:
+            store.con.execute("UPDATE import SET added=?, skipped=?, unwrapped=? WHERE id=?", (added, skipped, unwrapped, imp)); store.con.commit()
+    return {"added": added, "skipped": skipped, "duplicates_elsewhere": dup, "unwrapped": unwrapped, "import": imp}
 
 
 def _facet_rows(path: Path, domain: Optional[str]) -> Iterable[dict]:
@@ -96,30 +109,34 @@ def _facet_rows(path: Path, domain: Optional[str]) -> Iterable[dict]:
                "meta": {k: r[k] for k in ("collection", "bank_source", "role", "stage", "subtask", "family", "use_case") if k in r} | {"provenance": prov}}
 
 
-def _file_rows(files: Iterable[tuple[str, bytes]]) -> Iterable[dict]:
+def _file_rows(files: Iterable[tuple[str, bytes]], domain: Optional[str] = None) -> Iterable[dict]:
     for name, data in files:
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        yield {"id": None, "text": text, "source_id": name, "meta": {"file": name}}
+        yield {"id": None, "text": text, "source_id": name, "domain": domain, "meta": {"file": name}}
 
 
 def import_path(store: Store, path: "str | Path", name: str, domain: Optional[str] = None) -> dict:
     p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
     cid = get_corpus(store, name, str(p))
     if p.is_file() and p.suffix == ".jsonl":
-        return {"corpus": name, **add_prompts(store, cid, _facet_rows(p, domain))}
+        imp = record_import(store, cid, "jsonl", str(p), domain)
+        return {"corpus": name, **add_prompts(store, cid, _facet_rows(p, domain), imp)}
     if p.is_file() and p.suffix == ".zip":
         with zipfile.ZipFile(p) as z:
             files = [(n, z.read(n)) for n in z.namelist() if Path(n).suffix in TEXT_SUFFIXES and not n.endswith("/")]
-        return {"corpus": name, **add_prompts(store, cid, _file_rows(files))}
+        imp = record_import(store, cid, "zip", str(p), domain)
+        return {"corpus": name, **add_prompts(store, cid, _file_rows(files, domain), imp)}
     if p.is_dir():
         files = [(str(f.relative_to(p)), f.read_bytes()) for f in sorted(p.rglob("*")) if f.is_file() and f.suffix in TEXT_SUFFIXES]
-        return {"corpus": name, **add_prompts(store, cid, _file_rows(files))}
-    if p.is_file():
-        return {"corpus": name, **add_prompts(store, cid, _file_rows([(p.name, p.read_bytes())]))}
-    raise FileNotFoundError(str(p))
+        imp = record_import(store, cid, "folder", str(p), domain)
+        return {"corpus": name, **add_prompts(store, cid, _file_rows(files, domain), imp)}
+    imp = record_import(store, cid, "file", str(p), domain)
+    return {"corpus": name, **add_prompts(store, cid, _file_rows([(p.name, p.read_bytes())], domain), imp)}
 
 
 def import_upload(store: Store, filename: str, data: bytes, name: str, domain: Optional[str] = None) -> dict:
@@ -135,17 +152,21 @@ def import_upload(store: Store, filename: str, data: bytes, name: str, domain: O
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as fh:
             fh.write("\n".join(json.dumps(r, ensure_ascii=False) for r in rows))
             tmp = fh.name
-        return {"corpus": name, **add_prompts(store, cid, _facet_rows(Path(tmp), domain))}
+        imp = record_import(store, cid, "jsonl", filename, domain)
+        return {"corpus": name, **add_prompts(store, cid, _facet_rows(Path(tmp), domain), imp)}
     if suffix == ".zip":
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             files = [(n, z.read(n)) for n in z.namelist() if Path(n).suffix in TEXT_SUFFIXES and not n.endswith("/")]
-        return {"corpus": name, **add_prompts(store, cid, _file_rows(files))}
-    return {"corpus": name, **add_prompts(store, cid, _file_rows([(filename, data)]))}
+        imp = record_import(store, cid, "zip", filename, domain)
+        return {"corpus": name, **add_prompts(store, cid, _file_rows(files, domain), imp)}
+    imp = record_import(store, cid, "file", filename, domain)
+    return {"corpus": name, **add_prompts(store, cid, _file_rows([(filename, data)], domain), imp)}
 
 
-def import_text(store: Store, text: str, name: str = "scratch") -> dict:
+def import_text(store: Store, text: str, name: str = "scratch", domain: Optional[str] = None) -> dict:
     cid = get_corpus(store, name, "pasted")
-    return {"corpus": name, **add_prompts(store, cid, [{"id": None, "text": text, "meta": {"pasted": True}}])}
+    imp = record_import(store, cid, "paste", None, domain)
+    return {"corpus": name, **add_prompts(store, cid, [{"id": None, "text": text, "domain": domain, "meta": {"pasted": True}}], imp)}
 
 
 def corpora(store: Store) -> list[dict]:

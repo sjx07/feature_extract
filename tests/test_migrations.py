@@ -39,3 +39,20 @@ def test_a_store_ahead_of_the_code_refuses(tmp_path):
     con = sqlite3.connect(p); con.execute(f"PRAGMA user_version = {migrations.CURRENT + 50}"); con.commit(); con.close()
     with pytest.raises(migrations.StoreAhead):
         Store(p)
+
+
+def test_imports_are_events_and_old_prompts_get_a_synthetic_one(tmp_path):
+    from fx.corpus import import_text, imports
+    s = Store(tmp_path / "s.db")
+    r = import_text(s, "a pasted prompt", name="c1", domain="d")
+    assert r["import"] == 1 and r["added"] == 1
+    im = imports(s)[0]
+    assert im["kind"] == "paste" and im["added"] == 1 and im["corpus_name"] == "c1" and im["domain"] == "d"
+    assert s.one("SELECT import, domain FROM prompt")["import"] == 1 and s.one("SELECT domain FROM prompt")["domain"] == "d"
+    # a prompt row from before imports were recorded gets a synthetic import when the step runs again on an old store
+    con = sqlite3.connect(tmp_path / "s.db")
+    con.execute("INSERT INTO prompt (id, corpus, sha, text, at) VALUES ('old', 1, 'x', 'old text', 'then')"); con.execute("PRAGMA user_version = 1"); con.commit(); con.close()
+    s2 = Store(tmp_path / "s.db")
+    assert s2.applied == [2]
+    old = s2.one("SELECT i.kind, i.added FROM prompt p JOIN import i ON i.id=p.import WHERE p.id='old'")
+    assert old["kind"] == "unrecorded" and old["added"] == 1

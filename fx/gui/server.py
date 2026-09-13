@@ -61,7 +61,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             saved.write_bytes(data)
             return import_path(store, saved, name, domain or None)
         if text.strip():
-            return import_text(store, text, name)
+            return import_text(store, text, name, domain or None)
         raise HTTPException(400, "a path, a file or a text is required")
 
     @app.get("/api/models")
@@ -249,7 +249,8 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         for j in js:
             if j["status"] == "running" and not live.get(j["id"], True):
                 j["status"] = "stale"
-        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+        from ..corpus import imports
+        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "imports": imports(store, limit=30), "default_model": DEFAULT_MODEL, "models": models()}
 
     @app.post("/api/jobs/{jid}/close")
     def api_job_close(jid: int):

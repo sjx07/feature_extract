@@ -34,9 +34,13 @@ CREATE INDEX IF NOT EXISTS call_stage ON call(stage);
 -- corpora and their prompts, as imported
 CREATE TABLE IF NOT EXISTS corpus (
     id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, source TEXT, at TEXT NOT NULL);
+-- an import is an event: what landed in a corpus, from where, when; a prompt names the import that brought it
+CREATE TABLE IF NOT EXISTS import (
+    id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, path TEXT, domain TEXT,
+    added INTEGER DEFAULT 0, skipped INTEGER DEFAULT 0, unwrapped INTEGER DEFAULT 0, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS prompt (
     id TEXT PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), sha TEXT NOT NULL, text TEXT NOT NULL,
-    domain TEXT, system TEXT, task TEXT, source_id TEXT, meta TEXT, at TEXT NOT NULL);
+    domain TEXT, system TEXT, task TEXT, source_id TEXT, meta TEXT, at TEXT NOT NULL, import INTEGER REFERENCES import(id));
 CREATE INDEX IF NOT EXISTS prompt_corpus ON prompt(corpus);
 CREATE INDEX IF NOT EXISTS prompt_sha ON prompt(sha);
 
