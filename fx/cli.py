@@ -6,7 +6,7 @@
     fx llm models                                    where each known model resolves
 
 The workspace (store, logs, uploads, exports) comes from --workspace or FX_WORKSPACE, default
-runs/dev; see fx.paths. Hosted keys
+runs/dev; see fx.core.paths. Hosted keys
 come from the environment: OPENAI_API_KEY, OPENROUTER_API_KEY, or FX_API_KEY with
 --base-url for any other OpenAI-compatible server.
 """
@@ -18,8 +18,8 @@ import os
 import sys
 from pathlib import Path
 
-from .llm.registry import DEFAULT_MODEL
-from .library.codebook import COLDSTART_MODEL as L_COLDSTART
+from fx.core.llm.registry import DEFAULT_MODEL
+from fx.ingest.induce.codebook import COLDSTART_MODEL as L_COLDSTART
 
 
 def _detach() -> None:
@@ -96,21 +96,23 @@ def main(argv=None) -> int:
         p = hist.add_parser(name)
         p.add_argument("--corpus", default=None); p.add_argument("--id", type=int, default=None, help="a checkpoint id (restore, diff, branch)")
         p.add_argument("--name", default=None, help="the branch's workspace name (branch)"); p.add_argument("--note", default=None)
+    st = sub.add_parser("store", help="the store's schema version; migrate = open it, which runs the steps").add_subparsers(dest="sub", required=True)
+    st.add_parser("version"); st.add_parser("migrate")
     srv = sub.add_parser("serve"); srv.add_argument("--port", type=int, default=8780); srv.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args(argv)
 
-    from .paths import Workspace
-    from .store import Store
+    from fx.core.paths import Workspace
+    from fx.core.store import Store
     ws = Workspace.from_env(a.workspace)
     if a.cmd == "llm" and a.sub == "models":
-        from .llm.registry import models
+        from fx.core.llm.registry import models
         for r in models():
             print(f"{r['model']:36s} {r['endpoint']:11s} ${r['price_in']:.4f}/M in  ${r['price_out']:.4f}/M out{'  (default)' if r['default'] else ''}")
         return 0
     store = Store(ws.store_path)
     if a.cmd == "import":
         import shutil
-        from .corpus import import_path
+        from fx.data.corpus import import_path
         src = Path(a.path)
         if src.is_file():                                   # keep a verbatim copy beside the site's uploads
             kept = ws.upload_dir(a.name) / src.name
@@ -119,13 +121,13 @@ def main(argv=None) -> int:
         print(json.dumps(import_path(store, a.path, a.name, a.domain)))
         return 0
     if a.cmd == "preview":
-        from .decompose import preview
+        from fx.ingest.decompose import preview
         print(json.dumps(preview(store, a.corpus, a.model, a.workers, a.ids.split(",") if a.ids else None, a.redo, getattr(a, "limit", 0)), indent=1))
         return 0
     if a.cmd == "decompose":
-        from . import jobs
-        from .decompose import prompt_ids
-        from .llm import Client
+        from fx.core import jobs
+        from fx.ingest.decompose import prompt_ids
+        from fx.core.llm import Client
         ids = a.ids.split(",") if a.ids else None
         total = len(prompt_ids(store, a.corpus, ids, a.redo, a.limit))
         _detach()
@@ -137,7 +139,7 @@ def main(argv=None) -> int:
         print(f"job {jid} {status}")
         return 0 if status == "done" else 1
     if a.cmd == "library":
-        from . import library as L
+        from fx.ingest import induce as L
         if a.sub == "collapse":
             print(json.dumps(L.collapse(store, a.corpus, a.kind))); return 0
         if a.sub == "status":
@@ -146,8 +148,8 @@ def main(argv=None) -> int:
             print(json.dumps(L.relook(store, a.corpus, a.kind, a.version))); return 0
         if a.sub == "preview":
             print(json.dumps(L.preview(store, a.corpus, a.kind, a.step, a.model), indent=1)); return 0
-        from .jobs import run_library, setup_logging, start
-        from .llm import Client
+        from fx.core.jobs import run_library, setup_logging, start
+        from fx.core.llm import Client
         setup_logging(ws)
         model = a.model or (L.COLDSTART_MODEL if a.sub == "coldstart" else DEFAULT_MODEL)
         rounds, codebook_model = getattr(a, "rounds", 5), getattr(a, "codebook_model", None)
@@ -158,7 +160,7 @@ def main(argv=None) -> int:
         print(status); print(open(ws.job_log(jid)).read().strip().split("\n")[-2][:600] if status == "done" else "")
         return 0 if status == "done" else 1
     if a.cmd == "align":
-        from . import align as A
+        from fx.ingest import generalize as A
         if a.sub == "status":
             print(json.dumps(A.status(store, a.kind), indent=1)); return 0
         if a.sub == "regroup":
@@ -166,8 +168,8 @@ def main(argv=None) -> int:
         if a.sub == "reset":
             live = store.one("SELECT id FROM job WHERE kind LIKE 'align:%' AND status='running'")
             print(json.dumps(A.reset(store, a.kind) | ({"warning": f"job {live['id']} shows as running; stop it first if it is"} if live else {}))); return 0
-        from .jobs import run_align, setup_logging, start
-        from .llm import Client
+        from fx.core.jobs import run_align, setup_logging, start
+        from fx.core.llm import Client
         setup_logging(ws)
         model = a.model or DEFAULT_MODEL
         _detach()
@@ -177,8 +179,12 @@ def main(argv=None) -> int:
                            workers=a.workers, effort=a.effort, rounds=a.rounds, echo=_echo)
         print(status)
         return 0 if status == "done" else 1
+    if a.cmd == "store":
+        from fx.core import migrations
+        print(f"{ws.store_path}: schema version {store.version}, the code knows {migrations.CURRENT}" + (f"; applied now: {store.applied}" if store.applied else ""))
+        return 0
     if a.cmd == "history":
-        from . import history as H
+        from fx.data import history as H
         if a.sub == "checkpoint":
             print(json.dumps(H.checkpoint(store, ws, a.corpus or "seed", note=a.note or "by hand"), indent=1))
         elif a.sub == "list":
@@ -192,7 +198,7 @@ def main(argv=None) -> int:
             print(json.dumps(H.branch(store, ws, a.id, a.name or f"branch-{a.id}"), indent=1))
         return 0
     if a.cmd == "serve":
-        from .gui.server import serve
+        from fx.gui.server import serve
         serve(ws, a.host, a.port)
         return 0
     if a.sub == "spend":
@@ -201,7 +207,7 @@ def main(argv=None) -> int:
             print(f"{r['model']:36s} calls {r['n']:6d} cached {r['cached'] or 0:6d} in {r['prompt_tokens'] or 0:10d} out {r['completion_tokens'] or 0:9d}  ${r['cost'] or 0:.4f}")
         print(f"total ${store.spent():.4f}")
         return 0
-    from .llm import Client
+    from fx.core.llm import Client
     c = Client(store, budget=a.budget, base_url=a.base_url)
     prompt = a.prompt if a.sub == "call" else "Reply with the single word: ready."
     extra = {"reasoning": {"enabled": False}} if a.reasoning_off else None

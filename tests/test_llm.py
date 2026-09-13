@@ -9,8 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_server import FakeServer, reply  # noqa: E402
 
-from fx.llm import BudgetExceeded, Client, cost, price, resolve, run_many, with_fallback  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.core.llm import BudgetExceeded, Client, cost, price, resolve, run_many, with_fallback  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def store(tmp_path):
 
 def fast(client):
     """no backoff sleeps in tests"""
-    import fx.llm.client as c
+    import fx.core.llm.client as c
     c.time.sleep = lambda s: None
     return client
 
@@ -198,7 +198,7 @@ def test_cli_spend_and_models(store, capsys, tmp_path):
 
 
 def test_openrouter_routing_excludes_looping_upstreams(monkeypatch):
-    from fx.llm.registry import provider_body
+    from fx.core.llm.registry import provider_body
     monkeypatch.delenv("FX_PROVIDER_IGNORE", raising=False); monkeypatch.delenv("FX_PROVIDER_SORT", raising=False); monkeypatch.delenv("FX_PROVIDER", raising=False)
     assert provider_body("deepseek/deepseek-v4-flash-0731") == {"provider": {"only": ["Wafer"], "allow_fallbacks": False}}       # the default: one upstream
     monkeypatch.setenv("FX_PROVIDER", "")
@@ -221,7 +221,7 @@ def test_ledger_keeps_the_upstream_and_the_billed_cost(store):
 
 def test_client_sends_the_upstream_routing_for_every_call(tmp_path, monkeypatch):
     """The routing body is the endpoint's, not the caller's: every call carries it, and a caller's extra_body wins on overlap."""
-    import fx.llm.client as cl
+    import fx.core.llm.client as cl
     monkeypatch.setattr(cl, "provider_body", lambda model, base_url=None: {"provider": {"only": ["Wafer"], "allow_fallbacks": False}, "reasoning": {"effort": "high"}})
     store = Store(tmp_path / "s.db")
     with FakeServer() as srv:

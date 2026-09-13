@@ -8,9 +8,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_cube import two_libraries_and_a_global  # noqa: E402
 
-from fx import history as H  # noqa: E402
-from fx.paths import Workspace  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.data import history as H  # noqa: E402
+from fx.core.paths import Workspace  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -65,7 +65,7 @@ def test_restore_brings_the_corpus_back_and_prunes_the_seed(ws):
     # the seed line restores too: its memberships that point at features now gone are dropped
     sk = H.checkpoint(store, ws, "seed")
     r2 = H.restore(store, ws, sk["id"])
-    assert r2["corpus"] == "seed" and store.one("SELECT COUNT(*) n FROM feature f JOIN codebook c ON c.id=f.codebook JOIN corpus k ON k.id=c.corpus WHERE k.name='seed' AND f.level='feature'")["n"] == 1
+    assert r2["corpus"] == "seed" and store.one("SELECT COUNT(*) n FROM feature f JOIN codebook c ON c.id=f.codebook WHERE c.scope='seed' AND f.level='feature'")["n"] == 1
 
 
 def test_branch_is_a_workspace_restored_to_the_checkpoint(ws):
@@ -99,3 +99,26 @@ def test_site_history_endpoints(ws, tmp_path):
     assert c.post("/api/history/9/restore", json={}).status_code == 404
     b2 = c.post("/api/history/1/branch", json={"name": "b1"}).json()
     assert Path(b2["workspace"]).name == "b1" and c.post("/api/history/1/branch", json={"name": "b1"}).status_code == 400
+
+
+def test_a_checkpoint_from_an_older_schema_restores_with_derived_tags(ws):
+    from fx.data import history as H
+    from fx.core import migrations
+    from fx.data.tags import tags_of
+    store = Store(ws.store_path)
+    a, b, g = two_libraries_and_a_global(store)
+    pid = store.one("SELECT p.id FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE k.name='sql'")["id"]
+    ck = H.checkpoint(store, ws, "sql")
+    assert store.one("SELECT schema FROM checkpoint WHERE id=?", (ck["id"],))["schema"] == migrations.CURRENT
+    # an old blob: the prompt with its tags as columns and meta keys, no tag rows, no import
+    old = H.load(ws, dict(store.one("SELECT * FROM checkpoint WHERE id=?", (ck["id"],))) | {"tree": ck["tree"]})
+    for p in old["prompts"]["prompt"]:
+        p["domain"] = "sql-old"; p["meta"] = json.dumps({"role": "staged", "provenance": {"a": 1}}); p.pop("import", None)
+    old["prompts"].pop("tag"); old["prompts"].pop("import")
+    tree = dict(ck["tree"]); tree["prompts"] = H.write_blob(ws, old["prompts"])[0]
+    cid = store.insert("checkpoint", {"corpus": "sql", "job": None, "at": "then", "note": "old", "tree": tree, "counts": ck["counts"], "bytes": 0, "schema": 1})
+    r = H.restore(store, ws, cid)
+    assert r["restored"]["prompts"] == 1
+    assert tags_of(store, [pid])[pid] == {"domain": "sql-old", "role": "staged"} and store.one("SELECT domain, meta FROM prompt WHERE id=?", (pid,))["meta"] == '{"provenance": {"a": 1}}'
+    with pytest.raises(RuntimeError):
+        H.load(ws, {"id": 9, "tree": tree, "schema": migrations.CURRENT + 1})

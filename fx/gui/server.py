@@ -18,18 +18,19 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import decompose, jobs
-from .. import library as L
-from .. import align as A
-from .. import cube as C
-from .. import settings as S
-from .. import ingest as I
-from .. import history as H
-from ..corpus import corpora, import_path, import_text
-from ..llm.registry import DEFAULT_MODEL, LOCAL_URL, models
-from ..llm import Client
-from ..paths import Workspace
-from ..store import Store, now
+from fx.ingest import decompose
+from fx.core import jobs
+from fx.ingest import induce as L
+from fx.ingest import generalize as A
+from fx.views import library as C
+from fx.core import settings as S
+from fx.views import ingest as I
+from fx.data import history as H
+from fx.data.corpus import corpora, import_path, import_text
+from fx.core.llm.registry import DEFAULT_MODEL, LOCAL_URL, models
+from fx.core.llm import Client
+from fx.core.paths import Workspace
+from fx.core.store import Store, now
 
 STATIC = Path(__file__).resolve().parent / "static"
 
@@ -61,7 +62,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
             saved.write_bytes(data)
             return import_path(store, saved, name, domain or None)
         if text.strip():
-            return import_text(store, text, name)
+            return import_text(store, text, name, domain or None)
         raise HTTPException(400, "a path, a file or a text is required")
 
     @app.get("/api/models")
@@ -125,7 +126,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def api_jobs():
-        from ..jobs import reap
+        from fx.core.jobs import reap
         reap(store)
         return [dict(r) | {"recent": json.loads(r["recent"] or "[]"), "params": json.loads(r["params"] or "{}")} for r in store.rows("SELECT * FROM job ORDER BY id DESC LIMIT 50")]
 
@@ -249,7 +250,9 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         for j in js:
             if j["status"] == "running" and not live.get(j["id"], True):
                 j["status"] = "stale"
-        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "default_model": DEFAULT_MODEL, "models": models()}
+        from fx.data.corpus import imports
+        from fx.data.tags import fields
+        return {"corpora": I.corpora(store, kind, ws), "profiles": I.profiles(store), "jobs": js, "imports": imports(store, limit=30), "fields": fields(store), "default_model": DEFAULT_MODEL, "models": models()}
 
     @app.post("/api/jobs/{jid}/close")
     def api_job_close(jid: int):
@@ -344,7 +347,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
                     jobs.finish(store, ws, jid, "stopped"); running.pop(jid, None); continue
                 client = Client(store, budget=budget, base_url=prof.get("base_url") or None, max_connections=int(prof.get("workers") or 128) + 64)
                 try:
-                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM corpus WHERE name='seed'") else None
+                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM codebook WHERE scope='seed'") else None
                 except Exception as e:  # noqa: BLE001  a checkpoint failure must not stop the run
                     logging.getLogger("fx").warning("checkpoint before job %d failed: %s", jid, e)
                 jobs.run_profile(store, ws, client, jid, n, prof, kind=kind, stop=stop)

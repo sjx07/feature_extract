@@ -10,11 +10,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_cube import two_libraries_and_a_global  # noqa: E402
 
-from fx import ingest as I  # noqa: E402
-from fx import jobs  # noqa: E402
-from fx.corpus import import_text  # noqa: E402
-from fx.paths import Workspace  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.views import ingest as I  # noqa: E402
+from fx.core import jobs  # noqa: E402
+from fx.data.corpus import import_text  # noqa: E402
+from fx.core.paths import Workspace  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -39,8 +39,9 @@ def test_rename_retag_delete(store):
     with pytest.raises(ValueError):
         I.rename(store, "text2sql", "cypher")
     I.retag(store, "text2sql", domain="sql", tags={"role": "staged"})
-    p = store.one("SELECT domain, meta FROM prompt p JOIN corpus c ON c.id=p.corpus WHERE c.name='text2sql'")
-    assert p["domain"] == "sql" and json.loads(p["meta"])["role"] == "staged"
+    p = store.one("SELECT p.id, p.domain FROM prompt p JOIN corpus c ON c.id=p.corpus WHERE c.name='text2sql'")
+    from fx.data.tags import tags_of
+    assert p["domain"] == "sql" and tags_of(store, [p["id"]])[p["id"]] == {"domain": "sql", "role": "staged"}
     before = store.one("SELECT COUNT(*) n FROM membership WHERE kind='feature' AND node IS NOT NULL")["n"]
     r = I.delete(store, "text2sql")
     assert r["prompts"] == 1 and r["codebooks"] == 1 and r["features"] == 4      # three features and their group
@@ -69,9 +70,9 @@ def test_run_profile_runs_the_stages_in_order_and_stops(tmp_path, monkeypatch):
     ws = Workspace(tmp_path / "ws"); store = Store(ws.store_path)
     import_text(store, "a prompt", name="c1")
     order = []
-    import fx.decompose as D
-    import fx.library as L
-    import fx.align as A
+    import fx.ingest.decompose as D
+    import fx.ingest.induce as L
+    import fx.ingest.generalize as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: ["p1"])
     monkeypatch.setattr(A, "libraries", lambda st, k: [{"corpus": 1}, {"corpus": 2}])           # two corpora with a codebook: alignment runs
     monkeypatch.setattr(D, "run", lambda *a, **k: order.append("decompose") or {"stopped": False, "failed": []})
@@ -105,9 +106,9 @@ def test_site_ingest_endpoints(tmp_path, monkeypatch):
     assert c.post("/api/corpus/nope/retag", json={"domain": "d"}).status_code == 404
     p = c.get("/api/cube?view=prompts&corpus=sql").json()
     assert p["prompts"] == 1 and p["list"][0]["corpus"] == "sql" and p["list"][0]["readings"] == 3 and {f["name"] for f in p["list"][0]["features"]} >= {"reason stepwise"}
-    import fx.decompose as D
-    import fx.library as L
-    import fx.align as A
+    import fx.ingest.decompose as D
+    import fx.ingest.induce as L
+    import fx.ingest.generalize as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
     monkeypatch.setattr(L, "run_round", lambda *a, **k: {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda *a, **k: {"steps": [], "stopped_because": "settled"})
@@ -151,9 +152,9 @@ def test_estimate_sums_the_stages_and_a_profile_kind_runs_both_kinds(tmp_path, m
     e2 = I.estimate(store, "sql", I.DEFAULT_PROFILE)
     assert e2["decompose"] == 0 and e2["codebook"] >= 0 and e2["align"] > 0 and e2["total"] == round(e2["decompose"] + e2["codebook"] + e2["align"], 2)
     order = []
-    import fx.decompose as D
-    import fx.library as L
-    import fx.align as A
+    import fx.ingest.decompose as D
+    import fx.ingest.induce as L
+    import fx.ingest.generalize as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
     monkeypatch.setattr(A, "libraries", lambda st, k: [{"corpus": 1}, {"corpus": 2}])
     monkeypatch.setattr(L, "run_round", lambda st, cl, corpus, kind, **k: order.append(("codebook", kind)) or {"steps": [], "stopped_because": "settled"})
@@ -173,9 +174,9 @@ def test_a_lone_corpus_skips_alignment_and_is_not_pending_for_it(tmp_path, monke
     c = I.corpora(store)[0]
     assert c["alone"] and c["stages"] == ["done", "done", "none"] and not c["pending"]
     order = []
-    import fx.decompose as D
-    import fx.library as L
-    import fx.align as A
+    import fx.ingest.decompose as D
+    import fx.ingest.induce as L
+    import fx.ingest.generalize as A
     monkeypatch.setattr(D, "prompt_ids", lambda *a, **k: [])
     monkeypatch.setattr(L, "run_round", lambda *a, **k: order.append("codebook") or {"steps": [], "stopped_because": "settled"})
     monkeypatch.setattr(A, "run_round", lambda *a, **k: order.append("align") or {"steps": [], "stopped_because": "settled"})

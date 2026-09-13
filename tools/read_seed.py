@@ -11,7 +11,7 @@ from pathlib import Path
 
 ws = sys.argv[1]; kind = sys.argv[2] if len(sys.argv) > 2 else "guidance"
 c = sqlite3.connect(f"file:{Path(ws) / 'store.db'}?mode=ro", uri=True); c.row_factory = sqlite3.Row
-seed = c.execute("SELECT id FROM corpus WHERE name='seed'").fetchone()[0]
+seed = None      # the seed codebook has scope 'seed' and no corpus (schema version 4)
 cb = c.execute("SELECT id FROM codebook WHERE corpus=? AND kind=?", (seed, kind)).fetchone()[0]
 corpus_name = {r["id"]: r["name"] for r in c.execute("SELECT id, name FROM corpus")}
 cards = {r["id"]: dict(r) for r in c.execute("SELECT f.id, f.name, f.definition, cb.corpus FROM feature f JOIN codebook cb ON cb.id=f.codebook WHERE f.level='feature' AND cb.corpus != ? AND cb.kind=? AND cb.id IN (SELECT MAX(id) FROM codebook GROUP BY corpus, kind)", (seed, kind))}

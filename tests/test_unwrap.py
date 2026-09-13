@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-from fx.corpus import import_path, import_text
-from fx.store import Store
-from fx.unwrap import unwrap
+from fx.data.corpus import import_path, import_text
+from fx.core.store import Store
+from fx.data.unwrap import unwrap
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPT = "You are a SQLite expert tasked with writing SQL for a given natural language user query. Your task is to write valid SQLite to answer the user questions for the tables provided."

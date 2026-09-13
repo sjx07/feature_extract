@@ -6,9 +6,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_server import FakeServer, reply  # noqa: E402
 
-from fx.corpus import import_path  # noqa: E402
-from fx.paths import Workspace  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.data.corpus import import_path  # noqa: E402
+from fx.core.paths import Workspace  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,7 +49,7 @@ def test_cli_decompose_is_a_job_with_a_log(tmp_path):
 def test_site_imports_by_path_and_lists_models(tmp_path):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    from fx.llm.registry import DEFAULT_MODEL
+    from fx.core.llm.registry import DEFAULT_MODEL
     c = TestClient(make_app(Workspace(tmp_path / "w")))
     r = c.post("/api/import", data={"name": "cypher", "path": str(ROOT / "data" / "corpora" / "facet" / "text2cypher.jsonl")}).json()
     assert r["added"] == 145

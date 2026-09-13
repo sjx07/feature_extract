@@ -11,10 +11,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_server import FakeServer, reply  # noqa: E402
 
-from fx import library as L  # noqa: E402
-from fx.corpus import import_text  # noqa: E402
-from fx.llm import Client  # noqa: E402
-from fx.store import Store  # noqa: E402
+from fx.ingest import induce as L  # noqa: E402
+from fx.data.corpus import import_text  # noqa: E402
+from fx.core.llm import Client  # noqa: E402
+from fx.core.store import Store  # noqa: E402
 
 
 @pytest.fixture
@@ -227,12 +227,12 @@ def test_round_runs_the_growing_loop(store):
 def test_site_library_endpoints_and_job(tmp_path):
     from fastapi.testclient import TestClient
     from fx.gui.server import make_app
-    from fx.paths import Workspace
+    from fx.core.paths import Workspace
     ws = Workspace(tmp_path / "w"); store = Store(ws.store_path); seed(store)
     with FakeServer() as srv:
         import fx.gui.server as srvmod
         srvmod.Client = lambda store, **kw: Client(store, base_url=srv.url)
-        sys.modules["fx.library.encoders"].encoder = lambda model=None: fake_encoder      # the package attribute `embed` is the function; the module is in sys.modules
+        sys.modules["fx.ingest.induce.encoders"].encoder = lambda model=None: fake_encoder      # the package attribute `embed` is the function; the module is in sys.modules
         c = TestClient(make_app(ws, store))
         L.collapse(store, "c", "guidance"); srv.script = [cb_reply(store)]
         r = c.post("/api/library/jobs", json={"corpus": "c", "kind": "guidance", "step": "coldstart", "model": "m"}).json()

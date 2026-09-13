@@ -29,7 +29,7 @@ budget is spent. `run_many` runs a list of prompts on a thread pool with per-end
 admission and a progress callback; `with_fallback` chains model settings.
 
 ```python
-from fx.store import Store
+from fx.core.store import Store
 from fx.llm import Client, run_many
 
 store = Store("runs/demo/store.db")
@@ -153,6 +153,24 @@ PYTHONPATH=. python -m fx.cli -w runs/full align cluster
 PYTHONPATH=. python -m fx.cli -w runs/full align round --model deepseek/deepseek-v4-flash-0731 --codebook-model gpt-5.6-sol
 PYTHONPATH=. python -m fx.cli -w runs/full align status
 ```
+
+## Layout, the store's version, history
+
+```
+fx/core     store, paths, jobs, settings, migrations, llm/, util/     what every stage and the site share
+fx/data     corpus, unwrap, tags, history                             corpora and prompts as data
+fx/ingest   decompose/, induce/, generalize/, loop/                   the stages: readings, a corpus's codebook, the seed
+fx/views    library, ingest                                           the two pages' queries
+fx/gui      server, static/                                           the site
+```
+
+A store carries a schema version (`PRAGMA user_version`); opening it runs the numbered steps in `fx/core/migrations.py`
+above its version, each in one transaction, and a store ahead of the code refuses to open. `fx store version` prints
+both. Since version 6: imports are events (`import`), tags are rows (`tag`, with domain / system / task also cached as
+prompt columns), the seed is a codebook with scope `seed` and no corpus, and the legacy tables are gone.
+
+`fx history checkpoint | list | diff | restore | branch`: a checkpoint is one corpus's rows (or the seed's line) as
+content-addressed blobs under `runs/history/objects`; a run from the site checkpoints its corpus and the seed first.
 
 ## Tests
 
