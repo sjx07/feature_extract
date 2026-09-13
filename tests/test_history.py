@@ -65,7 +65,7 @@ def test_restore_brings_the_corpus_back_and_prunes_the_seed(ws):
     # the seed line restores too: its memberships that point at features now gone are dropped
     sk = H.checkpoint(store, ws, "seed")
     r2 = H.restore(store, ws, sk["id"])
-    assert r2["corpus"] == "seed" and store.one("SELECT COUNT(*) n FROM feature f JOIN codebook c ON c.id=f.codebook JOIN corpus k ON k.id=c.corpus WHERE k.name='seed' AND f.level='feature'")["n"] == 1
+    assert r2["corpus"] == "seed" and store.one("SELECT COUNT(*) n FROM feature f JOIN codebook c ON c.id=f.codebook WHERE c.scope='seed' AND f.level='feature'")["n"] == 1
 
 
 def test_branch_is_a_workspace_restored_to_the_checkpoint(ws):

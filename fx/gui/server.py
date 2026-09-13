@@ -346,7 +346,7 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
                     jobs.finish(store, ws, jid, "stopped"); running.pop(jid, None); continue
                 client = Client(store, budget=budget, base_url=prof.get("base_url") or None, max_connections=int(prof.get("workers") or 128) + 64)
                 try:
-                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM corpus WHERE name='seed'") else None
+                    H.checkpoint(store, ws, n, job=jid, note="before the run"); H.checkpoint(store, ws, "seed", job=jid, note="before the run") if store.one("SELECT 1 FROM codebook WHERE scope='seed'") else None
                 except Exception as e:  # noqa: BLE001  a checkpoint failure must not stop the run
                     logging.getLogger("fx").warning("checkpoint before job %d failed: %s", jid, e)
                 jobs.run_profile(store, ws, client, jid, n, prof, kind=kind, stop=stop)

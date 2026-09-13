@@ -1,11 +1,10 @@
-"""The seed library: a codebook on the corpus named 'seed' whose feature rows are the global features. Reading it gives
+"""The seed library: the codebook with scope 'seed' (no corpus) whose feature rows are the global features. Reading it gives
 the tree (groups, globals) with each global's members per corpus and its support summed over them; a member is a
 per-corpus feature, whose own support already includes its variants."""
 from __future__ import annotations
 
-from ..corpus import get_corpus
 from ..store import Store, now
-from .cards import SEED, cards
+from .cards import cards, seed_codebook_id
 
 
 ASPECT_GROUPS = {
@@ -20,11 +19,10 @@ ASPECT_GROUPS = {
 def seed_codebook(store: Store, kind: str) -> int:
     """The seed codebook, born with its groups: one per aspect. A cross-domain library's grouping is the aspect list every
     corpus library already carries, so the naming call picks a group and never invents one."""
-    cid = get_corpus(store, SEED, "align")
-    r = store.one("SELECT id FROM codebook WHERE corpus=? AND kind=?", (cid, kind))
-    if r:
-        return int(r["id"])
-    cb = store.insert("codebook", {"corpus": cid, "kind": kind, "version": 1, "model": None, "round": 0, "notes": "the seed library: global features aligned across corpora", "at": now()})
+    have = seed_codebook_id(store, kind)
+    if have is not None:
+        return have
+    cb = store.insert("codebook", {"corpus": None, "scope": "seed", "kind": kind, "version": 1, "model": None, "round": 0, "notes": "the seed library: global features aligned across corpora", "at": now()})
     for aspect, definition in ASPECT_GROUPS.get(kind, ASPECT_GROUPS["guidance"]):
         store.insert("feature", {"codebook": cb, "level": "group", "parent": None, "prev": None, "aspect": aspect, "name": aspect, "definition": definition, "polarity": None, "examples": [], "round": 0})
     return cb
@@ -33,11 +31,9 @@ def seed_codebook(store: Store, kind: str) -> int:
 def reset(store: Store, kind: str) -> dict:
     """Delete the seed of a kind: its globals and groups, memberships, flags, alignments and codebook row. The cards'
     embeddings stay (they key on the feature, not the seed), so the next round is born fresh without re-embedding."""
-    cid = get_corpus(store, SEED, "align")
-    r = store.one("SELECT id FROM codebook WHERE corpus=? AND kind=?", (cid, kind))
-    if not r:
+    cb = seed_codebook_id(store, kind)
+    if cb is None:
         return {"codebook": None, "deleted": {}}
-    cb = int(r["id"])
     with store.lock:
         d = {"flags": store.con.execute("DELETE FROM flag WHERE codebook=?", (cb,)).rowcount,
              "memberships": store.con.execute("DELETE FROM membership WHERE kind='feature' AND codebook=?", (cb,)).rowcount,

@@ -80,3 +80,29 @@ def test_tags_are_rows_and_the_columns_a_cache(tmp_path):
     f = cube.prompt_fields(s2)
     assert f["p1"] == {"corpus": "c1", "domain": "e", "system": "sys", "n": "3", "family": "qa"} and cube.field_names(f)[:3] == ["corpus", "domain", "task"]
     assert cube.parse_filters({"family": "qa", "kind": "guidance", "n": "3", "_x": "1"}) == {"family": {"qa"}, "n": {"3"}}
+
+
+def test_the_seed_is_a_scope_and_an_old_seed_corpus_migrates(tmp_path):
+    from test_align import SQL, seed_library
+    from fx.align.seed import seed_codebook
+    s = Store(tmp_path / "s.db")
+    seed_library(s, "sql", SQL)
+    cb = seed_codebook(s, "guidance")
+    r = s.one("SELECT corpus, scope FROM codebook WHERE id=?", (cb,))
+    assert r["corpus"] is None and r["scope"] == "seed" and seed_codebook(s, "guidance") == cb and not s.one("SELECT 1 FROM corpus WHERE name='seed'")
+    # an old store: a corpus named seed with the seed codebook on it, and a NOT NULL corpus column
+    p = tmp_path / "old.db"
+    con = sqlite3.connect(p)
+    con.executescript("""CREATE TABLE corpus (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, source TEXT, at TEXT NOT NULL);
+        CREATE TABLE codebook (id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL, model TEXT, round INTEGER NOT NULL, notes TEXT, anchor_agreement REAL, at TEXT NOT NULL);
+        CREATE UNIQUE INDEX codebook_version ON codebook(corpus, kind, version);
+        CREATE TABLE feature (id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), level TEXT NOT NULL, parent INTEGER, prev INTEGER, aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT, round INTEGER);
+        INSERT INTO corpus VALUES (1, 'sql', 'x', 'then'), (2, 'seed', 'align', 'then');
+        INSERT INTO codebook VALUES (1, 1, 'guidance', 1, 'm', 0, '', NULL, 'then'), (2, 2, 'guidance', 1, NULL, 0, 'seed', NULL, 'then');
+        INSERT INTO feature VALUES (5, 2, 'feature', NULL, NULL, NULL, 'a global', 'd', 'require', '[]', 1);""")
+    con.commit(); con.close()
+    s2 = Store(p)
+    assert 4 in s2.applied
+    rows = {int(r["id"]): (r["corpus"], r["scope"]) for r in s2.rows("SELECT id, corpus, scope FROM codebook")}
+    assert rows == {1: (1, "corpus"), 2: (None, "seed")} and not s2.one("SELECT 1 FROM corpus WHERE name='seed'")
+    assert s2.one("SELECT codebook FROM feature WHERE id=5")["codebook"] == 2 and seed_codebook(s2, "guidance") == 2

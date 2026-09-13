@@ -9,13 +9,18 @@ from typing import Optional
 
 from ..store import Store
 
-SEED = "seed"        # the corpus name the seed codebook lives on
+SEED = "seed"        # the name of the seed's line in jobs and history; the seed codebook itself is the one with scope 'seed'
+
+
+def seed_codebook_id(store: Store, kind: str) -> Optional[int]:
+    r = store.one("SELECT id FROM codebook WHERE scope='seed' AND kind=?", (kind,))
+    return int(r["id"]) if r else None
 
 
 def libraries(store: Store, kind: str) -> list[dict]:
     """The latest codebook per corpus of this kind, the seed excluded."""
-    return [dict(r) for r in store.rows("SELECT c.id codebook, c.corpus, k.name corpus_name, c.version FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.kind=? AND k.name != ? "
-                                        "AND c.id = (SELECT MAX(id) FROM codebook x WHERE x.corpus=c.corpus AND x.kind=c.kind) ORDER BY k.name", (kind, SEED))]
+    return [dict(r) for r in store.rows("SELECT c.id codebook, c.corpus, k.name corpus_name, c.version FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.kind=? AND c.scope='corpus' "
+                                        "AND c.id = (SELECT MAX(id) FROM codebook x WHERE x.corpus=c.corpus AND x.kind=c.kind) ORDER BY k.name", (kind,))]
 
 
 def cards(store: Store, kind: str, corpus: Optional[str] = None) -> list[dict]:

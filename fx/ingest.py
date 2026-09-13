@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from .align.cards import SEED
+from .align.cards import SEED, seed_codebook_id
 from .llm.registry import DEFAULT_MODEL
 from .store import Store, now
 
@@ -87,10 +87,11 @@ def close_job(store: Store, jid: int, why: str = "closed by hand: no progress, t
 # ---- corpora with their stage strip
 def corpora(store: Store, kind: str = "guidance", ws=None) -> list[dict]:
     running = {j["corpus"]: j["kind"] for j in running_jobs(store, ws) if j["live"]}
-    seed = store.one("SELECT c.id FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE k.name=? AND c.kind=?", (SEED, kind))
-    n_libs = int(store.one("SELECT COUNT(DISTINCT c.corpus) n FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.kind=? AND k.name != ?", (kind, SEED))["n"])   # alignment needs two
+    seed_id = seed_codebook_id(store, kind)
+    seed = {"id": seed_id} if seed_id is not None else None
+    n_libs = int(store.one("SELECT COUNT(DISTINCT corpus) n FROM codebook WHERE kind=? AND scope='corpus'", (kind,))["n"])   # alignment needs two
     out = []
-    for c in store.rows("SELECT id, name, source, at FROM corpus WHERE name != ? ORDER BY name", (SEED,)):
+    for c in store.rows("SELECT id, name, source, at FROM corpus ORDER BY name"):
         cid = int(c["id"])
         p = store.one("SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) chars FROM prompt WHERE corpus=?", (cid,))
         dom = store.one("SELECT domain, COUNT(*) k FROM prompt WHERE corpus=? GROUP BY domain ORDER BY k DESC", (cid,))

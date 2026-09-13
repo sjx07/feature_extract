@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS decomp (
 --   support is a join. The wording level's unit.
 -- feature: every codebook as a tree in one table: level 'group', 'feature' and 'variant' rows, parent = the row
 --   above; a codebook only grows (`round` says when a node was added). A corpus's codebook holds its features; the
---   codebook on the corpus named 'seed' holds the global features, whose units are the corpora's features.
+--   codebook with scope 'seed' (corpus NULL) holds the global features, whose units are the corpora's features.
 -- membership: unit -> node (NULL = open) under one codebook, for either unit kind ('realization' for wordings on a
 --   corpus codebook, 'feature' for per-corpus features on the seed); note says 'specific' (nothing else in the
 --   corpus, or no other corpus, says it yet), 'named' (placed by the naming call that made its node), or
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS decomp (
 -- embedding: one vector per unit of either kind.
 -- flag: what the read-only judge reported: a misfit member (realization or other = the member), a split, or two
 --   siblings it could not tell apart; standing = raised again after it was acted on, the member stays.
--- codebook: the codebook row: corpus, kind, model, the anchor agreement measured on it.
+-- codebook: the codebook row: scope 'corpus' with its corpus, or 'seed' with none; kind, model, the anchor agreement measured on it.
 -- assignment, vector, fvector: legacy tables of earlier code, copied into membership and embedding on open; alignment (a
 --   pre-refactor branch's, never holding a global) is left as is.
 CREATE TABLE IF NOT EXISTS realization (
@@ -87,9 +87,10 @@ CREATE TABLE IF NOT EXISTS realization (
     sample TEXT, domain_terms TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS realization_key ON realization(corpus, kind, key);
 CREATE TABLE IF NOT EXISTS codebook (
-    id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL,
-    model TEXT, round INTEGER NOT NULL, notes TEXT, anchor_agreement REAL, at TEXT NOT NULL);
+    id INTEGER PRIMARY KEY, corpus INTEGER REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL,
+    model TEXT, round INTEGER NOT NULL, notes TEXT, anchor_agreement REAL, at TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'corpus');
 CREATE UNIQUE INDEX IF NOT EXISTS codebook_version ON codebook(corpus, kind, version);
+CREATE UNIQUE INDEX IF NOT EXISTS codebook_seed ON codebook(kind, version) WHERE corpus IS NULL;
 CREATE TABLE IF NOT EXISTS feature (
     id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), level TEXT NOT NULL, parent INTEGER REFERENCES feature(id),
     prev INTEGER REFERENCES feature(id), aspect TEXT, name TEXT NOT NULL, definition TEXT, polarity TEXT, examples TEXT, round INTEGER);

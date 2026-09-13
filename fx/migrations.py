@@ -80,10 +80,33 @@ def step3_tags_as_rows(con: sqlite3.Connection) -> None:
         con.execute("UPDATE prompt SET meta=? WHERE id=?", (json.dumps(rest, ensure_ascii=False), r[0]))
 
 
+def step4_seed_as_a_scope(con: sqlite3.Connection) -> None:
+    """Version 4: codebook.scope ('corpus' | 'seed'), codebook.corpus nullable (the table is rebuilt: SQLite cannot drop a
+    NOT NULL), seed codebooks get scope 'seed' and no corpus, and the corpus row named 'seed' goes."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(codebook)")}
+    if "scope" not in cols:
+        con.execute("""CREATE TABLE codebook_new (
+            id INTEGER PRIMARY KEY, corpus INTEGER REFERENCES corpus(id), kind TEXT NOT NULL, version INTEGER NOT NULL,
+            model TEXT, round INTEGER NOT NULL, notes TEXT, anchor_agreement REAL, at TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'corpus')""")
+        con.execute("INSERT INTO codebook_new (id, corpus, kind, version, model, round, notes, anchor_agreement, at) SELECT id, corpus, kind, version, model, round, notes, anchor_agreement, at FROM codebook")
+        con.execute("DROP INDEX IF EXISTS codebook_version")
+        con.execute("DROP TABLE codebook")
+        con.execute("ALTER TABLE codebook_new RENAME TO codebook")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS codebook_version ON codebook(corpus, kind, version)")
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS codebook_seed ON codebook(kind, version) WHERE corpus IS NULL")
+    seed = con.execute("SELECT id FROM corpus WHERE name='seed'").fetchone()
+    if seed:
+        con.execute("UPDATE codebook SET scope='seed', corpus=NULL WHERE corpus=?", (seed[0],))
+        con.execute("DELETE FROM prompt WHERE corpus=?", (seed[0],))
+        con.execute("DELETE FROM import WHERE corpus=?", (seed[0],))
+        con.execute("DELETE FROM corpus WHERE id=?", (seed[0],))
+
+
 STEPS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "columns added by stages 1 to 3; legacy tables copied into membership and embedding", step1_columns_and_legacy_copies),
     (2, "imports as events: the import table, prompt.import, one synthetic import per corpus for what was there", step2_imports_as_events),
     (3, "tags as rows: the tag table from the columns and the meta keys", step3_tags_as_rows),
+    (4, "the seed as a codebook scope, not a corpus", step4_seed_as_a_scope),
 ]
 CURRENT = STEPS[-1][0]
 

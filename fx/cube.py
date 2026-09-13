@@ -17,7 +17,7 @@ import json
 from collections import defaultdict
 from typing import Optional
 
-from .align.cards import SEED
+from .align.cards import SEED, seed_codebook_id
 from .store import Store
 
 from .tags import field_order
@@ -38,7 +38,7 @@ def prompt_fields(store: Store) -> dict[str, dict[str, str]]:
     key = ("prompts",) + _version(store)
     if key in _cache:
         return _cache[key]
-    out: dict[str, dict[str, str]] = {r["id"]: {"corpus": r["corpus"]} for r in store.rows("SELECT p.id, k.name corpus FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE k.name != ?", (SEED,))}
+    out: dict[str, dict[str, str]] = {r["id"]: {"corpus": r["corpus"]} for r in store.rows("SELECT p.id, k.name corpus FROM prompt p JOIN corpus k ON k.id=p.corpus")}
     for r in store.rows("SELECT prompt, field, value FROM tag"):
         f = out.get(r["prompt"])
         if f is not None and r["field"] != "corpus":
@@ -54,13 +54,12 @@ def field_names(fields: dict[str, dict[str, str]]) -> list[str]:
 
 def libraries(store: Store, kind: str) -> dict[int, int]:
     """corpus id -> its latest codebook of the kind, the seed excluded."""
-    return {int(r["corpus"]): int(r["id"]) for r in store.rows("SELECT c.id, c.corpus FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE c.kind=? AND k.name != ? "
-                                                              "AND c.id=(SELECT MAX(id) FROM codebook x WHERE x.corpus=c.corpus AND x.kind=c.kind)", (kind, SEED))}
+    return {int(r["corpus"]): int(r["id"]) for r in store.rows("SELECT c.id, c.corpus FROM codebook c WHERE c.kind=? AND c.scope='corpus' "
+                                                              "AND c.id=(SELECT MAX(id) FROM codebook x WHERE x.corpus=c.corpus AND x.kind=c.kind)", (kind,))}
 
 
 def seed_codebook(store: Store, kind: str) -> Optional[int]:
-    r = store.one("SELECT c.id FROM codebook c JOIN corpus k ON k.id=c.corpus WHERE k.name=? AND c.kind=?", (SEED, kind))
-    return int(r["id"]) if r else None
+    return seed_codebook_id(store, kind)
 
 
 def hierarchy(store: Store, kind: str) -> dict:
@@ -71,7 +70,7 @@ def hierarchy(store: Store, kind: str) -> dict:
     if not cbs:
         return {"nodes": {}, "to_feature": {}, "to_global": {}, "libs": libs, "seed": seed, "corpus_of": {}}
     q = ",".join("?" * len(cbs))
-    nodes = {int(r["id"]): dict(r) for r in store.rows(f"SELECT f.id, f.codebook, f.level, f.parent, f.aspect, f.name, f.definition, f.polarity, f.round, k.name corpus FROM feature f JOIN codebook c ON c.id=f.codebook JOIN corpus k ON k.id=c.corpus WHERE f.codebook IN ({q}) AND f.level IN ('group','feature','variant')", cbs)}      # a retired row is not a node
+    nodes = {int(r["id"]): dict(r) for r in store.rows(f"SELECT f.id, f.codebook, f.level, f.parent, f.aspect, f.name, f.definition, f.polarity, f.round, k.name corpus FROM feature f JOIN codebook c ON c.id=f.codebook LEFT JOIN corpus k ON k.id=c.corpus WHERE f.codebook IN ({q}) AND f.level IN ('group','feature','variant')", cbs)}      # a retired row is not a node; the seed has no corpus
     to_feature = {i: (n["parent"] if n["level"] == "variant" else i) for i, n in nodes.items() if n["level"] in ("feature", "variant")}
     to_global: dict[int, int] = {}
     if seed:

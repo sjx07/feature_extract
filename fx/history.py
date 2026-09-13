@@ -50,11 +50,19 @@ def _chunks(ids: list, n: int = 500):
 
 def groups(store: Store, corpus: str) -> dict[str, dict[str, list[dict]]]:
     """The corpus's rows by table group. For the seed: its codebook line only (memberships of every corpus's features)."""
+    if corpus == SEED:
+        out: dict[str, dict[str, list[dict]]] = {"corpus": {"corpus": []}}
+        cbs = _rows(store, "SELECT * FROM codebook WHERE scope='seed' ORDER BY id")
+        cb_ids = [int(x["id"]) for x in cbs]
+        q = _in(cb_ids)
+        out["codebook"] = {"codebook": cbs, "feature": _rows(store, f"SELECT * FROM feature WHERE codebook IN ({q}) ORDER BY id", cb_ids),
+                           "membership": _rows(store, f"SELECT * FROM membership WHERE codebook IN ({q}) ORDER BY unit", cb_ids), "flag": _rows(store, f"SELECT * FROM flag WHERE codebook IN ({q}) ORDER BY id", cb_ids)}
+        return out
     c = store.one("SELECT * FROM corpus WHERE name=?", (corpus,))
     if not c:
         raise KeyError(corpus)
     cid = int(c["id"])
-    out: dict[str, dict[str, list[dict]]] = {"corpus": {"corpus": [dict(c)]}}
+    out = {"corpus": {"corpus": [dict(c)]}}
     if corpus != SEED:
         prompts = _rows(store, "SELECT * FROM prompt WHERE corpus=? ORDER BY rowid", (cid,))
         pids = [p["id"] for p in prompts]
@@ -167,7 +175,7 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
     if live_corpora and corpus in live_corpora:
         raise RuntimeError(f"a job is running on {corpus}; stop it first")
     g = load(ws, ck)
-    exists = store.one("SELECT id FROM corpus WHERE name=?", (corpus,))
+    exists = store.one("SELECT id FROM corpus WHERE name=?", (corpus,)) if corpus != SEED else None
     seed_n0 = int(store.one("SELECT COUNT(*) n FROM membership WHERE kind='feature'")["n"])
     if exists and corpus != SEED:
         ingest.delete(store, corpus)                                                       # takes the seed rows of its features with it
@@ -175,14 +183,14 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
         con = store.con
         try:
             con.execute("BEGIN")
-            # corpus row: keep the id when free, else a fresh one
-            crow = dict(g["corpus"]["corpus"][0])
-            if corpus == SEED and exists:
-                cid = int(exists["id"])
-                for cb in [int(x["id"]) for x in con.execute("SELECT id FROM codebook WHERE corpus=?", (cid,)).fetchall()]:
+            if corpus == SEED:
+                cid = None                                                                 # the seed's codebooks have no corpus; the current ones go
+                for cb in [int(x["id"]) for x in con.execute("SELECT id FROM codebook WHERE scope='seed'").fetchall()]:
                     con.execute("DELETE FROM flag WHERE codebook=?", (cb,)); con.execute("DELETE FROM membership WHERE codebook=?", (cb,))
                     con.execute("DELETE FROM feature WHERE codebook=?", (cb,)); con.execute("DELETE FROM codebook WHERE id=?", (cb,))
             else:
+                # corpus row: keep the id when free, else a fresh one
+                crow = dict(g["corpus"]["corpus"][0])
                 taken = con.execute("SELECT 1 FROM corpus WHERE id=?", (crow["id"],)).fetchone()
                 if taken:
                     crow.pop("id")
@@ -216,7 +224,8 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
                         _insert_rows(con, "decomp", [d])
             cb_map: dict[int, int] = {}; f_map: dict[int, int] = {}
             for cb in g["codebook"]["codebook"]:
-                cb_map[int(cb["id"])] = _insert_rows(con, "codebook", [dict(cb) | {"corpus": cid}], drop_id=True)[0]
+                cb_row = dict(cb) | {"corpus": cid, "scope": "seed" if corpus == SEED else "corpus"}
+                cb_map[int(cb["id"])] = _insert_rows(con, "codebook", [cb_row], drop_id=True)[0]
             feats = sorted(g["codebook"]["feature"], key=lambda x: int(x["id"]))
             for f in feats:                                                                 # two passes: a group born later than its features, or a retired
                 ex = json.loads(f.get("examples") or "[]")                                  # feature folded into a younger node, points at a higher id
