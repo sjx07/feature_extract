@@ -110,12 +110,19 @@ def step5_drop_legacy_tables(con: sqlite3.Connection) -> None:
         con.execute(f"DROP TABLE IF EXISTS {t}")
 
 
+def step6_checkpoint_schema(con: sqlite3.Connection) -> None:
+    """Version 6: a checkpoint records the schema version its blobs were written under; the ones from before are version 1."""
+    _add_columns(con, "checkpoint", (("schema", "INTEGER"),))
+    con.execute("UPDATE checkpoint SET schema=1 WHERE schema IS NULL")
+
+
 STEPS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "columns added by stages 1 to 3; legacy tables copied into membership and embedding", step1_columns_and_legacy_copies),
     (2, "imports as events: the import table, prompt.import, one synthetic import per corpus for what was there", step2_imports_as_events),
     (3, "tags as rows: the tag table from the columns and the meta keys", step3_tags_as_rows),
     (4, "the seed as a codebook scope, not a corpus", step4_seed_as_a_scope),
     (5, "the legacy tables assignment, vector, fvector and alignment dropped after a last copy", step5_drop_legacy_tables),
+    (6, "checkpoints record their schema version", step6_checkpoint_schema),
 ]
 CURRENT = STEPS[-1][0]
 

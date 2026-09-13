@@ -133,7 +133,8 @@ def checkpoint(store: Store, ws, corpus: str, job: Optional[int] = None, note: O
     last = store.one("SELECT id, tree FROM checkpoint WHERE corpus=? ORDER BY id DESC", (corpus,))
     if last and json.loads(last["tree"]) == tree:
         return {"id": int(last["id"]), "corpus": corpus, "tree": tree, "counts": counts, "bytes": size, "repeated": True}
-    cid = store.insert("checkpoint", {"corpus": corpus, "job": job, "at": now(), "note": note, "tree": tree, "counts": counts, "bytes": size})
+    from .migrations import CURRENT
+    cid = store.insert("checkpoint", {"corpus": corpus, "job": job, "at": now(), "note": note, "tree": tree, "counts": counts, "bytes": size, "schema": CURRENT})
     return {"id": cid, "corpus": corpus, "tree": tree, "counts": counts, "bytes": size, "repeated": False}
 
 
@@ -144,8 +145,34 @@ def checkpoints(store: Store, corpus: Optional[str] = None) -> list[dict]:
     return rows
 
 
+def translate(g: dict[str, dict[str, list[dict]]], schema: int) -> dict[str, dict[str, list[dict]]]:
+    """Rows written under an older schema, brought to the current one: before version 3 a prompt's tags were its columns
+    and meta keys (tag rows are derived); before 2 there were no import rows (a prompt's import is NULL); before 4 a codebook
+    had no scope (restore sets it); 5 dropped tables no blob ever held."""
+    from .tags import promotable
+    if schema < 3 and "prompts" in g:
+        tags = []
+        for p in g["prompts"]["prompt"]:
+            t = {k: p.get(k) for k in ("domain", "system", "task") if p.get(k) not in (None, "")}
+            try:
+                meta = json.loads(p.get("meta") or "{}")
+            except ValueError:
+                meta = {}
+            t |= promotable(meta)
+            p["meta"] = json.dumps({k: v for k, v in meta.items() if k not in t}, ensure_ascii=False)
+            tags += [{"prompt": p["id"], "field": k, "value": v} for k, v in t.items()]
+        g["prompts"]["tag"] = tags
+        g["prompts"].setdefault("import", [])
+    return g
+
+
 def load(ws, ck: dict) -> dict[str, dict[str, list[dict]]]:
-    return {name: read_blob(ws, sha) for name, sha in ck["tree"].items()}
+    from .migrations import CURRENT
+    g = {name: read_blob(ws, sha) for name, sha in ck["tree"].items()}
+    schema = int(ck.get("schema") or 1)
+    if schema > CURRENT:
+        raise RuntimeError(f"checkpoint #{ck.get('id')} was written under schema version {schema}; this code knows {CURRENT}")
+    return translate(g, schema) if schema < CURRENT else g
 
 
 # ---- restore, with fresh ids and the seed pruned
@@ -172,6 +199,7 @@ def restore(store: Store, ws, checkpoint_id: int, live_corpora: Optional[set] = 
         raise KeyError(checkpoint_id)
     ck = dict(ck) | {"tree": json.loads(ck["tree"])}
     corpus = ck["corpus"]
+    _ = ck.get("schema")
     if live_corpora and corpus in live_corpora:
         raise RuntimeError(f"a job is running on {corpus}; stop it first")
     g = load(ws, ck)

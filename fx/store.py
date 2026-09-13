@@ -109,7 +109,8 @@ CREATE TABLE IF NOT EXISTS profile (
 
 -- history: a checkpoint of one corpus (or the seed line) as content-addressed blobs under runs/history/objects
 CREATE TABLE IF NOT EXISTS checkpoint (
-    id INTEGER PRIMARY KEY, corpus TEXT NOT NULL, job INTEGER, at TEXT NOT NULL, note TEXT, tree TEXT NOT NULL, counts TEXT NOT NULL, bytes INTEGER);
+    id INTEGER PRIMARY KEY, corpus TEXT NOT NULL, job INTEGER, at TEXT NOT NULL, note TEXT, tree TEXT NOT NULL, counts TEXT NOT NULL, bytes INTEGER,
+    schema INTEGER);
 
 -- runs of any stage, followed by the GUI
 CREATE TABLE IF NOT EXISTS job (
