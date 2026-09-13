@@ -74,6 +74,19 @@ def test_a_node_drills_to_wordings_and_prompts(store):
     assert cube.node(store, "guidance", {}, 10 ** 6) == {}
 
 
+def test_a_variant_s_node_shows_its_own_wordings_and_links_its_feature(store):
+    a, b, g = two_libraries_and_a_global(store)
+    feat = a["use table aliases"]
+    cb = store.one("SELECT codebook FROM feature WHERE id=?", (feat,))["codebook"]
+    v = store.insert("feature", {"codebook": cb, "level": "variant", "parent": feat, "prev": None, "aspect": None, "name": "alias with AS", "definition": "aliases written with AS", "polarity": "require", "examples": [], "round": 1})
+    store.con.execute("UPDATE membership SET node=?, at='later' WHERE kind='realization' AND node=?", (v, feat)); store.con.commit()     # the feature's one wording moves under the variant
+    d = cube.node(store, "guidance", {}, v)
+    assert d["prompts"] == 1 and d["readings"] == 1 and d["variant_of"] == {"id": feat, "name": "use table aliases"} and d["group"]["name"] == "output"
+    assert len(d["members"]) == 1 and d["members"][0]["id"] == v and d["members"][0]["wordings"][0]["declaration"] == "use aliases for the tables"
+    f = cube.node(store, "guidance", {}, feat)
+    assert f["prompts"] == 1 and f["variant_of"] is None                                    # the feature still counts its variant's readings
+
+
 def test_settings_file_is_written_blind_and_loaded_where_the_shell_has_nothing(tmp_path, monkeypatch):
     p = tmp_path / "keys.env"
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False); monkeypatch.delenv("FX_LOCAL_URL", raising=False)
