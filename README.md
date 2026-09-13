@@ -18,6 +18,19 @@ Stages, in the order the data flows:
 
 Stages 0 to 3 are in place; the others follow in that order.
 
+## The base library
+
+`library/base/store.db` is a released library: seven FACET corpora (3,027 prompts, decomposed), a codebook for four of
+them (math, science-quantitative, text2cypher, text2sql: 1,214 features) and the seed of 122 global features over them;
+tags, imports and profiles as the site expects. Its model-call ledger, job rows and wording embeddings are stripped
+(the embeddings come back from the local encoder with `fx library embed`, no model call). Serve it:
+
+```
+PYTHONPATH=. python -m fx.cli -w library/base serve --port 8780      # then http://localhost:8780
+```
+
+A run from the site writes into that workspace; copy the directory first to keep the base untouched.
+
 ## Stage 0: models, ledger, cache
 
 `fx.llm.Client` talks to any OpenAI-compatible endpoint and returns a `Reply` rather than
