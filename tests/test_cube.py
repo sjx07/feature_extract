@@ -1,4 +1,5 @@
 """The cube over two seeded libraries and a seed with one global; the settings file. No model, no network."""
+import math
 import os
 import sys
 from pathlib import Path
@@ -130,3 +131,22 @@ def test_the_search_box_narrows_the_slice_by_prompt_text_or_wording(store):
     assert cube.slice(store, "guidance", {"text": {"zzz"}})["prompts"] == 0
     p = cube.prompts(store, "guidance", {"text": {"step by step"}})
     assert p["prompts"] == 2
+
+
+def test_the_map_places_globals_by_corpus_share_and_the_trees_are_per_corpus(store):
+    a, b, g = two_libraries_and_a_global(store)
+    from test_library import fake_encoder
+    from fx.ingest.generalize import embed
+    embed(store, "guidance", enc=fake_encoder)
+    m = cube.feature_map(store, "guidance", {})
+    assert [c["name"] for c in m["corpora"]] == ["cypher", "sql"] and m["prompts"] == 2
+    assert len(m["globals"]) == 1 and m["globals"][0]["n_corpora"] == 2 and abs(m["globals"][0]["x"]) < 1 and abs(m["globals"][0]["y"]) < 1      # shared evenly: the centre
+    assert {f["corpus"] for f in m["local"]} == {"cypher", "sql"} and len(m["local"]) == 4 and all(abs(math.hypot(f["x"], f["y"]) - cube.R * 1.06) < 1 for f in m["local"])
+    one = cube.feature_map(store, "guidance", {"corpus": {"sql"}})
+    assert one["globals"][0]["n_corpora"] == 1 and abs(math.hypot(one["globals"][0]["x"], one["globals"][0]["y"]) - cube.R) < 1           # one corpus: the rim
+    t = cube.corpus_trees(store, "guidance", {})
+    assert [x["corpus"] for x in t["trees"]] == ["cypher", "sql"] and t["trees"][1]["features"] == 3 and t["trees"][1]["aligned"] == 1
+    sql = t["trees"][1]["groups"][0]
+    assert sql["name"] == "output" and {f["name"] for f in sql["features"]} == {"return SQL only", "think step by step", "use table aliases"}
+    assert next(f for f in sql["features"] if f["name"] == "think step by step")["global_name"] == "reason stepwise"
+    assert [x["corpus"] for x in cube.corpus_trees(store, "guidance", {}, only="sql")["trees"]] == ["sql"]

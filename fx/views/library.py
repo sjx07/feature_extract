@@ -22,7 +22,7 @@ from fx.core.store import Store
 
 from fx.data.tags import field_order
 
-RESERVED = {"kind", "view", "limit", "polarity", "text"}                    # query keys that are not tag fields
+RESERVED = {"kind", "view", "limit", "polarity", "text", "tree"}                    # query keys that are not tag fields
 _cache: dict = {}
 
 
@@ -275,3 +275,174 @@ def prompts(store: Store, kind: str, filters: dict[str, set[str]], limit: int = 
             out.append(text[pid] | {"fields": fields.get(pid, {}), "readings": d["readings"],
                                     "features": [{"id": f, "name": h["nodes"][f]["name"], "global": h["nodes"][f]["codebook"] == h["seed"], "n": n} for f, n in feats if f in h["nodes"]]})
     return {"kind": kind, "filters": {k: sorted(v) for k, v in filters.items()}, "prompts": len(selected), "listed": len(out), "list": out}
+
+
+# ---- the map: the seed's globals placed by which corpora carry them; each corpus's own tree
+R = 420.0
+
+
+def _collide(items: list[dict]) -> None:
+    """Labels largest first, each at the nearest free spot to its true position along a spiral, so no two overlap."""
+    import math
+    placed: list[dict] = []
+    for it in sorted(items, key=lambda x: (-x["font"], x["id"])):
+        x0, y0 = it["lx"], it["ly"]; t = 0.0
+        while True:
+            rad = 1.6 * t
+            x, y = x0 + rad * math.cos(t), y0 + rad * math.sin(t)
+            if all(abs(x - p["lx"]) >= it["hw"] + p["hw"] or abs(y - p["ly"]) >= it["hh"] + p["hh"] for p in placed):
+                it["lx"], it["ly"] = x, y; break
+            t += 0.35
+        placed.append(it)
+
+
+def _first_pc_scores(V):
+    """Each row's coordinate on the first principal component, by power iteration on the n×n Gram matrix (a full SVD of
+    an n×1024 matrix took 0.35 s per sector; this is milliseconds and the order is what matters)."""
+    import numpy as np
+    if V.shape[0] < 2 or V.shape[1] < 2:
+        return np.zeros(V.shape[0])
+    G = V @ V.T
+    w = np.ones(V.shape[0]) / np.sqrt(V.shape[0])
+    for _ in range(50):
+        w2 = G @ w
+        n = np.linalg.norm(w2)
+        if n < 1e-12:
+            break
+        w2 = w2 / n
+        if np.abs(w2 - w).max() < 1e-9:
+            w = w2; break
+        w = w2
+    return G @ w                               # ∝ V (Vᵀ w): the projection on the top right singular vector
+
+
+def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
+    """The seed's globals on a ring of corpora (alphabetical): angle from the share-weighted anchors, radius from the
+    entropy of the share (one corpus = the rim, evenly shared = the centre); one-corpus globals spread inside their sector
+    by the first principal component of their members' vectors. Per-corpus features under no global sit just outside the
+    rim in their corpus's sector, spread the same way. Counts are within the slice."""
+    import math
+    import numpy as np
+    from ..ingest.loop.state import vectors
+    key = ("map", kind, tuple(sorted((k, tuple(sorted(v))) for k, v in filters.items()))) + _version(store)
+    if key in _cache:
+        return _cache[key]
+    fields = prompt_fields(store)
+    rows, h = facts(store, kind)
+    selected = select(fields, filters, store=store)
+    pol = filters.get("polarity")
+    nodes = h["nodes"]
+    corpora = sorted({nodes[cb_first]["corpus"] for cb_first in nodes if nodes[cb_first]["codebook"] in set(h["libs"].values())} - {None})
+    if not corpora:
+        return {"R": R, "corpora": [], "globals": [], "local": [], "prompts": len(selected)}
+    n_c = {c: 0 for c in corpora}
+    for pid in selected:
+        c = fields[pid].get("corpus")
+        if c in n_c:
+            n_c[c] += 1
+    theta = {c: math.radians(-90 + 360 * i / len(corpora)) for i, c in enumerate(corpora)}
+    carry: dict[int, dict[str, set]] = defaultdict(lambda: defaultdict(set)); local: dict[int, set] = defaultdict(set)
+    members: dict[int, set] = defaultdict(set)
+    for pid, rid, node, feat, glob in rows:
+        if pid not in selected or (pol and nodes[feat].get("polarity", "require") not in pol):
+            continue
+        c = fields[pid]["corpus"]
+        if glob is not None:
+            carry[glob][c].add(pid); members[glob].add(feat)
+        else:
+            local[feat].add(pid)
+    # vectors: a global's is the mean of its members' (per-corpus feature embeddings); a local feature's its own
+    need = sorted({f for fs in members.values() for f in fs} | set(local))
+    ids, M = vectors(store, "feature", need)
+    pos = {i: k for k, i in enumerate(ids)}
+    if len(ids):
+        M = M / np.maximum(np.linalg.norm(M, axis=1, keepdims=True), 1e-9)
+    def vec_of(fs):
+        ks = [pos[f] for f in fs if f in pos]
+        return M[ks].mean(0) if ks else None
+    gmax = max((len(set().union(*d.values())) for d in carry.values()), default=1)
+    out_g = []
+    for gid, d in carry.items():
+        w = {c: len(ps) / n_c[c] for c, ps in d.items() if n_c.get(c)}
+        if not w:
+            continue
+        s = sum(w.values()); p = {c: v / s for c, v in w.items()}
+        H = -sum(v * math.log(v) for v in p.values())
+        r = R * (1 - H / math.log(len(corpora))) if len(corpora) > 1 else R
+        phi = math.atan2(sum(v * math.sin(theta[c]) for c, v in p.items()), sum(v * math.cos(theta[c]) for c, v in p.items()))
+        n = len(set().union(*d.values()))
+        g = nodes[gid]
+        out_g.append({"id": gid, "name": g["name"], "definition": g["definition"] or "", "group": nodes.get(g["parent"], {}).get("name"), "prompts": n,
+                      "share": {c: round(v, 3) for c, v in sorted(p.items(), key=lambda x: -x[1])}, "n_corpora": len(p), "phi": phi, "r": r,
+                      "font": round(8 + 14 * math.sqrt(n / gmax), 1), "vec": vec_of(members[gid])})
+    out_l = []
+    lmax = max((len(ps) for ps in local.values()), default=1)
+    for fid, ps in local.items():
+        f = nodes[fid]
+        if f["corpus"] not in theta:
+            continue
+        out_l.append({"id": fid, "name": f["name"], "corpus": f["corpus"], "prompts": len(ps), "phi": theta[f["corpus"]], "r": R * 1.06,
+                      "font": 0, "vec": M[pos[fid]] if fid in pos else None, "size": round(1.5 + 3 * math.sqrt(len(ps) / lmax), 1)})
+    # spread the one-corpus items inside their sector by the first principal component of their vectors
+    for c in corpora:
+        for sect in ([x for x in out_g if x["n_corpora"] == 1 and c in x["share"]], [x for x in out_l if x["corpus"] == c]):
+            if len(sect) < 2:
+                continue
+            V = np.stack([x["vec"] if x["vec"] is not None else np.zeros(M.shape[1] if len(ids) else 1) for x in sect]); V = V - V.mean(0)
+            order = np.argsort(_first_pc_scores(V))
+            half = 0.42 * 360 / len(corpora) / 2
+            for k, i in enumerate(order):
+                sect[i]["phi"] = theta[c] + math.radians(-half + 2 * half * k / max(len(sect) - 1, 1))
+    for x in out_g + out_l:
+        x["x"], x["y"] = round(x["r"] * math.cos(x["phi"]), 1), round(x["r"] * math.sin(x["phi"]), 1)
+        x.pop("vec", None); x.pop("phi", None); x.pop("r", None)
+    for x in out_g:
+        x["lx"], x["ly"] = x["x"], x["y"]; x["hw"], x["hh"] = 0.27 * x["font"] * len(x["name"]) + 2, 0.62 * x["font"]
+    _collide(out_g)
+    for x in out_g:
+        x["lx"], x["ly"] = round(x["lx"], 1), round(x["ly"], 1); x.pop("hw"); x.pop("hh")
+    out = {"R": R, "corpora": [{"name": c, "theta": theta[c], "prompts": n_c[c], "x": round(R * 1.16 * math.cos(theta[c]), 1), "y": round(R * 1.16 * math.sin(theta[c]), 1)} for c in corpora],
+           "globals": sorted(out_g, key=lambda x: -x["prompts"]), "local": sorted(out_l, key=lambda x: -x["prompts"]), "prompts": len(selected),
+           "filters": {k: sorted(v) for k, v in filters.items()}}
+    _cache[key] = out
+    return out
+
+
+def corpus_trees(store: Store, kind: str, filters: dict[str, set[str]], only: Optional[str] = None) -> dict:
+    """Each corpus's own codebook as its tree (groups, features, variants) with the prompts of the slice each carries;
+    a feature says which global it is under. Features with no prompt in the slice are counted, not listed."""
+    fields = prompt_fields(store)
+    rows, h = facts(store, kind)
+    selected = select(fields, filters, store=store)
+    pol = filters.get("polarity")
+    nodes = h["nodes"]
+    per_node: dict[int, set] = defaultdict(set)
+    for pid, rid, node, feat, glob in rows:
+        if pid in selected and not (pol and nodes[feat].get("polarity", "require") not in pol):
+            per_node[node].add(pid); per_node[feat].add(pid) if node != feat else None
+    trees = {}
+    by_cb: dict[int, list[dict]] = defaultdict(list)
+    for n in nodes.values():
+        by_cb[n["codebook"]].append(n)
+    cb_of = {cb: c for c, cb in ((nodes[i]["corpus"], nodes[i]["codebook"]) for i in nodes)}
+    for cb, ns in by_cb.items():
+        corpus = cb_of.get(cb)
+        if corpus is None or (only and corpus != only):
+            continue
+        groups = {n["id"]: {"id": n["id"], "name": n["name"], "aspect": n.get("aspect"), "features": []} for n in ns if n["level"] == "group"}
+        feats = [n for n in ns if n["level"] == "feature"]
+        unplaced: dict[str, dict] = {}
+        for f in feats:
+            vs = [{"id": v["id"], "name": v["name"], "prompts": len(per_node.get(v["id"], ()))} for v in ns if v["level"] == "variant" and v["parent"] == f["id"]]
+            row = {"id": f["id"], "name": f["name"], "definition": f["definition"] or "", "prompts": len(per_node.get(f["id"], ())), "global": h["to_global"].get(f["id"]),
+                   "global_name": nodes.get(h["to_global"].get(f["id"]), {}).get("name"), "variants": sorted([v for v in vs if v["prompts"]], key=lambda v: -v["prompts"])}
+            g = groups.get(f["parent"]) if f["parent"] is not None else unplaced.setdefault(f.get("aspect") or "other", {"id": None, "name": f"unplaced · {f.get('aspect') or 'other'}", "aspect": f.get("aspect"), "features": []})
+            (g if g is not None else unplaced.setdefault("other", {"id": None, "name": "unplaced", "aspect": None, "features": []}))["features"].append(row)
+        gl = []
+        for g in list(groups.values()) + list(unplaced.values()):
+            shown = sorted([f for f in g["features"] if f["prompts"]], key=lambda f: -f["prompts"])
+            if shown:
+                gl.append(g | {"features": shown, "prompts": len(set().union(*(per_node.get(f["id"], set()) for f in shown))), "hidden": len(g["features"]) - len(shown)})
+        trees[corpus] = {"corpus": corpus, "codebook": cb, "features": len(feats), "in_slice": sum(1 for f in feats if per_node.get(f["id"])),
+                         "aligned": sum(1 for f in feats if f["id"] in h["to_global"]), "groups": sorted(gl, key=lambda g: -g["prompts"])}
+    return {"kind": kind, "prompts": len(selected), "trees": [trees[c] for c in sorted(trees)]}

@@ -404,6 +404,15 @@ def make_app(ws: Workspace, store: Optional[Store] = None) -> FastAPI:
         k = json.loads(r["params"] or "{}").get("kind") or "guidance"
         return I.stages(store, r["corpus"], "guidance" if k == "both" else k)
 
+    @app.get("/api/cube/map")
+    def api_cube_map(request: Request, kind: str = "guidance"):
+        return C.feature_map(store, kind, C.parse_filters(dict(request.query_params)))
+
+    @app.get("/api/cube/trees")
+    def api_cube_trees(request: Request, kind: str = "guidance", tree: str = ""):
+        f = C.parse_filters({k: v for k, v in request.query_params.items() if k != "tree"})
+        return C.corpus_trees(store, kind, f, only=tree or None)
+
     @app.get("/api/cube/node/{fid}")
     def api_cube_node(request: Request, fid: int, kind: str = "guidance"):
         d = C.node(store, kind, C.parse_filters(dict(request.query_params)), fid)
