@@ -59,16 +59,19 @@ async function viewLibrary(main, q) {
   const seg = `<span class="seg"><a href="${href('/library', { ...q, kind, view: 'prompts' })}" class="${view === 'prompts' ? 'on' : ''}">prompts</a><a href="${href('/library', { ...q, kind, view: 'features' })}" class="${view === 'features' ? 'on' : ''}">features</a></span>`;
   let right;
   if (view === 'features') {
-    const [m, tr] = await Promise.all([api('/api/cube/map?' + new URLSearchParams({ kind, ...fieldQuery(q) })), api('/api/cube/trees?' + new URLSearchParams({ kind, ...fieldQuery(q), ...(q.tree ? { tree: q.tree } : {}) }))]);
+    const [m, tr] = await Promise.all([api('/api/cube/map?' + new URLSearchParams({ kind, ring: q.ring || 'name', ...fieldQuery(q) })), api('/api/cube/trees?' + new URLSearchParams({ kind, ...fieldQuery(q), ...(q.tree ? { tree: q.tree } : {}) }))]);
     const sel = q.tree || '';
     const CPAL = ['#3B4FB8', '#B8741F', '#2E7D4F', '#7E3F8F', '#B8452B', '#2B8A9A', '#8A6D1F', '#C2418F', '#4F7F2B', '#6B6B6B'];
     const ccolor = Object.fromEntries(m.corpora.map((c, i) => [c.name, CPAL[i % CPAL.length]]));
-    const E = m.R * 1.3;
-    const mapHtml = m.corpora.length ? `<div class="mapwrap"><div class="maptools"><span class="muted" style="font-size:12px">show a feature present in at least</span><input type="range" id="mthr" min="2" max="40" value="${q.thr || 5}" style="width:130px"><span id="mthrv" class="muted" style="font-size:12px">${q.thr || 5}%</span><span class="muted" style="font-size:12px">of some corpus's prompts</span>
+    const RX = 600, RY = 420, W = 1300, H = 1000, ax = c => (RX * 1.13 * c.x / m.R).toFixed(1), ay = c => (RY * 1.13 * c.y / m.R).toFixed(1);
+    const autoThr = () => { const mx = m.globals.map(g => Math.max(...Object.values(g.prev))).sort((a, b) => b - a); return Math.max(2, Math.min(40, Math.ceil(100 * (mx[Math.min(44, mx.length - 1)] || 0.12)))); };   // the threshold that shows about 45 features
+    const thr0 = q.thr ? +q.thr : autoThr();
+    const mapHtml = m.corpora.length ? `<div class="mapwrap"><div class="maptools"><span class="muted" style="font-size:12px">show a feature present in at least</span><input type="range" id="mthr" min="2" max="40" value="${thr0}" style="width:130px"><span id="mthrv" class="muted" style="font-size:12px">${thr0}%</span><span class="muted" style="font-size:12px">of some corpus's prompts</span>
         <label class="muted" style="font-size:12px;margin-left:10px"><input type="checkbox" id="mlocal" ${sel ? 'checked' : ''}> features under no global${sel ? ` (${esc(sel)})` : ''}</label>
+        <span class="muted" style="font-size:12px;margin-left:10px">ring <a href="${href('/library', { ...q, kind, view, ring: '' })}" class="${(q.ring || 'name') === 'name' ? 'on' : ''}" style="${(q.ring || 'name') === 'name' ? 'font-weight:600;color:var(--ink)' : ''}">by name</a> <a href="${href('/library', { ...q, kind, view, ring: 'similarity' })}" style="${q.ring === 'similarity' ? 'font-weight:600;color:var(--ink)' : ''}">by similarity</a></span>
         <span style="margin-left:auto"></span><a href="#" id="mzin" class="btn quiet small">+</a><a href="#" id="mzout" class="btn quiet small">−</a><a href="#" id="mzreset" class="btn quiet small">reset</a></div>
-      <div class="mapgrid"><svg viewBox="${-E} ${-E} ${2 * E} ${2 * E}" class="map" id="map"><circle cx="0" cy="0" r="${m.R}" class="mring"></circle><g id="mlinks"></g><g id="mfeat"></g>
-        ${m.corpora.map(c => `<a href="${href('/library', { ...q, kind, view, tree: sel === c.name ? '' : c.name })}" class="corp-a" data-c="${esc(c.name)}"><circle cx="${c.x}" cy="${c.y}" r="7" style="fill:${ccolor[c.name]}"></circle><text x="${c.x}" y="${c.y + (c.y > 0 ? 24 : -14)}" class="manchor ${sel === c.name ? 'on' : ''}" text-anchor="middle" style="fill:${ccolor[c.name]}">${esc(c.name)} <tspan class="muted">${fmt(c.prompts)}</tspan></text></a>`).join('')}
+      <div class="mapgrid"><svg viewBox="${-W / 2} ${-H / 2} ${W} ${H}" class="map" id="map"><ellipse cx="0" cy="0" rx="${RX}" ry="${RY}" class="mring"></ellipse><g id="mlinks"></g><g id="mfeat"></g>
+        ${m.corpora.map(c => `<a href="${href('/library', { ...q, kind, view, tree: sel === c.name ? '' : c.name })}" class="corp-a" data-c="${esc(c.name)}"><circle cx="${ax(c)}" cy="${ay(c)}" r="7" style="fill:${ccolor[c.name]}"></circle><text x="${ax(c)}" y="${+ay(c) + (c.y > 0 ? 24 : -14)}" class="manchor ${sel === c.name ? 'on' : ''}" text-anchor="middle" style="fill:${ccolor[c.name]}">${esc(c.name)} <tspan class="muted">${fmt(c.prompts)}</tspan></text></a>`).join('')}
       </svg><aside class="mapside" id="mapside"></aside></div>
       <div class="legend" style="flex-wrap:wrap">${m.corpora.map(c => `<span><i style="background:${ccolor[c.name]};border-radius:50%"></i>${esc(c.name)}</span>`).join('')}<span><i style="background:var(--muted);border-radius:50%"></i>three or more corpora</span><span class="muted">colour is the corpus that carries the feature most; size its largest share; hover or click a feature or a corpus</span></div></div>` : '<div class="muted">no codebook yet</div>';
     const leaf = f => `<div class="tnode leaf plain"><span class="read"><a href="${nodeHref(f.id)}">${esc(f.name)}</a>${f.global ? ` <span class="muted" style="font-size:12px">→ <a href="${nodeHref(f.global)}">${esc(f.global_name)}</a></span>` : ''}<div class="def">${esc(f.definition)}</div>${f.variants.length ? `<div class="mem">${f.variants.map(v => `<div><a href="${nodeHref(v.id)}">${esc(v.name)}</a> <span class="muted">${fmt(v.prompts)}</span></div>`).join('')}</div>` : ''}</span><span class="cnt">${fmt(f.prompts)}</span></div>`;
@@ -84,7 +87,7 @@ async function viewLibrary(main, q) {
   }
   main.innerHTML = `<div class="cube">${left}<div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h1>Library</h1>${seg}</div>
     <div style="margin-bottom:10px">${filterChips(q, kind, view)}</div>${right}</div></div>`;
-  if (view === 'features' && $('#map')) wireMap($('#map'), m, q.tree || '', nodeHref, ccolor, q);
+  if (view === 'features' && $('#map')) wireMap($('#map'), m, q.tree || '', nodeHref, ccolor, q, { RX, RY });
   for (const el of main.querySelectorAll('.field')) {
     const more = el.querySelector('.more'), find = el.querySelector('.find');
     if (more) more.onclick = e => { e.preventDefault(); const all = more.textContent === 'all'; el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = !all && i >= SHOW && !w.querySelector('.on'); }); more.textContent = all ? 'fewer' : 'all'; };
@@ -97,36 +100,33 @@ async function viewLibrary(main, q) {
 /* the map, after FACET's vocabulary map: a feature is its label, sized by its largest share, placed at the share-weighted
    mean of its corpora's anchors pulled toward the centre by how many corpora carry it, then relaxed so no two labels
    overlap; links to its corpora and a side panel on hover or click; a threshold on the share keeps it readable; zoom and pan */
-function wireMap(svg, m, sel, nodeHref, ccolor, q) {
+function wireMap(svg, m, sel, nodeHref, ccolor, q, { RX, RY }) {
   const box0 = svg.getAttribute('viewBox').split(' ').map(Number); let box = box0.slice(); let zoom = 1;
-  const anchors = Object.fromEntries(m.corpora.map(c => [c.name, c]));
+  const sx = x => RX * 1.13 * x / m.R, sy = y => RY * 1.13 * y / m.R;                       // the server's circle onto the ellipse
+  const anchors = Object.fromEntries(m.corpora.map(c => [c.name, { ...c, x: sx(c.x), y: sy(c.y) }]));
   const gF = svg.querySelector('#mfeat'), gL = svg.querySelector('#mlinks'), side = $('#mapside'), thr = $('#mthr'), thrv = $('#mthrv'), locBox = $('#mlocal');
-  let feats = [], pin = null;
+  let feats = [], pin = null, tierAt = 0;
+  const effThr = () => (+thr.value) / 100 / zoom;                                            // semantic zoom: more features as you zoom in
   const prep = () => {
-    const t = (+thr.value) / 100;
+    const t = effThr();
     const gs = m.globals.filter(g => Math.max(...Object.values(g.prev)) >= t && (!sel || sel in g.share)).map(g => {
       const links = Object.entries(g.prev).filter(([c, v]) => v >= t * 0.5);
-      const tot = Object.values(g.share).reduce((a, v) => a + v, 0);
-      const x0 = Object.entries(g.share).reduce((a, [c, v]) => a + anchors[c].x * v, 0) / tot, y0 = Object.entries(g.share).reduce((a, [c, v]) => a + anchors[c].y * v, 0) / tot;
-      const n = g.n_corpora, pull = n >= 3 ? 0.45 : n === 2 ? 0.7 : 0.86, mx = Math.max(...Object.values(g.prev));
+      const n = g.n_corpora, mx = Math.max(...Object.values(g.prev));                        // the server's x, y: angle from the anchors, radius from the entropy of the share
       const top = Object.entries(g.prev).sort((a, b) => b[1] - a[1])[0][0];
-      return { ...g, links, mx, size: 7 + 17 * Math.sqrt(mx), color: n >= 3 ? 'var(--muted)' : ccolor[top], shared: n >= 3, tx: x0 * pull, ty: y0 * pull, x: x0 * pull, y: y0 * pull, glob: true };
+      return { ...g, links, mx, size: 7 + 17 * Math.sqrt(mx), color: n >= 3 ? 'var(--muted)' : ccolor[top], shared: n >= 3, tx: sx(g.x), ty: sy(g.y), x: sx(g.x), y: sy(g.y), glob: true };
     });
-    const ls = (locBox.checked ? m.local.filter(f => (!sel || f.corpus === sel) && f.prev >= t) : []).map(f => { const a = anchors[f.corpus]; const ang = Math.atan2(a.y, a.x);
-      return { ...f, links: [[f.corpus, f.prev]], mx: f.prev, size: 6 + 12 * Math.sqrt(f.prev), color: ccolor[f.corpus], shared: false, tx: f.x, ty: f.y, x: f.x, y: f.y, glob: false, share: { [f.corpus]: 1 } }; });
+    const ls = (locBox.checked ? m.local.filter(f => (!sel || f.corpus === sel) && f.prev >= t) : []).map(f => ({ ...f, links: [[f.corpus, f.prev]], mx: f.prev, size: 6 + 12 * Math.sqrt(f.prev), color: ccolor[f.corpus], shared: false, tx: sx(f.x), ty: sy(f.y), x: sx(f.x), y: sy(f.y), glob: false, share: { [f.corpus]: 1 } }));
     return gs.concat(ls);
   };
-  const boxOf = d => [d.size * 0.29 * d.name.length + 8, d.size * 0.7 + 4];
-  const relax = () => {                                                       // springs to the target, rectangles pushed apart, kept inside the rim
+  const boxOf = d => [d.size * 0.5 * d.name.length * 0.5 + 10, d.size * 0.75 * 0.5 + 6];    // half sizes of the drawn text (the svd session's measured factors)
+  const collide = (steps, strength) => { for (let it = 0; it < steps; it++) for (let i = 0; i < feats.length; i++) for (let j = i + 1; j < feats.length; j++) { const a = feats[i], b = feats[j];
+    const dx = b.x - a.x, dy = b.y - a.y, ox = a.hw + b.hw - Math.abs(dx), oy = a.hh + b.hh - Math.abs(dy);
+    if (ox > 0 && oy > 0) { if (ox * 0.6 < oy) { const s = (ox / 2) * strength * (dx < 0 ? -1 : 1); a.x -= s; b.x += s; } else { const s = (oy / 2) * strength * (dy < 0 ? -1 : 1); a.y -= s; b.y += s; } } } };
+  const clamp = () => { for (const d of feats) { if (!d.glob) continue; const r = Math.hypot(d.x / RX, d.y / RY); if (r > 0.92) { d.x *= 0.92 / r; d.y *= 0.92 / r; } } };
+  const relax = () => {                                                                       // weak springs, a strong collider, many ticks; a last collision pass after the rim clamp
     for (const d of feats) { [d.hw, d.hh] = boxOf(d); }
-    for (let it = 0; it < 220; it++) {
-      const k = 0.08;
-      for (const d of feats) { d.x += (d.tx - d.x) * k * 0.6; d.y += (d.ty - d.y) * k * 0.6; }
-      for (let i = 0; i < feats.length; i++) for (let j = i + 1; j < feats.length; j++) { const a = feats[i], b = feats[j];
-        const dx = b.x - a.x, dy = b.y - a.y, ox = a.hw + b.hw - Math.abs(dx), oy = a.hh + b.hh - Math.abs(dy);
-        if (ox > 0 && oy > 0) { if (ox * 0.55 < oy) { const s = (ox / 2) * 0.5 * (dx < 0 ? -1 : 1); a.x -= s; b.x += s; } else { const s = (oy / 2) * 0.5 * (dy < 0 ? -1 : 1); a.y -= s; b.y += s; } } }
-      for (const d of feats) { if (d.glob) { const r = Math.hypot(d.x, d.y); if (r > m.R * 0.9) { d.x *= m.R * 0.9 / r; d.y *= m.R * 0.9 / r; } } }
-    }
+    for (let it = 0; it < 600; it++) { const k = 0.05 * (1 - it / 700); for (const d of feats) { d.x += (d.tx - d.x) * k; d.y += (d.ty - d.y) * k; } collide(1, 0.5); }
+    clamp(); collide(40, 0.3);
   };
   const render = () => {
     feats = prep(); relax();
@@ -147,7 +147,7 @@ function wireMap(svg, m, sel, nodeHref, ccolor, q) {
   const bar = (lab, v, color, h) => `<div class="mrow"><span class="lab">${h ? `<a href="${h}">${lab}</a>` : lab}</span><span class="trk" style="width:${Math.max(4, 100 * v)}%;background:${color}"></span><span class="v muted">${Math.round(100 * v)}%</span></div>`;
   const sidePanel = s => {
     if (!s) { const shared = feats.filter(f => f.shared).sort((a, b) => b.mx - a.mx);
-      side.innerHTML = `<b>${feats.length} features shown</b><div class="muted" style="font-size:12px;margin:4px 0 10px">of ${m.globals.length} globals${sel ? ` carried by ${esc(sel)}` : ''}; a feature is drawn when some corpus carries it in at least ${thr.value}% of its prompts in the slice. Colour is the corpus that carries it most; grey italic, three or more.</div>
+      side.innerHTML = `<b>${feats.length} features shown</b><div class="muted" style="font-size:12px;margin:4px 0 10px">of ${m.globals.length} globals${sel ? ` carried by ${esc(sel)}` : ''}; a feature is drawn when some corpus carries it in at least ${Math.round(100 * effThr())}% of its prompts in the slice${zoom > 1 ? ' (lowered by the zoom)' : ''}. A feature sits toward the corpora that carry it, nearer the centre the more evenly they share it. Colour is the corpus that carries it most; grey italic, three or more.</div>
         <div class="t muted" style="font-size:12px">shared by three or more corpora</div>${shared.slice(0, 30).map(f => bar(esc(f.name), f.mx, 'var(--muted)', nodeHref(f.id))).join('') || '<div class="muted">none at this threshold</div>'}`; return; }
     if (s.c) { const rows = feats.filter(f => f.links.some(([c]) => c === s.c)).map(f => [f, f.prev[s.c] ?? f.prev]).sort((a, b) => b[1] - a[1]);
       side.innerHTML = `<b style="color:${ccolor[s.c]}">${esc(s.c)}</b><div class="muted" style="font-size:12px;margin:4px 0 10px">${fmt(anchors[s.c].prompts)} prompts in the slice. <a href="${href('/library', { ...q, tree: s.c })}">view this codebook</a></div>${rows.slice(0, 24).map(([f, v]) => bar(esc(f.name), v, f.color, nodeHref(f.id))).join('')}`; return; }
@@ -155,8 +155,8 @@ function wireMap(svg, m, sel, nodeHref, ccolor, q) {
     side.innerHTML = `<b style="color:${f.color}"><a href="${nodeHref(f.id)}" style="color:inherit">${esc(f.name)}</a></b><div class="muted" style="font-size:12px;margin:4px 0 10px">${esc(f.definition || '')}${f.glob ? ` <span>${fmt(f.prompts)} prompts, ${f.n_corpora} corpora${f.group ? ', ' + esc(f.group) : ''}</span>` : ` ${esc(f.corpus)}, under no global, ${fmt(f.prompts)} prompts`}</div>
       <div class="t muted" style="font-size:12px">share of each corpus's prompts</div>${(f.glob ? Object.entries(f.prev) : [[f.corpus, f.prev]]).map(([c, v]) => bar(esc(c), v, ccolor[c], href('/library', { ...q, corpus: c, view: 'prompts' }))).join('')}`;
   };
-  const apply = () => svg.setAttribute('viewBox', box.join(' '));
-  const zoomAt = (f, px, py) => { const nz = Math.min(12, Math.max(1, zoom * f)); f = nz / zoom; box = [px - (px - box[0]) / f, py - (py - box[1]) / f, box[2] / f, box[3] / f]; zoom = nz; if (zoom === 1) box = box0.slice(); apply(); };
+  const apply = () => { svg.setAttribute('viewBox', box.join(' ')); const tier = Math.round(Math.log2(zoom) * 2); if (tier !== tierAt) { tierAt = tier; render(); } };
+  const zoomAt = (f, px, py) => { const nz = Math.min(8, Math.max(1, zoom * f)); f = nz / zoom; box = [px - (px - box[0]) / f, py - (py - box[1]) / f, box[2] / f, box[3] / f]; zoom = nz; if (zoom === 1) box = box0.slice(); apply(); };
   const pt = e => { const r = svg.getBoundingClientRect(); return [box[0] + (e.clientX - r.left) / r.width * box[2], box[1] + (e.clientY - r.top) / r.height * box[3]]; };
   svg.addEventListener('wheel', e => { e.preventDefault(); const [px, py] = pt(e); zoomAt(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
   let drag = null;

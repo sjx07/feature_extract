@@ -22,7 +22,7 @@ from fx.core.store import Store
 
 from fx.data.tags import field_order
 
-RESERVED = {"kind", "view", "limit", "polarity", "text", "tree"}                    # query keys that are not tag fields
+RESERVED = {"kind", "view", "limit", "polarity", "text", "tree", "ring", "thr"}                    # query keys that are not tag fields
 _cache: dict = {}
 
 
@@ -301,7 +301,25 @@ def _first_pc_scores(V):
     return G @ w                               # ∝ V (Vᵀ w): the projection on the top right singular vector
 
 
-def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
+def _ring_by_similarity(corpora: list[str], carry: dict, n_c: dict) -> list[str]:
+    """Anchors ordered so neighbours have similar prevalence profiles: a greedy nearest-neighbour chain over the cosine of
+    each corpus's vector of feature shares, starting from the largest corpus (the svd session's advice for a sparse ring)."""
+    import numpy as np
+    gids = sorted(carry)
+    if len(corpora) < 3 or not gids:
+        return corpora
+    P = {c: np.array([len(carry[g].get(c, ())) / n_c[c] if n_c.get(c) else 0.0 for g in gids]) for c in corpora}
+    for c in corpora:
+        P[c] = P[c] / (np.linalg.norm(P[c]) or 1.0)
+    left = set(corpora); order = [max(corpora, key=lambda c: n_c.get(c, 0))]; left.discard(order[0])
+    while left:
+        last = order[-1]
+        nxt = max(left, key=lambda c: float(P[last] @ P[c]))
+        order.append(nxt); left.discard(nxt)
+    return order
+
+
+def feature_map(store: Store, kind: str, filters: dict[str, set[str]], ring: str = "name") -> dict:
     """The seed's globals on a ring of corpora (alphabetical): angle from the share-weighted anchors, radius from the
     entropy of the share (one corpus = the rim, evenly shared = the centre); one-corpus globals spread inside their sector
     by the first principal component of their members' vectors. Per-corpus features under no global sit just outside the
@@ -309,7 +327,7 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
     import math
     import numpy as np
     from ..ingest.loop.state import vectors
-    key = ("map", kind, tuple(sorted((k, tuple(sorted(v))) for k, v in filters.items()))) + _version(store)
+    key = ("map", kind, ring, tuple(sorted((k, tuple(sorted(v))) for k, v in filters.items()))) + _version(store)
     if key in _cache:
         return _cache[key]
     fields = prompt_fields(store)
@@ -325,7 +343,6 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
         c = fields[pid].get("corpus")
         if c in n_c:
             n_c[c] += 1
-    theta = {c: math.radians(-90 + 360 * i / len(corpora)) for i, c in enumerate(corpora)}
     carry: dict[int, dict[str, set]] = defaultdict(lambda: defaultdict(set)); local: dict[int, set] = defaultdict(set)
     members: dict[int, set] = defaultdict(set)
     for pid, rid, node, feat, glob in rows:
@@ -336,6 +353,9 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
             carry[glob][c].add(pid); members[glob].add(feat)
         else:
             local[feat].add(pid)
+    if ring == "similarity":
+        corpora = _ring_by_similarity(corpora, carry, n_c)
+    theta = {c: math.radians(-90 + 360 * i / len(corpora)) for i, c in enumerate(corpora)}
     # vectors: a global's is the mean of its members' (per-corpus feature embeddings); a local feature's its own
     need = sorted({f for fs in members.values() for f in fs} | set(local))
     ids, M = vectors(store, "feature", need)
@@ -390,7 +410,7 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
         for k, x in enumerate([x for x in out_l if x["corpus"] == c]):
             x["rank"] = k
     groups_seen = sorted({x["group"] or "other" for x in out_g})
-    out = {"R": R, "groups": groups_seen, "corpora": [{"name": c, "theta": theta[c], "prompts": n_c[c], "x": round(R * 1.16 * math.cos(theta[c]), 1), "y": round(R * 1.16 * math.sin(theta[c]), 1)} for c in corpora],
+    out = {"R": R, "ring": ring, "groups": groups_seen, "corpora": [{"name": c, "theta": theta[c], "prompts": n_c[c], "x": round(R * 1.16 * math.cos(theta[c]), 1), "y": round(R * 1.16 * math.sin(theta[c]), 1)} for c in corpora],
            "globals": out_g, "local": out_l, "prompts": len(selected),
            "filters": {k: sorted(v) for k, v in filters.items()}}
     _cache[key] = out
