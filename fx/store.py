@@ -79,8 +79,6 @@ CREATE TABLE IF NOT EXISTS decomp (
 -- flag: what the read-only judge reported: a misfit member (realization or other = the member), a split, or two
 --   siblings it could not tell apart; standing = raised again after it was acted on, the member stays.
 -- codebook: the codebook row: scope 'corpus' with its corpus, or 'seed' with none; kind, model, the anchor agreement measured on it.
--- assignment, vector, fvector: legacy tables of earlier code, copied into membership and embedding on open; alignment (a
---   pre-refactor branch's, never holding a global) is left as is.
 CREATE TABLE IF NOT EXISTS realization (
     id INTEGER PRIMARY KEY, corpus INTEGER NOT NULL REFERENCES corpus(id), kind TEXT NOT NULL, key TEXT NOT NULL,
     polarity TEXT NOT NULL, declaration TEXT NOT NULL, n INTEGER NOT NULL, prompts INTEGER NOT NULL, conditions TEXT, head TEXT,
@@ -105,16 +103,6 @@ CREATE TABLE IF NOT EXISTS flag (
     id INTEGER PRIMARY KEY, codebook INTEGER NOT NULL REFERENCES codebook(id), feature INTEGER NOT NULL REFERENCES feature(id),
     realization INTEGER REFERENCES realization(id), other INTEGER REFERENCES feature(id), verdict TEXT NOT NULL, note TEXT, standing INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS flag_codebook ON flag(codebook);
-CREATE TABLE IF NOT EXISTS assignment (
-    realization INTEGER NOT NULL REFERENCES realization(id), codebook INTEGER NOT NULL REFERENCES codebook(id),
-    feature INTEGER REFERENCES feature(id), confidence TEXT, at TEXT NOT NULL, note TEXT, PRIMARY KEY (realization, codebook));
-CREATE TABLE IF NOT EXISTS vector (
-    realization INTEGER PRIMARY KEY REFERENCES realization(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS alignment (
-    feature INTEGER PRIMARY KEY REFERENCES feature(id), global INTEGER REFERENCES feature(id), confidence TEXT, note TEXT, at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS fvector (
-    feature INTEGER PRIMARY KEY REFERENCES feature(id), model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
-
 -- a profile: the settings a run uses (a model and endpoint per role, the budget), by name
 CREATE TABLE IF NOT EXISTS profile (
     name TEXT PRIMARY KEY, params TEXT NOT NULL, at TEXT NOT NULL);

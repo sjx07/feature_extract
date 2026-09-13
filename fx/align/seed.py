@@ -37,7 +37,6 @@ def reset(store: Store, kind: str) -> dict:
     with store.lock:
         d = {"flags": store.con.execute("DELETE FROM flag WHERE codebook=?", (cb,)).rowcount,
              "memberships": store.con.execute("DELETE FROM membership WHERE kind='feature' AND codebook=?", (cb,)).rowcount,
-             "alignments": store.con.execute("DELETE FROM alignment WHERE global IN (SELECT id FROM feature WHERE codebook=?)", (cb,)).rowcount,
              "nodes": store.con.execute("DELETE FROM feature WHERE codebook=?", (cb,)).rowcount}
         store.con.execute("DELETE FROM codebook WHERE id=?", (cb,))
         store.con.commit()

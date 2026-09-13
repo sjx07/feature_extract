@@ -106,3 +106,23 @@ def test_the_seed_is_a_scope_and_an_old_seed_corpus_migrates(tmp_path):
     rows = {int(r["id"]): (r["corpus"], r["scope"]) for r in s2.rows("SELECT id, corpus, scope FROM codebook")}
     assert rows == {1: (1, "corpus"), 2: (None, "seed")} and not s2.one("SELECT 1 FROM corpus WHERE name='seed'")
     assert s2.one("SELECT codebook FROM feature WHERE id=5")["codebook"] == 2 and seed_codebook(s2, "guidance") == 2
+
+
+def test_legacy_tables_are_copied_once_more_and_dropped(tmp_path):
+    p = tmp_path / "old.db"
+    con = sqlite3.connect(p)
+    con.executescript("""CREATE TABLE assignment (realization INTEGER NOT NULL, codebook INTEGER NOT NULL, feature INTEGER, confidence TEXT, at TEXT NOT NULL, note TEXT, PRIMARY KEY (realization, codebook));
+        CREATE TABLE vector (realization INTEGER PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+        CREATE TABLE fvector (feature INTEGER PRIMARY KEY, model TEXT NOT NULL, dim INTEGER NOT NULL, vec BLOB NOT NULL);
+        CREATE TABLE alignment (feature INTEGER PRIMARY KEY, global INTEGER, confidence TEXT, note TEXT, at TEXT NOT NULL);
+        INSERT INTO assignment VALUES (7, 1, 3, 'high', 'then', 'named');
+        INSERT INTO vector VALUES (7, 'm', 2, X'0000');
+        INSERT INTO fvector VALUES (3, 'm', 2, X'0000');""")
+    con.commit(); con.close()
+    s = Store(p)
+    assert s.version == migrations.CURRENT
+    tables = {r["name"] for r in s.rows("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert not tables & {"assignment", "vector", "fvector", "alignment"}
+    assert s.one("SELECT node, note FROM membership WHERE kind='realization' AND unit=7")["note"] == "named"
+    assert {(r["kind"], r["unit"]) for r in s.rows("SELECT kind, unit FROM embedding")} == {("realization", 7), ("feature", 3)}
+    assert Store(tmp_path / "new.db").rows("SELECT name FROM sqlite_master WHERE name='assignment'") == []

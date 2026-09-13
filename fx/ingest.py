@@ -197,12 +197,9 @@ def delete(store: Store, name: str) -> dict:
             store.con.execute(f"DELETE FROM membership WHERE kind='feature' AND unit IN ({q})", feats)
             store.con.execute(f"DELETE FROM embedding WHERE kind='feature' AND unit IN ({q})", feats)
             store.con.execute(f"DELETE FROM flag WHERE feature IN ({q}) OR other IN ({q})", feats + feats)
-            store.con.execute(f"DELETE FROM alignment WHERE feature IN ({q})", feats)
-            store.con.execute(f"DELETE FROM fvector WHERE feature IN ({q})", feats)
         if cbs:
             q = ",".join("?" * len(cbs))
             store.con.execute(f"DELETE FROM membership WHERE codebook IN ({q})", cbs)
-            store.con.execute(f"DELETE FROM assignment WHERE codebook IN ({q})", cbs)
             store.con.execute(f"DELETE FROM flag WHERE codebook IN ({q})", cbs)
             store.con.execute(f"DELETE FROM feature WHERE codebook IN ({q})", cbs)
             store.con.execute(f"DELETE FROM codebook WHERE id IN ({q})", cbs)
@@ -210,7 +207,6 @@ def delete(store: Store, name: str) -> dict:
         if rz:
             q = ",".join("?" * len(rz))
             store.con.execute(f"DELETE FROM embedding WHERE kind='realization' AND unit IN ({q})", rz)
-            store.con.execute(f"DELETE FROM vector WHERE realization IN ({q})", rz)
             store.con.execute("DELETE FROM realization WHERE corpus=?", (cid,))
         ids = [r["id"] for r in store.con.execute("SELECT id FROM prompt WHERE corpus=?", (cid,)).fetchall()]
         for i in range(0, len(ids), 500):

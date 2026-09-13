@@ -102,11 +102,20 @@ def step4_seed_as_a_scope(con: sqlite3.Connection) -> None:
         con.execute("DELETE FROM corpus WHERE id=?", (seed[0],))
 
 
+def step5_drop_legacy_tables(con: sqlite3.Connection) -> None:
+    """Version 5: a last copy of assignment, vector and fvector into membership and embedding, then the four legacy tables
+    (alignment too, a pre-refactor branch's, never holding a global) are dropped."""
+    step1_columns_and_legacy_copies(con)
+    for t in ("assignment", "vector", "fvector", "alignment"):
+        con.execute(f"DROP TABLE IF EXISTS {t}")
+
+
 STEPS: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
     (1, "columns added by stages 1 to 3; legacy tables copied into membership and embedding", step1_columns_and_legacy_copies),
     (2, "imports as events: the import table, prompt.import, one synthetic import per corpus for what was there", step2_imports_as_events),
     (3, "tags as rows: the tag table from the columns and the meta keys", step3_tags_as_rows),
     (4, "the seed as a codebook scope, not a corpus", step4_seed_as_a_scope),
+    (5, "the legacy tables assignment, vector, fvector and alignment dropped after a last copy", step5_drop_legacy_tables),
 ]
 CURRENT = STEPS[-1][0]
 
