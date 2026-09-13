@@ -60,18 +60,20 @@ async function viewLibrary(main, q) {
   let right;
   if (view === 'features') {
     const [m, tr] = await Promise.all([api('/api/cube/map?' + new URLSearchParams({ kind, ...fieldQuery(q) })), api('/api/cube/trees?' + new URLSearchParams({ kind, ...fieldQuery(q), ...(q.tree ? { tree: q.tree } : {}) }))]);
-    const W = 1000, H = 1000, cx = W / 2, cy = H / 2, sc = (W / 2 - 40) / (m.R * 1.16);
-    const X = x => (cx + x * sc).toFixed(1), Y = y => (cy + y * sc).toFixed(1);
-    const dots = m.globals.map(g => { const r = Math.max(3, Math.sqrt(g.prompts) * 0.55); const far = Math.hypot(g.lx - g.x, g.ly - g.y) > 6;
-      return `<a href="${nodeHref(g.id)}"><title>${esc(g.name)}: ${fmt(g.prompts)} prompts, ${g.n_corpora} corpora (${Object.entries(g.share).map(([c, v]) => `${c} ${Math.round(100 * v)}%`).join(', ')})</title>${far ? `<line x1="${X(g.x)}" y1="${Y(g.y)}" x2="${X(g.lx)}" y2="${Y(g.ly)}" class="mlead"></line>` : ''}<circle cx="${X(g.x)}" cy="${Y(g.y)}" r="${r.toFixed(1)}" class="mdot ${g.n_corpora === 1 ? 'one' : ''}"></circle><text x="${X(g.lx)}" y="${Y(g.ly)}" font-size="${(g.font * sc * 1.35).toFixed(1)}" class="mlab">${esc(g.name)}</text></a>`; }).join('');
-    const locals = m.local.map(f => `<a href="${nodeHref(f.id)}"><title>${esc(f.corpus)}: ${esc(f.name)}, ${fmt(f.prompts)} prompts, under no global</title><circle cx="${X(f.x)}" cy="${Y(f.y)}" r="${(f.size * sc * 1.2).toFixed(1)}" class="mloc"></circle></a>`).join('');
-    const anchors = m.corpora.map(c => `<text x="${X(c.x)}" y="${Y(c.y)}" class="manchor" text-anchor="middle">${esc(c.name)} <tspan class="muted">${fmt(c.prompts)}</tspan></text>`).join('');
-    const map = m.corpora.length ? `<svg viewBox="0 0 ${W} ${H}" class="map"><circle cx="${cx}" cy="${cy}" r="${(m.R * sc).toFixed(1)}" class="mring"></circle>${locals}${dots}${anchors}</svg>` : '<div class="muted">no codebook yet</div>';
+    const PAL = ['#3B4FB8', '#B8741F', '#2E7D4F', '#7E3F8F', '#B8452B', '#2B8A9A', '#8A6D1F', '#6B6B6B', '#C2418F', '#4F7F2B'];
+    const colorOf = Object.fromEntries((m.groups || []).map((g, i) => [g, PAL[i % PAL.length]]));
+    const sel = q.tree || '';
+    const E = m.R * 1.24, mapHtml = m.corpora.length ? `<div class="mapwrap"><svg viewBox="${-E} ${-E} ${2 * E} ${2 * E}" class="map" id="map"><circle cx="0" cy="0" r="${m.R}" class="mring"></circle>
+        ${m.local.map(f => { const on = sel && f.corpus === sel; return `<a href="${nodeHref(f.id)}" class="loc ${sel && !on ? 'dim' : ''}" data-x="${f.x}" data-y="${f.y}" data-rank="${f.rank}" data-name="${esc(f.name)}" data-font="9" data-lab="${on ? 1 : 0}"><title>${esc(f.corpus)}: ${esc(f.name)}, ${fmt(f.prompts)} prompts, under no global</title><circle cx="${f.x}" cy="${f.y}" r="${f.size}" class="mloc"></circle><text x="${f.x}" y="${f.y}" class="mlab loclab" hidden>${esc(f.name)}</text></a>`; }).join('')}
+        ${m.globals.map(g => { const r = Math.max(3, Math.sqrt(g.prompts) * 0.55), dim = sel && !(sel in g.share); return `<a href="${nodeHref(g.id)}" class="glob ${dim ? 'dim' : ''}" data-x="${g.x}" data-y="${g.y}" data-rank="${g.rank}" data-name="${esc(g.name)}" data-font="${g.font}" data-lab="1"><title>${esc(g.name)} (${esc(g.group || '')}): ${fmt(g.prompts)} prompts, ${g.n_corpora} corpora (${Object.entries(g.share).map(([c, v]) => `${c} ${Math.round(100 * v)}%`).join(', ')})</title><line class="mlead" hidden></line><circle cx="${g.x}" cy="${g.y}" r="${r.toFixed(1)}" class="mdot" style="fill:${colorOf[g.group || 'other'] || PAL[7]}"></circle><text x="${g.x}" y="${g.y}" class="mlab" hidden>${esc(g.name)}</text></a>`; }).join('')}
+        ${m.corpora.map(c => `<a href="${href('/library', { ...q, kind, view, tree: sel === c.name ? '' : c.name })}"><text x="${c.x}" y="${c.y}" class="manchor ${sel === c.name ? 'on' : ''}" text-anchor="middle">${esc(c.name)} <tspan class="muted">${fmt(c.prompts)}</tspan></text></a>`).join('')}
+      </svg><div class="maptools"><a href="#" id="mzin" class="btn quiet small">+</a><a href="#" id="mzout" class="btn quiet small">−</a><a href="#" id="mzreset" class="btn quiet small">reset</a><span class="muted" style="font-size:12px">wheel to zoom, drag to pan; more labels appear as you zoom</span></div>
+      <div class="legend" style="flex-wrap:wrap">${(m.groups || []).map(g => `<span><i style="background:${colorOf[g]};border-radius:50%"></i>${esc(g)}</span>`).join('')}<span><i style="background:var(--muted);opacity:.45;border-radius:50%"></i>under no global</span></div></div>` : '<div class="muted">no codebook yet</div>';
     const leaf = f => `<div class="tnode leaf plain"><span class="read"><a href="${nodeHref(f.id)}">${esc(f.name)}</a>${f.global ? ` <span class="muted" style="font-size:12px">→ <a href="${nodeHref(f.global)}">${esc(f.global_name)}</a></span>` : ''}<div class="def">${esc(f.definition)}</div>${f.variants.length ? `<div class="mem">${f.variants.map(v => `<div><a href="${nodeHref(v.id)}">${esc(v.name)}</a> <span class="muted">${fmt(v.prompts)}</span></div>`).join('')}</div>` : ''}</span><span class="cnt">${fmt(f.prompts)}</span></div>`;
     const treeOf = t => `<details class="tnode section" ${q.tree ? 'open' : ''}><summary><b>${esc(t.corpus)}</b> <span class="muted">${fmt(t.in_slice)} of ${fmt(t.features)} features in the slice, ${fmt(t.aligned)} under a global</span></summary><div class="kids">${t.groups.map(g => `<details class="tnode section" open><summary>${esc(g.name)} <span class="muted">${g.features.length}${g.hidden ? ` (+${g.hidden} not in the slice)` : ''}</span></summary><div class="kids">${g.features.map(leaf).join('')}</div></details>`).join('') || '<span class="muted">nothing in the slice</span>'}</div></details>`;
     const corpusChips = tr.trees.map(t => `<a class="chip ${q.tree === t.corpus ? 'on' : ''}" href="${href('/library', { ...q, kind, view, tree: q.tree === t.corpus ? '' : t.corpus })}"><span>${esc(t.corpus)}</span><span class="n">${fmt(t.in_slice)}</span></a>`).join('');
-    right = `<div class="muted" style="margin-bottom:10px">${fmt(s.prompts)} prompts, ${fmt(m.globals.length)} global features over ${m.corpora.length} corpora with a codebook${m.local.length ? `, ${fmt(m.local.length)} features under no global` : ''}</div>
-      <div class="block">${map}<div class="muted" style="font-size:12px">a global feature sits toward the corpora that carry it: on the rim when one corpus carries it, at the centre when all do evenly; the small dots outside the rim are each corpus's features under no global</div></div>
+    right = `<div class="muted" style="margin-bottom:10px">${fmt(s.prompts)} prompts, ${fmt(m.globals.length)} global features over ${m.corpora.length} corpora with a codebook${m.local.length ? `, ${fmt(m.local.length)} features under no global` : ''}${sel ? `; showing ${esc(sel)}: its globals in colour, its own features labelled` : ''}</div>
+      <div class="block">${mapHtml}<div class="muted" style="font-size:12px">a global feature sits toward the corpora that carry it: on the rim when one corpus carries it, at the centre when all do evenly; the small dots outside the rim are each corpus's features under no global. Click a corpus name to view that codebook.</div></div>
       <div class="block"><div class="t">each corpus's own codebook, with the prompts of the slice</div><div class="chips" style="margin-bottom:8px">${corpusChips}</div><div class="tree" style="max-height:none">${tr.trees.map(treeOf).join('') || '<span class="muted">none</span>'}</div></div>`;
   } else {
     right = `<div class="muted" style="margin-bottom:14px">${fmt(s.prompts)} prompts${s.listed < s.prompts ? `, first ${fmt(s.listed)} listed` : ''}</div>
@@ -80,6 +82,7 @@ async function viewLibrary(main, q) {
   }
   main.innerHTML = `<div class="cube">${left}<div><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px"><h1>Library</h1>${seg}</div>
     <div style="margin-bottom:10px">${filterChips(q, kind, view)}</div>${right}</div></div>`;
+  if (view === 'features' && $('#map')) wireMap($('#map'), q.tree || '');
   for (const el of main.querySelectorAll('.field')) {
     const more = el.querySelector('.more'), find = el.querySelector('.find');
     if (more) more.onclick = e => { e.preventDefault(); const all = more.textContent === 'all'; el.querySelectorAll('.cw').forEach((w, i) => { w.hidden = !all && i >= SHOW && !w.querySelector('.on'); }); more.textContent = all ? 'fewer' : 'all'; };
@@ -87,6 +90,42 @@ async function viewLibrary(main, q) {
   }
   $('#lsearch').onkeydown = e => { if (e.key === 'Enter') { location.hash = href('/library', { ...q, kind, view, text: e.target.value.trim() }); } };
   for (const a of main.querySelectorAll('a.rm')) a.onclick = async e => { e.preventDefault(); if (a.textContent !== 'sure?') { a.textContent = 'sure?'; return; } await post('/api/prompts/delete', { ids: [a.dataset.id] }); route(); };
+}
+
+/* the map: zoom and pan by the viewBox; labels by rank, more as the zoom grows, placed without overlap at the current scale */
+function wireMap(svg, sel) {
+  const box0 = svg.getAttribute('viewBox').split(' ').map(Number); let box = box0.slice(); let zoom = 1;
+  const items = [...svg.querySelectorAll('a[data-x]')].map(a => ({ a, x: +a.dataset.x, y: +a.dataset.y, rank: +a.dataset.rank, name: a.dataset.name, font: +a.dataset.font, lab: a.dataset.lab === '1', loc: a.classList.contains('loc'), dim: a.classList.contains('dim'), text: a.querySelector('text'), lead: a.querySelector('line') }));
+  const place = () => {
+    const globLimit = zoom < 1.5 ? 28 : zoom < 2.5 ? 60 : zoom < 4 ? 110 : 1e9, locLimit = sel ? (zoom < 1.5 ? 12 : zoom < 2.5 ? 30 : 1e9) : 0;
+    const show = items.filter(it => it.lab && !it.dim && (it.loc ? it.rank < locLimit : it.rank < globLimit));
+    const placed = [];
+    for (const it of items) { it.text.hidden = true; if (it.lead) it.lead.hidden = true; }
+    const s = 1 / zoom;
+    for (const it of show.sort((p, q) => (q.font - p.font) || (p.rank - q.rank))) {
+      const font = (it.loc ? 9 : it.font) * s * 1.1, hw = 0.3 * font * it.name.length + 3 * s, hh = 0.62 * font;
+      let t = 0, x = it.x, y = it.y;
+      for (let n = 0; n < 400; n++) { const rad = 1.6 * t * s; x = it.x + rad * Math.cos(t); y = it.y + rad * Math.sin(t);
+        if (placed.every(p => Math.abs(x - p.x) >= hw + p.hw || Math.abs(y - p.y) >= hh + p.hh)) break; t += 0.35; }
+      placed.push({ x, y, hw, hh });
+      it.text.setAttribute('x', x + 4 * s); it.text.setAttribute('y', y + 0.35 * font); it.text.setAttribute('font-size', font); it.text.hidden = false;
+      if (it.lead) { if (Math.hypot(x - it.x, y - it.y) > 8 * s) { it.lead.setAttribute('x1', it.x); it.lead.setAttribute('y1', it.y); it.lead.setAttribute('x2', x); it.lead.setAttribute('y2', y); it.lead.hidden = false; } }
+    }
+    svg.querySelectorAll('.manchor').forEach(t => t.setAttribute('font-size', 15 * s)); svg.querySelectorAll('.mring').forEach(c => c.setAttribute('stroke-width', s));
+  };
+  const apply = () => { svg.setAttribute('viewBox', box.join(' ')); place(); };
+  const zoomAt = (f, px, py) => { const nz = Math.min(12, Math.max(1, zoom * f)); f = nz / zoom; const w = box[2] / f, h = box[3] / f; box = [px - (px - box[0]) / f, py - (py - box[1]) / f, w, h]; zoom = nz; if (zoom === 1) box = box0.slice(); apply(); };
+  const pt = e => { const r = svg.getBoundingClientRect(); return [box[0] + (e.clientX - r.left) / r.width * box[2], box[1] + (e.clientY - r.top) / r.height * box[3]]; };
+  svg.addEventListener('wheel', e => { e.preventDefault(); const [px, py] = pt(e); zoomAt(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
+  let drag = null;
+  svg.addEventListener('mousedown', e => { drag = { x: e.clientX, y: e.clientY, box: box.slice(), moved: false }; });
+  window.addEventListener('mousemove', e => { if (!drag) return; const r = svg.getBoundingClientRect(); const dx = (e.clientX - drag.x) / r.width * box[2], dy = (e.clientY - drag.y) / r.height * box[3]; if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true; box = [drag.box[0] - dx, drag.box[1] - dy, box[2], box[3]]; svg.setAttribute('viewBox', box.join(' ')); });
+  window.addEventListener('mouseup', () => { drag = null; });
+  svg.addEventListener('click', e => { if (drag && drag.moved) e.preventDefault(); }, true);
+  $('#mzin').onclick = e => { e.preventDefault(); zoomAt(1.5, box[0] + box[2] / 2, box[1] + box[3] / 2); };
+  $('#mzout').onclick = e => { e.preventDefault(); zoomAt(1 / 1.5, box[0] + box[2] / 2, box[1] + box[3] / 2); };
+  $('#mzreset').onclick = e => { e.preventDefault(); zoom = 1; box = box0.slice(); apply(); };
+  place();
 }
 
 async function viewNode(main, id, q) {

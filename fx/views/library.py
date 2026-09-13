@@ -281,21 +281,6 @@ def prompts(store: Store, kind: str, filters: dict[str, set[str]], limit: int = 
 R = 420.0
 
 
-def _collide(items: list[dict]) -> None:
-    """Labels largest first, each at the nearest free spot to its true position along a spiral, so no two overlap."""
-    import math
-    placed: list[dict] = []
-    for it in sorted(items, key=lambda x: (-x["font"], x["id"])):
-        x0, y0 = it["lx"], it["ly"]; t = 0.0
-        while True:
-            rad = 1.6 * t
-            x, y = x0 + rad * math.cos(t), y0 + rad * math.sin(t)
-            if all(abs(x - p["lx"]) >= it["hw"] + p["hw"] or abs(y - p["ly"]) >= it["hh"] + p["hh"] for p in placed):
-                it["lx"], it["ly"] = x, y; break
-            t += 0.35
-        placed.append(it)
-
-
 def _first_pc_scores(V):
     """Each row's coordinate on the first principal component, by power iteration on the n×n Gram matrix (a full SVD of
     an n×1024 matrix took 0.35 s per sector; this is milliseconds and the order is what matters)."""
@@ -374,7 +359,7 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
         g = nodes[gid]
         out_g.append({"id": gid, "name": g["name"], "definition": g["definition"] or "", "group": nodes.get(g["parent"], {}).get("name"), "prompts": n,
                       "share": {c: round(v, 3) for c, v in sorted(p.items(), key=lambda x: -x[1])}, "n_corpora": len(p), "phi": phi, "r": r,
-                      "font": round(8 + 14 * math.sqrt(n / gmax), 1), "vec": vec_of(members[gid])})
+                      "font": round(9 + 15 * math.sqrt(n / gmax), 1), "vec": vec_of(members[gid])})
     out_l = []
     lmax = max((len(ps) for ps in local.values()), default=1)
     for fid, ps in local.items():
@@ -396,13 +381,16 @@ def feature_map(store: Store, kind: str, filters: dict[str, set[str]]) -> dict:
     for x in out_g + out_l:
         x["x"], x["y"] = round(x["r"] * math.cos(x["phi"]), 1), round(x["r"] * math.sin(x["phi"]), 1)
         x.pop("vec", None); x.pop("phi", None); x.pop("r", None)
-    for x in out_g:
-        x["lx"], x["ly"] = x["x"], x["y"]; x["hw"], x["hh"] = 0.27 * x["font"] * len(x["name"]) + 2, 0.62 * x["font"]
-    _collide(out_g)
-    for x in out_g:
-        x["lx"], x["ly"] = round(x["lx"], 1), round(x["ly"], 1); x.pop("hw"); x.pop("hh")
-    out = {"R": R, "corpora": [{"name": c, "theta": theta[c], "prompts": n_c[c], "x": round(R * 1.16 * math.cos(theta[c]), 1), "y": round(R * 1.16 * math.sin(theta[c]), 1)} for c in corpora],
-           "globals": sorted(out_g, key=lambda x: -x["prompts"]), "local": sorted(out_l, key=lambda x: -x["prompts"]), "prompts": len(selected),
+    out_g.sort(key=lambda x: -x["prompts"])
+    for k, x in enumerate(out_g):
+        x["rank"] = k                                                      # labels show by rank as the page zooms; placement is the page's
+    out_l.sort(key=lambda x: -x["prompts"])
+    for c in corpora:
+        for k, x in enumerate([x for x in out_l if x["corpus"] == c]):
+            x["rank"] = k
+    groups_seen = sorted({x["group"] or "other" for x in out_g})
+    out = {"R": R, "groups": groups_seen, "corpora": [{"name": c, "theta": theta[c], "prompts": n_c[c], "x": round(R * 1.16 * math.cos(theta[c]), 1), "y": round(R * 1.16 * math.sin(theta[c]), 1)} for c in corpora],
+           "globals": out_g, "local": out_l, "prompts": len(selected),
            "filters": {k: sorted(v) for k, v in filters.items()}}
     _cache[key] = out
     return out
