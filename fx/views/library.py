@@ -209,12 +209,13 @@ def node(store: Store, kind: str, filters: dict[str, set[str]], fid: int, limit:
     if fid not in nodes:
         return {}
     selected = select(fields, filters, store=store)
-    f = nodes[fid]; is_global = f["codebook"] == h["seed"]
+    f = nodes[fid]; is_global = f["codebook"] == h["seed"]; is_variant = f["level"] == "variant"
     feats = {x for x, g in h["to_global"].items() if g == fid} if is_global else {fid}
     by_feat: dict[int, dict[int, set]] = defaultdict(lambda: defaultdict(set)); prompts: dict[str, int] = defaultdict(int)
     for pid, rid, nd, feat, glob in rows:
-        if feat in feats and pid in selected:
-            by_feat[feat][rid].add(pid); prompts[pid] += 1
+        # a row's feature is the variant's parent (facts rolls variants up), so a variant is matched on the node itself
+        if (nd == fid if is_variant else feat in feats) and pid in selected:
+            by_feat[nd if is_variant else feat][rid].add(pid); prompts[pid] += 1
     rids = sorted({r for d in by_feat.values() for r in d})
     text = {}
     for i in range(0, len(rids), 500):
@@ -240,10 +241,13 @@ def node(store: Store, kind: str, filters: dict[str, set[str]], fid: int, limit:
         chunk = ps[i:i + 400]
         plist += [dict(r) | {"readings": prompts[r["id"]], "fields": fields.get(r["id"], {})} for r in store.rows(f"SELECT p.id, k.name corpus, SUBSTR(p.text, 1, 160) head, LENGTH(p.text) chars FROM prompt p JOIN corpus k ON k.id=p.corpus WHERE p.id IN ({','.join('?' * len(chunk))})", chunk)]
     plist.sort(key=lambda p: -p["readings"])
-    parent = nodes.get(f["parent"])
+    variant_of = nodes.get(f["parent"]) if is_variant else None                    # a variant sits under a feature, which sits under the group
+    parent = nodes.get(variant_of["parent"]) if variant_of else nodes.get(f["parent"])
+    feature_id = h["to_feature"].get(fid, fid)
     return {"id": fid, "kind": kind, "global": is_global, "name": f["name"], "definition": f["definition"] or "", "polarity": f["polarity"] or "require", "corpus": None if is_global else f["corpus"],
             "group": {"name": parent["name"], "aspect": parent.get("aspect"), "definition": parent.get("definition") or ""} if parent else None, "round": f["round"],
-            "global_of": h["to_global"].get(fid) if not is_global else None, "global_name": nodes.get(h["to_global"].get(fid), {}).get("name") if not is_global else None,
+            "variant_of": {"id": variant_of["id"], "name": variant_of["name"]} if variant_of else None,
+            "global_of": h["to_global"].get(feature_id) if not is_global else None, "global_name": nodes.get(h["to_global"].get(feature_id), {}).get("name") if not is_global else None,
             "filters": {k: sorted(v) for k, v in filters.items()}, "selected": len(selected), "prompts": len(prompts), "readings": sum(prompts.values()),
             "members": members, "prompt_list": plist}
 
